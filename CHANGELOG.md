@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.5.0](https://github.com/bluefunda/cai-cli/compare/v1.4.0...v1.5.0) (2026-05-12)
+
+
+### Features
+
+* add ai code command with local filesystem agentic loop ([#36](https://github.com/bluefunda/cai-cli/issues/36)) ([7356abb](https://github.com/bluefunda/cai-cli/commit/7356abb6b439b7876cdbf0b62629c7237aef59f6))
+
 ## [1.4.0](https://github.com/bluefunda/cai-cli/compare/v1.3.3...v1.4.0) (2026-04-24)
 
 

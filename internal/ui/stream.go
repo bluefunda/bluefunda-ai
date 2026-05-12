@@ -2,6 +2,7 @@ package ui
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -11,6 +12,13 @@ import (
 	pb "github.com/bluefunda/cai-cli/api/proto/bff"
 	"google.golang.org/grpc"
 )
+
+// ToolCallEvent carries a tool invocation streamed from the backend.
+type ToolCallEvent struct {
+	ID        string `json:"tool_call_id"`
+	Name      string `json:"tool_name"`
+	Arguments string `json:"arguments"`
+}
 
 // thinkFilter strips <think>...</think> blocks from streamed content.
 // It handles tags that span multiple chunks. If a <think> block is never
@@ -121,16 +129,51 @@ func RenderGRPCStream(stream grpc.ServerStreamingClient[pb.ChatEvent], cancelFn 
 }
 
 func renderGRPCLoop(stream grpc.ServerStreamingClient[pb.ChatEvent]) error {
+	_, err := renderGRPCLoopWithTools(stream, false)
+	return err
+}
+
+// StreamWithTools reads a ChatEvent stream, prints content to stdout, and returns
+// any tool_call events collected during the stream. Used by the agentic code loop.
+func StreamWithTools(stream grpc.ServerStreamingClient[pb.ChatEvent], cancelFn context.CancelFunc) ([]ToolCallEvent, error) {
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, os.Interrupt)
+	defer signal.Stop(sigCh)
+
+	type result struct {
+		calls []ToolCallEvent
+		err   error
+	}
+	doneCh := make(chan result, 1)
+
+	go func() {
+		calls, err := renderGRPCLoopWithTools(stream, true)
+		doneCh <- result{calls, err}
+	}()
+
+	select {
+	case r := <-doneCh:
+		return r.calls, r.err
+	case <-sigCh:
+		fmt.Println()
+		cancelFn()
+		return nil, nil
+	}
+}
+
+func renderGRPCLoopWithTools(stream grpc.ServerStreamingClient[pb.ChatEvent], collectTools bool) ([]ToolCallEvent, error) {
 	tf := &thinkFilter{}
+	var toolCalls []ToolCallEvent
+
 	for {
 		ev, err := stream.Recv()
 		if err != nil {
 			if err == io.EOF {
 				fmt.Print(tf.Flush())
 				fmt.Println()
-				return nil
+				return toolCalls, nil
 			}
-			return fmt.Errorf("stream recv: %w", err)
+			return toolCalls, fmt.Errorf("stream recv: %w", err)
 		}
 
 		switch ev.GetType() {
@@ -141,9 +184,16 @@ func renderGRPCLoop(stream grpc.ServerStreamingClient[pb.ChatEvent]) error {
 		case "done", "stream_end":
 			fmt.Print(tf.Flush())
 			fmt.Println()
-			return nil
+			return toolCalls, nil
 		case "tool_call":
-			Info(fmt.Sprintf("Tool call: %s", ev.GetData()))
+			if collectTools {
+				var tc ToolCallEvent
+				if err := json.Unmarshal([]byte(ev.GetData()), &tc); err == nil {
+					toolCalls = append(toolCalls, tc)
+				}
+			} else {
+				Info(fmt.Sprintf("Tool call: %s", ev.GetData()))
+			}
 		case "tool_result", "stream_start", "stream_heartbeat":
 			// No display needed.
 		default:

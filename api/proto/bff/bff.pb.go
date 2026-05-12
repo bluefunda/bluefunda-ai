@@ -152,16 +152,19 @@ func (x *GetUserInfoResponse) GetEmail() string {
 
 // Chat messages
 type ChatRequest struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	ChatId        string                 `protobuf:"bytes,1,opt,name=chat_id,json=chatId,proto3" json:"chat_id,omitempty"`
-	Prompt        string                 `protobuf:"bytes,2,opt,name=prompt,proto3" json:"prompt,omitempty"`
-	Model         string                 `protobuf:"bytes,3,opt,name=model,proto3" json:"model,omitempty"`
-	McpServerName string                 `protobuf:"bytes,4,opt,name=mcp_server_name,json=mcpServerName,proto3" json:"mcp_server_name,omitempty"`
-	IsNewChat     bool                   `protobuf:"varint,5,opt,name=is_new_chat,json=isNewChat,proto3" json:"is_new_chat,omitempty"`
-	FileUrl       string                 `protobuf:"bytes,6,opt,name=file_url,json=fileUrl,proto3" json:"file_url,omitempty"`
-	RawToolResult string                 `protobuf:"bytes,7,opt,name=raw_tool_result,json=rawToolResult,proto3" json:"raw_tool_result,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	state                   protoimpl.MessageState `protogen:"open.v1"`
+	ChatId                  string                 `protobuf:"bytes,1,opt,name=chat_id,json=chatId,proto3" json:"chat_id,omitempty"`
+	Prompt                  string                 `protobuf:"bytes,2,opt,name=prompt,proto3" json:"prompt,omitempty"`
+	Model                   string                 `protobuf:"bytes,3,opt,name=model,proto3" json:"model,omitempty"`
+	McpServerName           string                 `protobuf:"bytes,4,opt,name=mcp_server_name,json=mcpServerName,proto3" json:"mcp_server_name,omitempty"`
+	IsNewChat               bool                   `protobuf:"varint,5,opt,name=is_new_chat,json=isNewChat,proto3" json:"is_new_chat,omitempty"`
+	FileUrl                 string                 `protobuf:"bytes,6,opt,name=file_url,json=fileUrl,proto3" json:"file_url,omitempty"`
+	RawToolResult           string                 `protobuf:"bytes,7,opt,name=raw_tool_result,json=rawToolResult,proto3" json:"raw_tool_result,omitempty"`
+	LocalTools              string                 `protobuf:"bytes,8,opt,name=local_tools,json=localTools,proto3" json:"local_tools,omitempty"`
+	RawToolResultToolCallId string                 `protobuf:"bytes,9,opt,name=raw_tool_result_tool_call_id,json=rawToolResultToolCallId,proto3" json:"raw_tool_result_tool_call_id,omitempty"`
+	CodeMessages            string                 `protobuf:"bytes,10,opt,name=code_messages,json=codeMessages,proto3" json:"code_messages,omitempty"`
+	unknownFields           protoimpl.UnknownFields
+	sizeCache               protoimpl.SizeCache
 }
 
 func (x *ChatRequest) Reset() {
@@ -239,6 +242,27 @@ func (x *ChatRequest) GetFileUrl() string {
 func (x *ChatRequest) GetRawToolResult() string {
 	if x != nil {
 		return x.RawToolResult
+	}
+	return ""
+}
+
+func (x *ChatRequest) GetLocalTools() string {
+	if x != nil {
+		return x.LocalTools
+	}
+	return ""
+}
+
+func (x *ChatRequest) GetRawToolResultToolCallId() string {
+	if x != nil {
+		return x.RawToolResultToolCallId
+	}
+	return ""
+}
+
+func (x *ChatRequest) GetCodeMessages() string {
+	if x != nil {
+		return x.CodeMessages
 	}
 	return ""
 }

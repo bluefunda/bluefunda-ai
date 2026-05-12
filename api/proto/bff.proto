@@ -52,6 +52,25 @@ message ChatRequest {
   bool is_new_chat = 5;
   string file_url = 6;
   string raw_tool_result = 7;
+  // Fields for CLI-side agentic loop (ai code command):
+  string local_tools = 8;                        // JSON-encoded tool schemas
+  string raw_tool_result_tool_call_id = 9;       // tool_call_id answered by raw_tool_result
+  repeated CodeMessage code_messages = 10;        // full conversation history managed by CLI
+}
+
+// CodeMessage represents a single message in a CLI-managed conversation.
+message CodeMessage {
+  string role = 1;              // "user", "assistant", "tool"
+  string content = 2;
+  string tool_call_id = 3;      // set when role == "tool"
+  repeated CodeToolCall tool_calls = 4; // set when role == "assistant" with tool use
+}
+
+// CodeToolCall represents an LLM tool call within a CodeMessage.
+message CodeToolCall {
+  string id = 1;
+  string name = 2;
+  string arguments = 3; // JSON string
 }
 
 message ChatEvent {

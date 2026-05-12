@@ -35,6 +35,7 @@ func init() {
 		healthCmd,
 		versionCmd,
 		chatCmd,
+		codeCmd,
 		modelCmd,
 		mcpCmd,
 		userCmd,

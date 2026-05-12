@@ -246,7 +246,9 @@ func executeWithApproval(tc ui.ToolCallEvent, autoApply bool, p *ui.Printer) (st
 	if tools.NeedsApproval(tc.Name) && !autoApply {
 		fmt.Print("Apply? [y/N] ")
 		var resp string
-		fmt.Scanln(&resp)
+		if _, err := fmt.Scanln(&resp); err != nil {
+			return "User declined to execute this tool.", nil
+		}
 		if strings.ToLower(strings.TrimSpace(resp)) != "y" {
 			return "User declined to execute this tool.", nil
 		}

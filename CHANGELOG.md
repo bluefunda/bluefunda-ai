@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.6.0](https://github.com/bluefunda/cai-cli/compare/v1.5.1...v1.6.0) (2026-05-13)
+
+
+### Features
+
+* add macOS code signing and notarization ([#41](https://github.com/bluefunda/cai-cli/issues/41)) ([1a78714](https://github.com/bluefunda/cai-cli/commit/1a78714891731675174cf3af3d89420a14058b56))
+
 ## [1.5.1](https://github.com/bluefunda/cai-cli/compare/v1.5.0...v1.5.1) (2026-05-13)
 
 

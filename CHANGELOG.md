@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.5.1](https://github.com/bluefunda/cai-cli/compare/v1.5.0...v1.5.1) (2026-05-13)
+
+
+### Bug Fixes
+
+* encode local_tools and history in Prompt for ai code command ([#39](https://github.com/bluefunda/cai-cli/issues/39)) ([0cc1a00](https://github.com/bluefunda/cai-cli/commit/0cc1a0014298fe7470704aaa1c0ab6b3bd219d68))
+
 ## [1.5.0](https://github.com/bluefunda/cai-cli/compare/v1.4.0...v1.5.0) (2026-05-12)
 
 

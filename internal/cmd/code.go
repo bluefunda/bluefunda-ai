@@ -41,7 +41,7 @@ func init() {
 	codeCmd.Flags().BoolVar(&codeAutoApply, "auto-apply", false, "Execute write/bash tools without prompting")
 }
 
-// codeMessage mirrors pb.CodeMessage for local state management.
+// codeMessage mirrors the ConversationMsg format expected by cai-llm-router.
 type codeMessage struct {
 	Role       string         `json:"role"`
 	Content    string         `json:"content"`
@@ -49,10 +49,23 @@ type codeMessage struct {
 	ToolCalls  []codeToolCall `json:"tool_calls,omitempty"`
 }
 
+// codeToolCall matches messages.ToolCall nested format in cai-llm-router.
 type codeToolCall struct {
-	ID        string `json:"id"`
+	ID       string       `json:"id"`
+	Type     string       `json:"type"`
+	Function codeFuncCall `json:"function"`
+}
+
+type codeFuncCall struct {
 	Name      string `json:"name"`
 	Arguments string `json:"arguments"`
+}
+
+// cliCodePayload is encoded in Prompt to work around proto fields 8+ being stripped
+// by the load balancer between cli.bluefunda.com:443 and the BFF gRPC endpoint.
+type cliCodePayload struct {
+	History []codeMessage `json:"history"`
+	Tools   string        `json:"tools"`
 }
 
 func runCode(cmd *cobra.Command, args []string) error {
@@ -197,9 +210,12 @@ func agenticLoop(
 		}
 		for _, tc := range toolCalls {
 			assistantMsg.ToolCalls = append(assistantMsg.ToolCalls, codeToolCall{
-				ID:        tc.ID,
-				Name:      tc.Name,
-				Arguments: tc.Arguments,
+				ID:   tc.ID,
+				Type: "function",
+				Function: codeFuncCall{
+					Name:      tc.Name,
+					Arguments: tc.Arguments,
+				},
 			})
 		}
 		history = append(history, assistantMsg)
@@ -223,17 +239,18 @@ func agenticLoop(
 }
 
 // buildCodeRequest constructs the gRPC ChatRequest for one agentic iteration.
+// The history and tool schemas are encoded in Prompt as a JSON cliCodePayload and the
+// model is prefixed with "cli/" so cai-llm-router can decode them. This works around
+// the load balancer stripping proto fields 8+ (local_tools, code_messages) in transit.
 func buildCodeRequest(chatID, model, toolSchemas string, history []codeMessage, isNewChat bool) *pb.ChatRequest {
-	histJSON, _ := json.Marshal(history)
-
-	req := &pb.ChatRequest{
-		ChatId:       chatID,
-		Model:        model,
-		IsNewChat:    isNewChat,
-		LocalTools:   toolSchemas,
-		CodeMessages: string(histJSON),
+	payload := cliCodePayload{History: history, Tools: toolSchemas}
+	payloadJSON, _ := json.Marshal(payload)
+	return &pb.ChatRequest{
+		ChatId:    chatID,
+		Model:     "cli/" + model,
+		IsNewChat: isNewChat,
+		Prompt:    string(payloadJSON),
 	}
-	return req
 }
 
 // executeWithApproval runs a tool, asking for user confirmation if needed.

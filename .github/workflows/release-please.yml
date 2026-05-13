@@ -24,6 +24,11 @@ jobs:
     secrets:
       GH_PAT: ${{ secrets.GH_PAT }}
       HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+      MACOS_CERTIFICATE: ${{ secrets.MACOS_CERTIFICATE }}
+      MACOS_CERTIFICATE_PWD: ${{ secrets.MACOS_CERTIFICATE_PWD }}
+      NOTARIZATION_ISSUER_ID: ${{ secrets.NOTARIZATION_ISSUER_ID }}
+      NOTARIZATION_KEY_ID: ${{ secrets.NOTARIZATION_KEY_ID }}
+      NOTARIZATION_KEY: ${{ secrets.NOTARIZATION_KEY }}
 
   docker:
     needs: release

@@ -58,12 +58,24 @@ nfpms:
         src: /opt/ai/bin/ai
         type: symlink
 
+notarize:
+  macos:
+    - enabled: true
+      sign:
+        certificate: "{{ .Env.MACOS_CERTIFICATE }}"
+        password: "{{ .Env.MACOS_CERTIFICATE_PWD }}"
+      notarize:
+        issuer_id: "{{ .Env.NOTARIZATION_ISSUER_ID }}"
+        key_id: "{{ .Env.NOTARIZATION_KEY_ID }}"
+        key: "{{ .Env.NOTARIZATION_KEY }}"
+
 homebrew_casks:
   - name: ai
     ids:
       - ai
     binaries:
       - ai
+    disable_quarantine: true
     homepage: https://github.com/bluefunda/cai-cli
     description: CLI for BlueFunda AI — context-aware AI agents for SAP operations
     directory: Casks

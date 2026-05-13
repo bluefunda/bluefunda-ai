@@ -75,7 +75,6 @@ homebrew_casks:
       - ai
     binaries:
       - ai
-    disable_quarantine: true
     homepage: https://github.com/bluefunda/cai-cli
     description: CLI for BlueFunda AI — context-aware AI agents for SAP operations
     directory: Casks

@@ -36,12 +36,19 @@ Download the binary for your platform from the [releases page](https://github.co
 
 Linux users can also install via `.deb` or `.rpm`:
 
+**Debian / Ubuntu:**
 ```bash
-# Debian / Ubuntu
-sudo dpkg -i ai_<version>_linux_amd64.deb
+VER=$(curl -fsSL https://api.github.com/repos/bluefunda/cai-cli/releases/latest | grep '"tag_name"' | sed 's/.*"v\([^"]*\)".*/\1/')
+ARCH=$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/')
+curl -sL "https://github.com/bluefunda/cai-cli/releases/download/v${VER}/ai_${VER}_linux_${ARCH}.deb" -o ai.deb
+sudo dpkg -i ai.deb
+```
 
-# RHEL / Fedora / Rocky
-sudo dnf install ./ai_<version>_linux_amd64.rpm
+**RHEL / Fedora / Rocky:**
+```bash
+VER=$(curl -fsSL https://api.github.com/repos/bluefunda/cai-cli/releases/latest | grep '"tag_name"' | sed 's/.*"v\([^"]*\)".*/\1/')
+ARCH=$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/')
+sudo dnf install "https://github.com/bluefunda/cai-cli/releases/download/v${VER}/ai_${VER}_linux_${ARCH}.rpm"
 ```
 
 ### From Source

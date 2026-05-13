@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.6.1](https://github.com/bluefunda/cai-cli/compare/v1.6.0...v1.6.1) (2026-05-13)
+
+
+### Bug Fixes
+
+* add workflow_dispatch and remove homebrew-patch job ([#43](https://github.com/bluefunda/cai-cli/issues/43)) ([024b4c1](https://github.com/bluefunda/cai-cli/commit/024b4c1a7d5a9edabcfddfb70dd0a312ca87e2ca))
+
 ## [1.6.0](https://github.com/bluefunda/cai-cli/compare/v1.5.1...v1.6.0) (2026-05-13)
 
 

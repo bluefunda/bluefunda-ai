@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.7.0](https://github.com/bluefunda/cai-cli/compare/v1.6.1...v1.7.0) (2026-05-20)
+
+
+### Features
+
+* enhance CLI stream rendering with tool visibility and spinner ([8f06524](https://github.com/bluefunda/cai-cli/commit/8f065245b3a5079360c154f355088b7f4d12deb3))
+
 ## [1.6.1](https://github.com/bluefunda/cai-cli/compare/v1.6.0...v1.6.1) (2026-05-13)
 
 

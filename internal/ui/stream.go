@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/signal"
 	"strings"
+	"time"
 
 	pb "github.com/bluefunda/cai-cli/api/proto/bff"
 	"google.golang.org/grpc"
@@ -18,6 +19,170 @@ type ToolCallEvent struct {
 	ID        string `json:"tool_call_id"`
 	Name      string `json:"tool_name"`
 	Arguments string `json:"arguments"`
+}
+
+// progressEvent matches the stream_progress JSON payload.
+type progressEvent struct {
+	Tools     []string `json:"tools"`
+	Iteration int      `json:"iteration"`
+}
+
+// toolExecEvent matches the stream_tool_execution JSON payload.
+type toolExecEvent struct {
+	ToolName      string `json:"tool_name"`
+	Status        string `json:"status"`
+	DurationMs    int64  `json:"duration_ms"`
+	ResultSummary string `json:"result_summary"`
+}
+
+var spinnerFrames = []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}
+
+// streamRenderer manages terminal output state during a streaming response.
+// It handles the interleaving of content chunks, tool call lines, and spinner
+// updates so they don't corrupt each other.
+type streamRenderer struct {
+	tf           *thinkFilter
+	spinnerShown bool      // a spinner line is displayed without a trailing newline
+	spinnerStart time.Time // when the current silent phase began
+	spinnerIdx   int
+	needNewline  bool // content printed without trailing newline
+	contentSeen  bool // any content chunks received this stream
+}
+
+func newStreamRenderer() *streamRenderer {
+	return &streamRenderer{tf: &thinkFilter{}}
+}
+
+// isTerminal reports whether stdout is an interactive terminal.
+func isTerminal() bool {
+	fi, err := os.Stdout.Stat()
+	if err != nil {
+		return false
+	}
+	return fi.Mode()&os.ModeCharDevice != 0
+}
+
+// clearSpinner erases the spinner line if one is currently displayed.
+func (r *streamRenderer) clearSpinner() {
+	if r.spinnerShown {
+		fmt.Print("\r\033[K")
+		r.spinnerShown = false
+	}
+}
+
+// ensureNewline moves to a fresh line if content was printed without one.
+func (r *streamRenderer) ensureNewline() {
+	if r.needNewline {
+		fmt.Println()
+		r.needNewline = false
+	}
+}
+
+// showHeartbeat updates the working spinner. Only shown before content starts.
+func (r *streamRenderer) showHeartbeat() {
+	if r.contentSeen || !isTerminal() {
+		return
+	}
+	if !r.spinnerShown {
+		r.ensureNewline()
+		r.spinnerStart = time.Now()
+	} else {
+		fmt.Print("\r\033[K")
+	}
+	elapsed := time.Since(r.spinnerStart)
+	frame := spinnerFrames[r.spinnerIdx%len(spinnerFrames)]
+	r.spinnerIdx++
+	label := fmt.Sprintf("  %s  working...", frame)
+	if elapsed >= 2*time.Second {
+		label = fmt.Sprintf("  %s  working...  (%ds)", frame, int(elapsed.Seconds()))
+	}
+	fmt.Print(dim(label)) // no newline — stays on current line for in-place update
+	r.spinnerShown = true
+}
+
+// printChunk writes a content delta to stdout, clearing any spinner first.
+func (r *streamRenderer) printChunk(chunk string) {
+	r.clearSpinner()
+	filtered := r.tf.Filter(chunk)
+	if filtered == "" {
+		return
+	}
+	r.contentSeen = true
+	fmt.Print(filtered)
+	r.needNewline = !strings.HasSuffix(filtered, "\n")
+}
+
+// printToolCall renders a tool invocation line in dim style.
+func (r *streamRenderer) printToolCall(data string) {
+	r.clearSpinner()
+	r.ensureNewline()
+	var tc ToolCallEvent
+	if err := json.Unmarshal([]byte(data), &tc); err != nil {
+		fmt.Println(dim("  ⚙  " + data))
+		return
+	}
+	fmt.Println(dim("  ⚙  " + tc.Name + formatToolArgs(tc.Arguments)))
+}
+
+// printProgress renders a stream_progress line (agentic loop iteration).
+func (r *streamRenderer) printProgress(data string) {
+	r.clearSpinner()
+	r.ensureNewline()
+	var ev progressEvent
+	if err := json.Unmarshal([]byte(data), &ev); err != nil {
+		return
+	}
+	fmt.Println(dim(fmt.Sprintf("  ↻  [%d]  %s", ev.Iteration, strings.Join(ev.Tools, ", "))))
+}
+
+// printToolExec renders a stream_tool_execution completion line.
+func (r *streamRenderer) printToolExec(data string) {
+	r.clearSpinner()
+	r.ensureNewline()
+	var ev toolExecEvent
+	if err := json.Unmarshal([]byte(data), &ev); err != nil {
+		return
+	}
+	secs := fmt.Sprintf("%.1fs", float64(ev.DurationMs)/1000)
+	icon := dimGreen("  ✓  ")
+	if ev.Status != "ok" {
+		icon = dimRed("  ✗  ")
+	}
+	tail := ""
+	if ev.ResultSummary != "" {
+		s := ev.ResultSummary
+		if len(s) > 60 {
+			s = s[:57] + "..."
+		}
+		tail = dim("  —  " + s)
+	}
+	fmt.Println(icon + dim(ev.ToolName+"  "+secs) + tail)
+}
+
+// printError renders an error event.
+func (r *streamRenderer) printError(msg string) {
+	r.clearSpinner()
+	r.ensureNewline()
+	Error(msg)
+}
+
+// flush drains the think filter and ensures the cursor ends on a fresh line.
+func (r *streamRenderer) flush() {
+	r.clearSpinner()
+	if tail := r.tf.Flush(); tail != "" {
+		fmt.Print(tail)
+		r.needNewline = !strings.HasSuffix(tail, "\n")
+	}
+	r.ensureNewline()
+}
+
+// eventData returns the structured payload from a ChatEvent, preferring Data
+// over Content (structured events use data; text chunks use content).
+func eventData(ev *pb.ChatEvent) string {
+	if d := ev.GetData(); d != "" {
+		return d
+	}
+	return ev.GetContent()
 }
 
 // thinkFilter strips <think>...</think> blocks from streamed content.
@@ -37,13 +202,11 @@ func (f *thinkFilter) Filter(chunk string) string {
 		if f.inside {
 			idx := strings.Index(f.buf, "</think>")
 			if idx >= 0 {
-				// Closed think block — discard suppressed content
 				f.suppressed = ""
 				f.buf = f.buf[idx+len("</think>"):]
 				f.inside = false
 				continue
 			}
-			// No closing tag yet — buffer content for potential recovery
 			if partialLen := partialSuffix(f.buf, "</think>"); partialLen > 0 {
 				f.suppressed += f.buf[:len(f.buf)-partialLen]
 				f.buf = f.buf[len(f.buf)-partialLen:]
@@ -62,7 +225,6 @@ func (f *thinkFilter) Filter(chunk string) string {
 			f.suppressed = ""
 			continue
 		}
-		// Check for a partial <think> at the end of the buffer.
 		if partialLen := partialSuffix(f.buf, "<think>"); partialLen > 0 {
 			out.WriteString(f.buf[:len(f.buf)-partialLen])
 			f.buf = f.buf[len(f.buf)-partialLen:]
@@ -162,15 +324,14 @@ func StreamWithTools(stream grpc.ServerStreamingClient[pb.ChatEvent], cancelFn c
 }
 
 func renderGRPCLoopWithTools(stream grpc.ServerStreamingClient[pb.ChatEvent], collectTools bool) ([]ToolCallEvent, error) {
-	tf := &thinkFilter{}
+	r := newStreamRenderer()
 	var toolCalls []ToolCallEvent
 
 	for {
 		ev, err := stream.Recv()
 		if err != nil {
 			if err == io.EOF {
-				fmt.Print(tf.Flush())
-				fmt.Println()
+				r.flush()
 				return toolCalls, nil
 			}
 			return toolCalls, fmt.Errorf("stream recv: %w", err)
@@ -178,13 +339,15 @@ func renderGRPCLoopWithTools(stream grpc.ServerStreamingClient[pb.ChatEvent], co
 
 		switch ev.GetType() {
 		case "content", "stream_chunk":
-			fmt.Print(tf.Filter(ev.GetContent()))
+			r.printChunk(ev.GetContent())
+
 		case "error", "stream_error":
-			Error(ev.GetError())
+			r.printError(ev.GetError())
+
 		case "done", "stream_end":
-			fmt.Print(tf.Flush())
-			fmt.Println()
+			r.flush()
 			return toolCalls, nil
+
 		case "tool_call":
 			if collectTools {
 				var tc ToolCallEvent
@@ -192,12 +355,23 @@ func renderGRPCLoopWithTools(stream grpc.ServerStreamingClient[pb.ChatEvent], co
 					toolCalls = append(toolCalls, tc)
 				}
 			} else {
-				Info(fmt.Sprintf("Tool call: %s", ev.GetData()))
+				r.printToolCall(ev.GetData())
 			}
-		case "tool_result", "stream_start", "stream_heartbeat":
-			// No display needed.
+
+		case "stream_progress":
+			r.printProgress(eventData(ev))
+
+		case "stream_tool_execution":
+			r.printToolExec(eventData(ev))
+
+		case "stream_heartbeat":
+			r.showHeartbeat()
+
+		case "tool_result", "stream_start":
+			// no display needed
+
 		default:
-			// Unknown event type; ignore.
+			// unknown event type; ignore
 		}
 	}
 }

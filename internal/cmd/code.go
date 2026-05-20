@@ -255,13 +255,10 @@ func buildCodeRequest(chatID, model, toolSchemas string, history []codeMessage, 
 
 // executeWithApproval runs a tool, asking for user confirmation if needed.
 func executeWithApproval(tc ui.ToolCallEvent, autoApply bool, p *ui.Printer) (string, error) {
-	p.Info(fmt.Sprintf("\nTool: %s", tc.Name))
-	if tc.Arguments != "" && tc.Arguments != "{}" {
-		p.Info(fmt.Sprintf("Args: %s", tc.Arguments))
-	}
+	p.ToolCall(tc.Name, tc.Arguments)
 
 	if tools.NeedsApproval(tc.Name) && !autoApply {
-		fmt.Print("Apply? [y/N] ")
+		fmt.Print("  Apply? [y/N] ")
 		var resp string
 		if _, err := fmt.Scanln(&resp); err != nil {
 			return "User declined to execute this tool.", nil
@@ -271,7 +268,22 @@ func executeWithApproval(tc ui.ToolCallEvent, autoApply bool, p *ui.Printer) (st
 		}
 	}
 
+	start := time.Now()
 	result, err := tools.Execute(tc.Name, tc.Arguments)
+	elapsed := time.Since(start)
+
+	status := "ok"
+	errResult := ""
+	if err != nil {
+		status = "error"
+		errResult = err.Error()
+	}
+	summary := result
+	if errResult != "" {
+		summary = errResult
+	}
+	p.ToolExec(tc.Name, status, elapsed.Milliseconds(), summary)
+
 	if err != nil {
 		return "Error: " + err.Error(), err
 	}

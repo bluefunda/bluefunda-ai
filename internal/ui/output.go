@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strings"
 	"text/tabwriter"
 
 	"github.com/fatih/color"
@@ -13,10 +14,13 @@ import (
 )
 
 var (
-	green  = color.New(color.FgGreen).SprintFunc()
-	red    = color.New(color.FgRed).SprintFunc()
-	yellow = color.New(color.FgYellow).SprintFunc()
-	cyan   = color.New(color.FgCyan).SprintFunc()
+	green    = color.New(color.FgGreen).SprintFunc()
+	red      = color.New(color.FgRed).SprintFunc()
+	yellow   = color.New(color.FgYellow).SprintFunc()
+	cyan     = color.New(color.FgCyan).SprintFunc()
+	dim      = color.New(color.Faint).SprintFunc()
+	dimGreen = color.New(color.FgGreen, color.Faint).SprintFunc()
+	dimRed   = color.New(color.FgRed, color.Faint).SprintFunc()
 )
 
 // OutputFormat controls how command results are rendered.
@@ -144,6 +148,61 @@ func (p *Printer) Table(headers []string, rows [][]string) {
 		}
 		w.Flush()
 	}
+}
+
+// ToolCall prints a formatted tool invocation line (for local/code tools).
+func (p *Printer) ToolCall(name, argsJSON string) {
+	if p.Format == FormatQuiet {
+		return
+	}
+	fmt.Fprintf(p.Err, "%s\n", dim("  ⚙  "+name+formatToolArgs(argsJSON)))
+}
+
+// ToolExec prints a tool execution result line with status and timing.
+func (p *Printer) ToolExec(name, status string, durationMs int64, summary string) {
+	if p.Format == FormatQuiet {
+		return
+	}
+	secs := fmt.Sprintf("%.1fs", float64(durationMs)/1000)
+	var icon string
+	if status == "ok" {
+		icon = dimGreen("  ✓  ")
+	} else {
+		icon = dimRed("  ✗  ")
+	}
+	tail := ""
+	if summary != "" {
+		s := summary
+		if len(s) > 60 {
+			s = s[:57] + "..."
+		}
+		tail = dim("  —  " + s)
+	}
+	fmt.Fprintf(p.Err, "%s%s\n", icon, dim(name+"  "+secs)+tail)
+}
+
+// formatToolArgs formats a JSON arguments string as (key=value, ...) for display.
+func formatToolArgs(argsJSON string) string {
+	if argsJSON == "" || argsJSON == "{}" {
+		return ""
+	}
+	var args map[string]any
+	if err := json.Unmarshal([]byte(argsJSON), &args); err != nil || len(args) == 0 {
+		return ""
+	}
+	parts := make([]string, 0, len(args))
+	for k, v := range args {
+		val := fmt.Sprintf("%v", v)
+		if len(val) > 40 {
+			val = val[:37] + "..."
+		}
+		parts = append(parts, k+"="+val)
+	}
+	result := "(" + strings.Join(parts, ", ") + ")"
+	if len(result) > 80 {
+		result = result[:77] + "...)"
+	}
+	return result
 }
 
 // --- Package-level helpers for backward compatibility / convenience ---

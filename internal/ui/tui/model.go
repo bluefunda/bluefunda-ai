@@ -132,7 +132,6 @@ type Model struct {
 	slashIdx     int
 
 	// Misc
-	err  error
 	quit bool
 }
 

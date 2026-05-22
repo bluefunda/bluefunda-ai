@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -361,77 +360,6 @@ func executeWithApprovalTUI(tc ui.ToolCallEvent, autoApply bool, p *ui.Printer, 
 	return result, nil
 }
 
-// agenticLoop runs one full agentic turn: sends a request to the LLM, handles
-// any tool calls by executing them locally and feeding results back, and repeats
-// until the LLM produces a content-only response.
-func agenticLoop(
-	conn *caigrpc.Conn,
-	cfg *config.Config,
-	chatID, model, toolSchemas string,
-	history []codeMessage,
-	isFirstTurn bool,
-	autoApply bool,
-	p *ui.Printer,
-) ([]codeMessage, error) {
-	const maxIterations = 20
-
-	for iteration := 0; iteration < maxIterations; iteration++ {
-		req := buildCodeRequest(chatID, model, toolSchemas, history, isFirstTurn && iteration == 0)
-
-		ctx, cancel := context.WithCancel(context.Background())
-		stream, err := conn.Client.Chat(ctx, req)
-		if err != nil {
-			cancel()
-			return history, err
-		}
-
-		fmt.Print("\nAI> ")
-		toolCalls, err := ui.StreamWithTools(stream, cancel)
-		if err != nil {
-			return history, err
-		}
-
-		if len(toolCalls) == 0 {
-			// Final content response — the LLM is done for this user turn.
-			return history, nil
-		}
-
-		// LLM wants to call tools. Execute each locally and collect results.
-		// First record the assistant's tool-call turn in history.
-		assistantMsg := codeMessage{
-			Role:    "assistant",
-			Content: "", // content was already streamed
-		}
-		for _, tc := range toolCalls {
-			assistantMsg.ToolCalls = append(assistantMsg.ToolCalls, codeToolCall{
-				ID:   tc.ID,
-				Type: "function",
-				Function: codeFuncCall{
-					Name:      tc.Name,
-					Arguments: tc.Arguments,
-				},
-			})
-		}
-		history = append(history, assistantMsg)
-
-		// Execute each tool and append the result to history.
-		for _, tc := range toolCalls {
-			result, execErr := executeWithApproval(tc, autoApply, p)
-			history = append(history, codeMessage{
-				Role:       "tool",
-				Content:    result,
-				ToolCallID: tc.ID,
-			})
-			if execErr != nil {
-				p.Warn(fmt.Sprintf("Tool %s failed: %s", tc.Name, execErr.Error()))
-			}
-		}
-	}
-
-	p.Warn("Maximum tool iterations reached.")
-	return history, nil
-}
-
 // buildCodeRequest constructs the gRPC ChatRequest for one agentic iteration.
 // The history and tool schemas are encoded in Prompt as a JSON cliCodePayload and the
 // model is prefixed with "cli/" so cai-llm-router can decode them. This works around
@@ -447,39 +375,3 @@ func buildCodeRequest(chatID, model, toolSchemas string, history []codeMessage, 
 	}
 }
 
-// executeWithApproval runs a tool, asking for user confirmation if needed.
-func executeWithApproval(tc ui.ToolCallEvent, autoApply bool, p *ui.Printer) (string, error) {
-	p.ToolCall(tc.Name, tc.Arguments)
-
-	if tools.NeedsApproval(tc.Name) && !autoApply {
-		fmt.Print("  Apply? [y/N] ")
-		var resp string
-		if _, err := fmt.Scanln(&resp); err != nil {
-			return "User declined to execute this tool.", nil
-		}
-		if strings.ToLower(strings.TrimSpace(resp)) != "y" {
-			return "User declined to execute this tool.", nil
-		}
-	}
-
-	start := time.Now()
-	result, err := tools.Execute(tc.Name, tc.Arguments)
-	elapsed := time.Since(start)
-
-	status := "ok"
-	errResult := ""
-	if err != nil {
-		status = "error"
-		errResult = err.Error()
-	}
-	summary := result
-	if errResult != "" {
-		summary = errResult
-	}
-	p.ToolExec(tc.Name, status, elapsed.Milliseconds(), summary)
-
-	if err != nil {
-		return "Error: " + err.Error(), err
-	}
-	return result, nil
-}

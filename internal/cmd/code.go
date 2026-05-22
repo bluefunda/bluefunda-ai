@@ -1,12 +1,11 @@
 package cmd
 
 import (
-	"bufio"
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
-	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -17,6 +16,7 @@ import (
 	caigrpc "github.com/bluefunda/cai-cli/internal/grpc"
 	"github.com/bluefunda/cai-cli/internal/tools"
 	"github.com/bluefunda/cai-cli/internal/ui"
+	"github.com/bluefunda/cai-cli/internal/ui/tui"
 )
 
 var (
@@ -94,83 +94,62 @@ func runCode(cmd *cobra.Command, args []string) error {
 
 	chatID := uuid.New().String()
 	p := printer(cfg)
-	p.Info(fmt.Sprintf("Code session %s (model: %s, dir: %s)", chatID, model, codeDir))
-	p.Info("Type /exit or Ctrl+D to quit. Use \\ at end of line for multiline.")
-	fmt.Println()
 
-	// history holds the full conversation for the current agentic session.
-	// It is sent to the backend on every iteration so the LLM has context.
+	// history is shared between TUI turns via closure.
 	var history []codeMessage
 	isFirstTurn := true
 
-	scanner := bufio.NewScanner(os.Stdin)
-	scanner.Buffer(make([]byte, 0, 1024*1024), 1024*1024)
-
-	for {
+	submitFn := func(cid, input string, isNew bool) <-chan tui.StreamEvent {
 		if conn.TS.NearExpiry(2 * time.Minute) {
 			if err := conn.TS.EnsureValidToken(); err != nil {
 				if authErr := reAuthenticate(cfg, p); authErr != nil {
-					p.Error("Cannot restore session: " + authErr.Error())
-					return authErr
+					ch := make(chan tui.StreamEvent, 1)
+					ch <- tui.StreamEvent{Kind: "error", ErrMsg: "auth: " + authErr.Error()}
+					close(ch)
+					return ch
 				}
-				fmt.Println()
 			}
 		}
 
-		fmt.Print("You> ")
-		var lines []string
-		gotInput := false
-
-		for scanner.Scan() {
-			gotInput = true
-			line := scanner.Text()
-			if strings.HasSuffix(line, "\\") {
-				lines = append(lines, strings.TrimSuffix(line, "\\"))
-				fmt.Print("...> ")
-				continue
-			}
-			lines = append(lines, line)
-			break
-		}
-
-		if err := scanner.Err(); err != nil {
-			return fmt.Errorf("read input: %w", err)
-		}
-		if !gotInput {
-			fmt.Println()
-			return nil
-		}
-
-		input := strings.TrimSpace(strings.Join(lines, "\n"))
-		if input == "" {
-			continue
-		}
-		if input == "/exit" {
-			return nil
-		}
-
-		// Append user message to history.
 		history = append(history, codeMessage{Role: "user", Content: input})
+		ch := make(chan tui.StreamEvent, 64)
 
-		// Run the agentic loop for this user turn.
-		history, err = agenticLoop(conn, cfg, chatID, model, toolSchemas, history, isFirstTurn, codeAutoApply, p)
-		if err != nil {
-			if caigrpc.IsAuthError(err) {
-				p.Warn("Session expired. Please try again.")
-			} else {
-				p.Error("Error: " + err.Error())
+		go func() {
+			defer close(ch)
+			newHistory, loopErr := agenticLoopTUI(
+				conn, cfg, cid, model, toolSchemas,
+				history, isFirstTurn && isNew, codeAutoApply,
+				p, ch,
+			)
+			history = newHistory
+			isFirstTurn = false
+			if loopErr != nil {
+				if !caigrpc.IsAuthError(loopErr) {
+					ch <- tui.StreamEvent{Kind: "error", ErrMsg: loopErr.Error()}
+				}
 			}
-		}
+			ch <- tui.StreamEvent{Kind: "done"}
+		}()
 
-		isFirstTurn = false
-		fmt.Println()
+		return ch
 	}
+
+	workDir, _ := os.Getwd()
+	tuiCfg := tui.SessionConfig{
+		ChatID:    chatID,
+		Model:     model,
+		IsCode:    true,
+		WorkDir:   workDir,
+		AutoApply: codeAutoApply,
+	}
+	m := tui.New(tuiCfg, submitFn)
+	return tui.Run(m)
 }
 
-// agenticLoop runs one full agentic turn: sends a request to the LLM, handles
-// any tool calls by executing them locally and feeding results back, and repeats
-// until the LLM produces a content-only response.
-func agenticLoop(
+// agenticLoopTUI runs the agentic loop for one user turn, sending tool events
+// and content chunks to ch for TUI rendering. It handles approval prompts by
+// sending StreamEvent{Kind:"approval"} and blocking on the reply channel.
+func agenticLoopTUI(
 	conn *caigrpc.Conn,
 	cfg *config.Config,
 	chatID, model, toolSchemas string,
@@ -178,6 +157,7 @@ func agenticLoop(
 	isFirstTurn bool,
 	autoApply bool,
 	p *ui.Printer,
+	ch chan<- tui.StreamEvent,
 ) ([]codeMessage, error) {
 	const maxIterations = 20
 
@@ -191,51 +171,193 @@ func agenticLoop(
 			return history, err
 		}
 
-		fmt.Print("\nAI> ")
-		toolCalls, err := ui.StreamWithTools(stream, cancel)
+		// Pump this iteration's stream into ch, collecting tool calls.
+		toolCalls, err := pumpCodeStream(stream, cancel, ch)
 		if err != nil {
 			return history, err
 		}
 
 		if len(toolCalls) == 0 {
-			// Final content response — the LLM is done for this user turn.
 			return history, nil
 		}
 
-		// LLM wants to call tools. Execute each locally and collect results.
-		// First record the assistant's tool-call turn in history.
-		assistantMsg := codeMessage{
-			Role:    "assistant",
-			Content: "", // content was already streamed
-		}
+		// Build assistant tool-call turn in history
+		assistantMsg := codeMessage{Role: "assistant"}
 		for _, tc := range toolCalls {
 			assistantMsg.ToolCalls = append(assistantMsg.ToolCalls, codeToolCall{
 				ID:   tc.ID,
 				Type: "function",
-				Function: codeFuncCall{
-					Name:      tc.Name,
-					Arguments: tc.Arguments,
-				},
+				Function: codeFuncCall{Name: tc.Name, Arguments: tc.Arguments},
 			})
 		}
 		history = append(history, assistantMsg)
 
-		// Execute each tool and append the result to history.
+		// Execute tools with TUI approval
 		for _, tc := range toolCalls {
-			result, execErr := executeWithApproval(tc, autoApply, p)
+			result, execErr := executeWithApprovalTUI(tc, autoApply, p, ch)
 			history = append(history, codeMessage{
 				Role:       "tool",
 				Content:    result,
 				ToolCallID: tc.ID,
 			})
 			if execErr != nil {
-				p.Warn(fmt.Sprintf("Tool %s failed: %s", tc.Name, execErr.Error()))
+				ch <- tui.StreamEvent{
+					Kind:   "tool_exec",
+					ToolName: tc.Name,
+					Status: "error",
+					Summary: execErr.Error(),
+				}
 			}
 		}
 	}
 
-	p.Warn("Maximum tool iterations reached.")
+	ch <- tui.StreamEvent{Kind: "chunk", Chunk: "\n⚠  Maximum tool iterations reached.\n"}
 	return history, nil
+}
+
+// pumpCodeStream reads a gRPC stream for one agentic iteration, forwarding
+// content/tool events to ch and collecting tool_call events for return.
+func pumpCodeStream(
+	stream interface {
+		Recv() (*pb.ChatEvent, error)
+	},
+	cancelFn context.CancelFunc,
+	ch chan<- tui.StreamEvent,
+) ([]ui.ToolCallEvent, error) {
+	defer cancelFn()
+	tf := &tui.ExportedThinkFilter{}
+	var toolCalls []ui.ToolCallEvent
+
+	for {
+		ev, err := stream.Recv()
+		if err != nil {
+			if err == io.EOF {
+				if tail := tf.Flush(); tail != "" {
+					ch <- tui.StreamEvent{Kind: "chunk", Chunk: tail}
+				}
+				return toolCalls, nil
+			}
+			return toolCalls, fmt.Errorf("stream recv: %w", err)
+		}
+
+		switch ev.GetType() {
+		case "content", "stream_chunk":
+			filtered := tf.Filter(ev.GetContent())
+			if filtered != "" {
+				ch <- tui.StreamEvent{Kind: "chunk", Chunk: filtered}
+			}
+
+		case "done", "stream_end":
+			if tail := tf.Flush(); tail != "" {
+				ch <- tui.StreamEvent{Kind: "chunk", Chunk: tail}
+			}
+			return toolCalls, nil
+
+		case "error", "stream_error":
+			return toolCalls, fmt.Errorf("%s", ev.GetError())
+
+		case "tool_call":
+			var tc ui.ToolCallEvent
+			data := ev.GetData()
+			if data == "" {
+				data = ev.GetContent()
+			}
+			if jsonErr := json.Unmarshal([]byte(data), &tc); jsonErr == nil {
+				toolCalls = append(toolCalls, tc)
+				ch <- tui.StreamEvent{
+					Kind:     "tool_call",
+					ToolID:   tc.ID,
+					ToolName: tc.Name,
+					ToolArgs: tc.Arguments,
+				}
+			}
+
+		case "stream_progress":
+			data := ev.GetData()
+			if data == "" {
+				data = ev.GetContent()
+			}
+			var prog struct {
+				Tools     []string `json:"tools"`
+				Iteration int      `json:"iteration"`
+			}
+			if jsonErr := json.Unmarshal([]byte(data), &prog); jsonErr == nil {
+				ch <- tui.StreamEvent{
+					Kind:      "progress",
+					Iteration: prog.Iteration,
+					Tools:     prog.Tools,
+				}
+			}
+
+		case "stream_tool_execution":
+			data := ev.GetData()
+			if data == "" {
+				data = ev.GetContent()
+			}
+			var te struct {
+				ToolName      string `json:"tool_name"`
+				Status        string `json:"status"`
+				DurationMs    int64  `json:"duration_ms"`
+				ResultSummary string `json:"result_summary"`
+			}
+			if jsonErr := json.Unmarshal([]byte(data), &te); jsonErr == nil {
+				ch <- tui.StreamEvent{
+					Kind:       "tool_exec",
+					ToolName:   te.ToolName,
+					Status:     te.Status,
+					DurationMs: te.DurationMs,
+					Summary:    te.ResultSummary,
+				}
+			}
+
+		case "stream_heartbeat":
+			ch <- tui.StreamEvent{Kind: "heartbeat"}
+		}
+	}
+}
+
+// executeWithApprovalTUI runs a tool, using the TUI approval flow when needed.
+func executeWithApprovalTUI(tc ui.ToolCallEvent, autoApply bool, p *ui.Printer, ch chan<- tui.StreamEvent) (string, error) {
+	if tools.NeedsApproval(tc.Name) && !autoApply {
+		replyCh := make(chan bool, 1)
+		ch <- tui.StreamEvent{
+			Kind:     "approval",
+			ToolName: tc.Name,
+			ToolArgs: tc.Arguments,
+			ReplyCh:  replyCh,
+		}
+		if approved := <-replyCh; !approved {
+			return "User declined to execute this tool.", nil
+		}
+	}
+
+	start := time.Now()
+	result, execErr := tools.Execute(tc.Name, tc.Arguments)
+	elapsed := time.Since(start)
+
+	status := "ok"
+	if execErr != nil {
+		status = "error"
+	}
+	summary := result
+	if execErr != nil {
+		summary = execErr.Error()
+	}
+	if len(summary) > 80 {
+		summary = summary[:77] + "..."
+	}
+	ch <- tui.StreamEvent{
+		Kind:       "tool_exec",
+		ToolName:   tc.Name,
+		Status:     status,
+		DurationMs: elapsed.Milliseconds(),
+		Summary:    summary,
+	}
+
+	if execErr != nil {
+		return "Error: " + execErr.Error(), execErr
+	}
+	return result, nil
 }
 
 // buildCodeRequest constructs the gRPC ChatRequest for one agentic iteration.
@@ -253,39 +375,3 @@ func buildCodeRequest(chatID, model, toolSchemas string, history []codeMessage, 
 	}
 }
 
-// executeWithApproval runs a tool, asking for user confirmation if needed.
-func executeWithApproval(tc ui.ToolCallEvent, autoApply bool, p *ui.Printer) (string, error) {
-	p.ToolCall(tc.Name, tc.Arguments)
-
-	if tools.NeedsApproval(tc.Name) && !autoApply {
-		fmt.Print("  Apply? [y/N] ")
-		var resp string
-		if _, err := fmt.Scanln(&resp); err != nil {
-			return "User declined to execute this tool.", nil
-		}
-		if strings.ToLower(strings.TrimSpace(resp)) != "y" {
-			return "User declined to execute this tool.", nil
-		}
-	}
-
-	start := time.Now()
-	result, err := tools.Execute(tc.Name, tc.Arguments)
-	elapsed := time.Since(start)
-
-	status := "ok"
-	errResult := ""
-	if err != nil {
-		status = "error"
-		errResult = err.Error()
-	}
-	summary := result
-	if errResult != "" {
-		summary = errResult
-	}
-	p.ToolExec(tc.Name, status, elapsed.Milliseconds(), summary)
-
-	if err != nil {
-		return "Error: " + err.Error(), err
-	}
-	return result, nil
-}

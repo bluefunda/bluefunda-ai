@@ -1,10 +1,8 @@
 package cmd
 
 import (
-	"bufio"
 	"context"
 	"fmt"
-	"os"
 	"strings"
 	"sync"
 	"time"
@@ -15,6 +13,7 @@ import (
 	pb "github.com/bluefunda/cai-cli/api/proto/bff"
 	caigrpc "github.com/bluefunda/cai-cli/internal/grpc"
 	"github.com/bluefunda/cai-cli/internal/ui"
+	"github.com/bluefunda/cai-cli/internal/ui/tui"
 )
 
 var chatCmd = &cobra.Command{
@@ -71,6 +70,7 @@ var (
 	chatModel     string
 	chatNew       bool
 	chatMCPServer string
+	chatDemo      bool
 )
 
 var chatStartCmd = &cobra.Command{
@@ -85,11 +85,16 @@ func init() {
 	chatStartCmd.Flags().StringVar(&chatModel, "model", "", "LLM model to use")
 	chatStartCmd.Flags().BoolVar(&chatNew, "new", false, "Force new chat (generate UUID)")
 	chatStartCmd.Flags().StringVar(&chatMCPServer, "mcp-server", "", "MCP server name")
+	chatStartCmd.Flags().BoolVar(&chatDemo, "demo", false, "Run with a mock backend (no auth required)")
 
 	chatCmd.AddCommand(chatListCmd, chatStartCmd, chatHistoryCmd, chatContextCmd, chatTitleCmd, chatStopCmd)
 }
 
 func runChatStart(cmd *cobra.Command, args []string) error {
+	if chatDemo {
+		return runChatDemo()
+	}
+
 	conn, cfg, err := bffConn()
 	if err != nil {
 		return err
@@ -105,76 +110,36 @@ func runChatStart(cmd *cobra.Command, args []string) error {
 	}
 
 	var chatID string
-	isNewChat := true
-
+	resuming := false
 	if len(args) > 0 && !chatNew {
 		chatID = args[0]
-		isNewChat = false
+		resuming = true
 	} else {
 		chatID = uuid.New().String()
 	}
+	_ = resuming
 
 	p := printer(cfg)
-	p.Info(fmt.Sprintf("Chat %s (model: %s)", chatID, model))
-	p.Info("Type /exit or Ctrl+D to quit. Use \\ at end of line for multiline input.")
-	fmt.Println()
+	var titleWg sync.WaitGroup
 
-	var wg sync.WaitGroup
-	scanner := bufio.NewScanner(os.Stdin)
-	scanner.Buffer(make([]byte, 0, 1024*1024), 1024*1024)
-
-	for {
-		// Proactive token check before showing prompt.
+	submitFn := func(cid, input string, isNew bool) <-chan tui.StreamEvent {
+		// Token check before each request
 		if conn.TS.NearExpiry(2 * time.Minute) {
 			if err := conn.TS.EnsureValidToken(); err != nil {
-				// Silent refresh failed — try inline re-auth.
 				if authErr := reAuthenticate(cfg, p); authErr != nil {
-					p.Error("Cannot restore session: " + authErr.Error())
-					return authErr
+					ch := make(chan tui.StreamEvent, 1)
+					ch <- tui.StreamEvent{Kind: "error", ErrMsg: "auth: " + authErr.Error()}
+					close(ch)
+					return ch
 				}
-				fmt.Println()
 			}
-		}
-
-		fmt.Print("You> ")
-		var lines []string
-		gotInput := false
-
-		for scanner.Scan() {
-			gotInput = true
-			line := scanner.Text()
-			if strings.HasSuffix(line, "\\") {
-				lines = append(lines, strings.TrimSuffix(line, "\\"))
-				fmt.Print("...> ")
-				continue
-			}
-			lines = append(lines, line)
-			break
-		}
-
-		if err := scanner.Err(); err != nil {
-			return fmt.Errorf("read input: %w", err)
-		}
-		if !gotInput {
-			fmt.Println()
-			wg.Wait()
-			return nil
-		}
-
-		input := strings.TrimSpace(strings.Join(lines, "\n"))
-		if input == "" {
-			continue
-		}
-		if input == "/exit" {
-			wg.Wait()
-			return nil
 		}
 
 		req := &pb.ChatRequest{
-			ChatId:        chatID,
+			ChatId:        cid,
 			Prompt:        input,
 			Model:         model,
-			IsNewChat:     isNewChat,
+			IsNewChat:     isNew,
 			McpServerName: chatMCPServer,
 		}
 
@@ -182,51 +147,53 @@ func runChatStart(cmd *cobra.Command, args []string) error {
 		stream, err := conn.Client.Chat(ctx, req)
 		if err != nil {
 			cancel()
-			// On auth error, try inline re-auth and retry the same request.
 			if caigrpc.IsAuthError(err) {
-				if authErr := reAuthenticate(cfg, p); authErr != nil {
-					p.Error("Cannot restore session: " + authErr.Error())
-					return authErr
-				}
-				p.Info("Retrying your message...")
-				ctx2, cancel2 := context.WithCancel(context.Background())
-				stream, err = conn.Client.Chat(ctx2, req)
-				if err != nil {
-					cancel2()
-					p.Error("Retry failed: " + err.Error())
-					continue
-				}
-				if err := ui.RenderGRPCStream(stream, cancel2); err != nil {
-					p.Error("Stream error: " + err.Error())
-				}
-			} else {
-				p.Error("Request failed: " + err.Error())
-				continue
-			}
-		} else {
-			if err := ui.RenderGRPCStream(stream, cancel); err != nil {
-				if caigrpc.IsAuthError(err) {
-					p.Warn("Session expired during stream. Will re-authenticate before next prompt.")
-				} else {
-					p.Error("Stream error: " + err.Error())
+				if authErr := reAuthenticate(cfg, p); authErr == nil {
+					ctx2, cancel2 := context.WithCancel(context.Background())
+					stream, err = conn.Client.Chat(ctx2, req)
+					if err != nil {
+						cancel2()
+					} else {
+						ch := tui.PumpGRPCStream(stream, cancel2)
+						if isNew {
+							titleWg.Add(1)
+							go generateTitle(conn, &titleWg, cid, input)
+						}
+						return ch
+					}
 				}
 			}
+			ch := make(chan tui.StreamEvent, 1)
+			ch <- tui.StreamEvent{Kind: "error", ErrMsg: err.Error()}
+			close(ch)
+			return ch
 		}
 
-		// Generate title after first successful exchange
-		if isNewChat {
-			wg.Add(1)
-			go func(id, prompt string) {
-				defer wg.Done()
-				tCtx, tCancel := caigrpc.ContextWithTimeout()
-				defer tCancel()
-				_, _ = conn.Client.GenerateTitle(tCtx, &pb.GenerateTitleRequest{ChatId: id, Prompt: prompt})
-			}(chatID, input)
+		if isNew {
+			titleWg.Add(1)
+			go generateTitle(conn, &titleWg, cid, input)
 		}
-
-		isNewChat = false
-		fmt.Println()
+		return tui.PumpGRPCStream(stream, cancel)
 	}
+
+	cfg2 := tui.SessionConfig{
+		ChatID: chatID,
+		Model:  model,
+	}
+	m := tui.New(cfg2, submitFn)
+	if err := tui.Run(m); err != nil {
+		return err
+	}
+
+	titleWg.Wait()
+	return nil
+}
+
+func generateTitle(conn *caigrpc.Conn, wg *sync.WaitGroup, chatID, prompt string) {
+	defer wg.Done()
+	tCtx, tCancel := caigrpc.ContextWithTimeout()
+	defer tCancel()
+	_, _ = conn.Client.GenerateTitle(tCtx, &pb.GenerateTitleRequest{ChatId: chatID, Prompt: prompt})
 }
 
 // --- chat history ---
@@ -377,6 +344,92 @@ func runChatStop(cmd *cobra.Command, args []string) error {
 		p.Error("Failed to stop chat")
 	}
 	return nil
+}
+
+// --- demo mode ---
+
+func runChatDemo() error {
+	submitFn := func(chatID, input string, isNew bool) <-chan tui.StreamEvent {
+		ch := make(chan tui.StreamEvent, 128)
+		go func() {
+			defer close(ch)
+			demoRespond(input, ch)
+		}()
+		return ch
+	}
+
+	cfg := tui.SessionConfig{
+		ChatID: uuid.New().String(),
+		Model:  "demo",
+	}
+	return tui.Run(tui.New(cfg, submitFn))
+}
+
+// demoRespond simulates a realistic assistant response for UI preview.
+func demoRespond(input string, ch chan<- tui.StreamEvent) {
+	time.Sleep(180 * time.Millisecond)
+	ch <- tui.StreamEvent{Kind: "heartbeat"}
+	time.Sleep(120 * time.Millisecond)
+
+	// Simulate a tool call for inputs that look like file/code questions
+	lc := strings.ToLower(input)
+	if strings.Contains(lc, "read") || strings.Contains(lc, "file") ||
+		strings.Contains(lc, "code") || strings.Contains(lc, "list") {
+		ch <- tui.StreamEvent{Kind: "heartbeat"}
+		time.Sleep(80 * time.Millisecond)
+		ch <- tui.StreamEvent{
+			Kind:     "tool_call",
+			ToolName: "read_file",
+			ToolArgs: `{"path":"src/main.go"}`,
+		}
+		time.Sleep(240 * time.Millisecond)
+		ch <- tui.StreamEvent{
+			Kind:       "tool_exec",
+			ToolName:   "read_file",
+			Status:     "ok",
+			DurationMs: 12,
+			Summary:    "214 lines",
+		}
+		time.Sleep(80 * time.Millisecond)
+	}
+
+	// Stream the markdown response word-by-word
+	response := buildDemoResponse(input)
+	words := strings.Fields(response)
+	buf := ""
+	for i, w := range words {
+		buf += w
+		if i < len(words)-1 {
+			buf += " "
+		}
+		// Flush in small batches to simulate realistic token streaming
+		if len(buf) >= 6 || i == len(words)-1 {
+			ch <- tui.StreamEvent{Kind: "chunk", Chunk: buf}
+			buf = ""
+			time.Sleep(22 * time.Millisecond)
+		}
+	}
+	ch <- tui.StreamEvent{Kind: "done"}
+}
+
+func buildDemoResponse(input string) string {
+	lc := strings.ToLower(input)
+	switch {
+	case strings.Contains(lc, "hello") || strings.Contains(lc, "hi"):
+		return "Hello! I'm your AI coding assistant. How can I help you today?\n\nYou can ask me to:\n- **Read** and explain code files\n- **Write** or edit code\n- **Run** shell commands\n- **Search** your project\n\nType `/help` to see all available commands."
+
+	case strings.Contains(lc, "help"):
+		return "Here's what I can do:\n\n## File Operations\n- `read_file` — read any file\n- `write_file` — create or update files\n- `list_dir` — browse directories\n- `search_files` — glob pattern search\n\n## Shell\n- `bash` — run shell commands\n\n## Slash Commands\nType `/` to see the command palette."
+
+	case strings.Contains(lc, "code") || strings.Contains(lc, "file"):
+		return "I've read the file. Here's a summary:\n\n```go\nfunc main() {\n    if err := cmd.Execute(); err != nil {\n        os.Exit(1)\n    }\n}\n```\n\nThis is the entry point. It delegates to the cobra command tree in `internal/cmd/`. Want me to explore any specific part?"
+
+	case strings.Contains(lc, "test"):
+		return "Running the test suite:\n\n```\nok   internal/cmd       0.031s\nok   internal/config    0.004s\nok   internal/grpc      0.002s\nok   internal/ui        0.008s\n```\n\nAll **4 packages** passed. Coverage looks good."
+
+	default:
+		return fmt.Sprintf("I understand you're asking about: *%s*\n\nThis is a **demo mode** response — connect to a real backend with `ai chat start --new` to get actual AI responses.\n\nTry asking me to:\n- Read a file\n- Help with code\n- Run tests", input)
+	}
 }
 
 // --- helpers ---

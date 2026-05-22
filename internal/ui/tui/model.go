@@ -1,0 +1,677 @@
+package tui
+
+import (
+	"fmt"
+	"strings"
+	"time"
+
+	"github.com/charmbracelet/bubbles/textarea"
+	"github.com/charmbracelet/bubbles/viewport"
+	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
+)
+
+// ──────────────────────────────────────────────
+//  Tea messages (events sent to the BubbleTea loop)
+// ──────────────────────────────────────────────
+
+type StreamChunkMsg struct{ Chunk string }
+type StreamToolCallMsg struct {
+	ID   string
+	Name string
+	Args string
+}
+type StreamToolExecMsg struct {
+	Name       string
+	Status     string
+	DurationMs int64
+	Summary    string
+}
+type StreamProgressMsg struct {
+	Iteration int
+	Tools     []string
+}
+type StreamHeartbeatMsg struct{}
+type StreamDoneMsg struct{ Err error }
+type StreamErrorMsg struct{ Msg string }
+type ApprovalRequestMsg struct {
+	ToolName string
+	Args     string
+	ReplyCh  chan bool
+}
+type ApprovalResponseMsg struct{ Approved bool }
+
+// tickMsg drives the spinner animation.
+type tickMsg time.Time
+
+// ──────────────────────────────────────────────
+//  SessionConfig is passed from cmd to the TUI
+// ──────────────────────────────────────────────
+
+type SessionConfig struct {
+	ChatID    string
+	Model     string
+	IsCode    bool   // code session (has local tools)
+	WorkDir   string // for code sessions
+	AutoApply bool
+}
+
+// StreamEvent is a discriminated union of all events that can arrive from a
+// gRPC stream. The BubbleTea cmd reads one event from the channel per tick.
+type StreamEvent struct {
+	Kind string // "chunk"|"tool_call"|"tool_exec"|"progress"|"heartbeat"|"approval"|"done"|"error"
+	// chunk
+	Chunk string
+	// tool_call / tool_exec / approval
+	ToolID   string
+	ToolName string
+	ToolArgs string
+	// tool_exec
+	Status     string
+	DurationMs int64
+	Summary    string
+	// progress
+	Iteration int
+	Tools     []string
+	// approval: reply channel (true=approved)
+	ReplyCh chan bool
+	// done / error
+	Err    error
+	ErrMsg string
+}
+
+// SubmitFn opens a gRPC stream for the given input and pumps events into the
+// returned channel. The channel is closed when the stream ends.
+type SubmitFn func(chatID, input string, isNew bool) <-chan StreamEvent
+
+// ──────────────────────────────────────────────
+//  Model
+// ──────────────────────────────────────────────
+
+const (
+	headerHeight  = 2
+	footerHeight  = 1
+	inputMinLines = 1
+)
+
+type Model struct {
+	// Layout
+	width, height int
+
+	// Session
+	cfg       SessionConfig
+	isNewChat bool
+	submitFn  SubmitFn
+	theme     Theme
+
+	// Messages
+	messages []ChatMessage
+
+	// Viewport (conversation scroll area)
+	viewport viewport.Model
+	vpReady  bool
+	atBottom bool
+
+	// Input area
+	textarea     textarea.Model
+	inputHistory []string
+	historyIdx   int
+	historyDraft string
+
+	// Streaming
+	streaming  bool
+	streamCh   <-chan StreamEvent
+	spinnerIdx int
+
+	// Approval prompt (tool confirmation)
+	pendingApproval *ApprovalRequestMsg
+
+	// Slash command menu
+	showSlash    bool
+	slashMatches []SlashCommand
+	slashIdx     int
+
+	// Misc
+	err  error
+	quit bool
+}
+
+// New creates a new TUI model.
+func New(cfg SessionConfig, submit SubmitFn) Model {
+	th := DefaultTheme()
+
+	ta := textarea.New()
+	ta.Placeholder = "Ask BlueFunda AI..."
+	ta.ShowLineNumbers = false
+	ta.CharLimit = 0
+	ta.SetWidth(80)
+	ta.SetHeight(inputMinLines)
+	ta.Focus()
+	// Style the textarea
+	ta.FocusedStyle.Base = lipgloss.NewStyle().Foreground(th.Foreground)
+	ta.FocusedStyle.Placeholder = lipgloss.NewStyle().Foreground(th.Muted)
+	ta.FocusedStyle.CursorLine = lipgloss.NewStyle()
+	ta.BlurredStyle = ta.FocusedStyle
+	ta.KeyMap.InsertNewline.SetKeys("shift+enter", "ctrl+j")
+
+	vp := viewport.New(80, 20)
+	vp.SetContent("")
+
+	m := Model{
+		cfg:       cfg,
+		isNewChat: true,
+		submitFn:  submit,
+		theme:     th,
+		textarea:  ta,
+		viewport:  vp,
+		atBottom:  true,
+		historyIdx: -1,
+	}
+
+	// Show the welcome system message
+	welcome := fmt.Sprintf("Session %s  ·  model: %s", cfg.ChatID[:8], cfg.Model)
+	if cfg.IsCode {
+		welcome += fmt.Sprintf("  ·  dir: %s", cfg.WorkDir)
+	}
+	m.messages = append(m.messages, newSystemMessage(welcome))
+	return m
+}
+
+func (m Model) Init() tea.Cmd {
+	return tea.Batch(
+		textarea.Blink,
+		tickCmd(),
+	)
+}
+
+func tickCmd() tea.Cmd {
+	return tea.Tick(100*time.Millisecond, func(t time.Time) tea.Msg {
+		return tickMsg(t)
+	})
+}
+
+// ──────────────────────────────────────────────
+//  Update
+// ──────────────────────────────────────────────
+
+func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	var cmds []tea.Cmd
+
+	switch msg := msg.(type) {
+
+	case tea.WindowSizeMsg:
+		m.width = msg.Width
+		m.height = msg.Height
+		return m.handleResize(), nil
+
+	case tickMsg:
+		if m.streaming {
+			m.spinnerIdx++
+		}
+		cmds = append(cmds, tickCmd())
+
+	// ── Stream events (channel-based) ──────────
+
+	case StreamEvent:
+		cmds = append(cmds, m.handleStreamEvent(msg)...)
+
+	case StreamDoneMsg:
+		m.streaming = false
+		if len(m.messages) > 0 {
+			last := len(m.messages) - 1
+			if m.messages[last].Role == RoleAssistant {
+				m.messages[last].finishStreaming()
+			}
+		}
+		if msg.Err != nil {
+			m.messages = append(m.messages, newSystemMessage("Error: "+msg.Err.Error()))
+		}
+		m.refreshViewport()
+		m.viewport.GotoBottom()
+		m.textarea.Focus()
+		cmds = append(cmds, textarea.Blink)
+
+	// ── Approval ──────────────────────────────
+
+	case ApprovalRequestMsg:
+		m.pendingApproval = &msg
+		m.refreshViewport()
+
+
+	// ── Keyboard ──────────────────────────────
+
+	case tea.KeyMsg:
+		if m.pendingApproval != nil {
+			return m.handleApprovalKey(msg)
+		}
+		return m.handleKey(msg)
+	}
+
+	// Route all remaining events to textarea and viewport
+	if !m.streaming {
+		var taCmd tea.Cmd
+		m.textarea, taCmd = m.textarea.Update(msg)
+		cmds = append(cmds, taCmd)
+
+		// Update slash menu whenever text changes
+		m.updateSlashMenu()
+	}
+
+	var vpCmd tea.Cmd
+	m.viewport, vpCmd = m.viewport.Update(msg)
+	cmds = append(cmds, vpCmd)
+
+	return m, tea.Batch(cmds...)
+}
+
+func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	var cmds []tea.Cmd
+
+	switch msg.String() {
+
+	case "ctrl+c":
+		m.quit = true
+		return m, tea.Quit
+
+	case "ctrl+d":
+		if m.textarea.Value() == "" {
+			m.quit = true
+			return m, tea.Quit
+		}
+
+	case "ctrl+l":
+		// Clear conversation display
+		m.messages = m.messages[:0]
+		m.messages = append(m.messages, newSystemMessage("Screen cleared."))
+		m.refreshViewport()
+		return m, nil
+
+	case "enter":
+		if m.showSlash {
+			return m.acceptSlashCommand()
+		}
+		if m.streaming {
+			return m, nil
+		}
+		return m.submitInput()
+
+	case "up":
+		if m.showSlash {
+			if m.slashIdx > 0 {
+				m.slashIdx--
+			}
+			return m, nil
+		}
+		// History navigation
+		if !m.textarea.Focused() {
+			break
+		}
+		if m.historyIdx == -1 && len(m.inputHistory) > 0 {
+			m.historyDraft = m.textarea.Value()
+			m.historyIdx = len(m.inputHistory) - 1
+			m.textarea.SetValue(m.inputHistory[m.historyIdx])
+			m.textarea.CursorEnd()
+			return m, nil
+		} else if m.historyIdx > 0 {
+			m.historyIdx--
+			m.textarea.SetValue(m.inputHistory[m.historyIdx])
+			m.textarea.CursorEnd()
+			return m, nil
+		}
+
+	case "down":
+		if m.showSlash {
+			if m.slashIdx < len(m.slashMatches)-1 {
+				m.slashIdx++
+			}
+			return m, nil
+		}
+		// History navigation
+		if m.historyIdx != -1 {
+			if m.historyIdx < len(m.inputHistory)-1 {
+				m.historyIdx++
+				m.textarea.SetValue(m.inputHistory[m.historyIdx])
+			} else {
+				m.historyIdx = -1
+				m.textarea.SetValue(m.historyDraft)
+			}
+			m.textarea.CursorEnd()
+			return m, nil
+		}
+
+	case "esc":
+		if m.showSlash {
+			m.showSlash = false
+			return m, nil
+		}
+
+	case "tab":
+		if m.showSlash && len(m.slashMatches) > 0 {
+			return m.acceptSlashCommand()
+		}
+
+	case "pgup":
+		m.viewport.PageUp()
+		m.atBottom = false
+		return m, nil
+
+	case "pgdown":
+		m.viewport.PageDown()
+		m.atBottom = m.viewport.AtBottom()
+		return m, nil
+	}
+
+	var taCmd tea.Cmd
+	m.textarea, taCmd = m.textarea.Update(msg)
+	cmds = append(cmds, taCmd)
+	m.updateSlashMenu()
+
+	return m, tea.Batch(cmds...)
+}
+
+func (m Model) handleApprovalKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch strings.ToLower(msg.String()) {
+	case "y":
+		ch := m.streamCh
+		replyCh := m.pendingApproval.ReplyCh
+		m.pendingApproval = nil
+		m.messages = append(m.messages, newSystemMessage("  Applied."))
+		m.refreshViewport()
+		// Send approval answer (unblocks code goroutine) then resume stream pump.
+		return m, func() tea.Msg {
+			replyCh <- true
+			return waitForStreamEvent(ch)()
+		}
+	case "n", "esc":
+		ch := m.streamCh
+		replyCh := m.pendingApproval.ReplyCh
+		m.pendingApproval = nil
+		m.messages = append(m.messages, newSystemMessage("  Skipped."))
+		m.refreshViewport()
+		return m, func() tea.Msg {
+			replyCh <- false
+			return waitForStreamEvent(ch)()
+		}
+	case "ctrl+c":
+		m.quit = true
+		if m.pendingApproval != nil {
+			m.pendingApproval.ReplyCh <- false
+			m.pendingApproval = nil
+		}
+		return m, tea.Quit
+	}
+	return m, nil
+}
+
+func (m Model) submitInput() (tea.Model, tea.Cmd) {
+	input := strings.TrimSpace(m.textarea.Value())
+	if input == "" {
+		return m, nil
+	}
+
+	// Handle slash commands
+	if strings.HasPrefix(input, "/") {
+		return m.handleSlashCommand(input)
+	}
+
+	m.textarea.Reset()
+	m.showSlash = false
+	m.historyIdx = -1
+
+	// Record in history (dedup consecutive identical)
+	if len(m.inputHistory) == 0 || m.inputHistory[len(m.inputHistory)-1] != input {
+		m.inputHistory = append(m.inputHistory, input)
+		if len(m.inputHistory) > 200 {
+			m.inputHistory = m.inputHistory[1:]
+		}
+	}
+
+	// Append user message
+	m.messages = append(m.messages, newUserMessage(input))
+	m.streaming = true
+	m.textarea.Blur()
+	m.refreshViewport()
+	m.viewport.GotoBottom()
+
+	isNew := m.isNewChat
+	m.isNewChat = false
+
+	// Open the stream and start pumping events via cmd chaining.
+	m.streamCh = m.submitFn(m.cfg.ChatID, input, isNew)
+	return m, waitForStreamEvent(m.streamCh)
+}
+
+func (m Model) handleSlashCommand(input string) (tea.Model, tea.Cmd) {
+	m.textarea.Reset()
+	m.showSlash = false
+
+	switch {
+	case input == "/exit" || input == "/quit":
+		m.quit = true
+		return m, tea.Quit
+
+	case input == "/clear":
+		m.messages = m.messages[:0]
+		m.messages = append(m.messages, newSystemMessage("Conversation cleared."))
+		m.refreshViewport()
+
+	case input == "/reset":
+		m.messages = m.messages[:0]
+		m.isNewChat = true
+		m.messages = append(m.messages, newSystemMessage(
+			fmt.Sprintf("New session started  ·  model: %s", m.cfg.Model)))
+		m.refreshViewport()
+
+	case input == "/help":
+		m.messages = append(m.messages, newSystemMessage(helpText()))
+		m.refreshViewport()
+
+	case input == "/model":
+		m.messages = append(m.messages, newSystemMessage("Model: "+m.cfg.Model))
+		m.refreshViewport()
+
+	case input == "/tools" && m.cfg.IsCode:
+		m.messages = append(m.messages, newSystemMessage(
+			"Available tools: read_file · write_file · list_dir · search_files · bash"))
+		m.refreshViewport()
+
+	case input == "/context":
+		m.messages = append(m.messages, newSystemMessage(
+			fmt.Sprintf("Chat ID: %s  ·  Messages: %d", m.cfg.ChatID, len(m.messages))))
+		m.refreshViewport()
+
+	default:
+		m.messages = append(m.messages, newSystemMessage("Unknown command: "+input))
+		m.refreshViewport()
+	}
+
+	m.viewport.GotoBottom()
+	return m, nil
+}
+
+func (m *Model) acceptSlashCommand() (tea.Model, tea.Cmd) {
+	if len(m.slashMatches) == 0 {
+		return m, nil
+	}
+	cmd := m.slashMatches[m.slashIdx]
+	m.textarea.SetValue(cmd.Name)
+	m.textarea.CursorEnd()
+	m.showSlash = false
+	return m, nil
+}
+
+func (m *Model) updateSlashMenu() {
+	val := m.textarea.Value()
+	if strings.HasPrefix(val, "/") && !strings.Contains(val, "\n") {
+		m.slashMatches = matchSlashCommands(val)
+		m.showSlash = len(m.slashMatches) > 0
+		if m.slashIdx >= len(m.slashMatches) {
+			m.slashIdx = 0
+		}
+	} else {
+		m.showSlash = false
+	}
+}
+
+func (m *Model) ensureAssistantMsg() {
+	if len(m.messages) == 0 || m.messages[len(m.messages)-1].Role != RoleAssistant ||
+		!m.messages[len(m.messages)-1].Streaming {
+		m.messages = append(m.messages, newAssistantMessage())
+	}
+}
+
+func (m Model) handleResize() Model {
+	m.width = max(m.width, 40)
+	m.height = max(m.height, 10)
+
+	inputH := inputMinLines + 2 // border
+	vpH := m.height - headerHeight - footerHeight - inputH - 2
+	if vpH < 4 {
+		vpH = 4
+	}
+
+	m.viewport.Width = m.width
+	m.viewport.Height = vpH
+	m.textarea.SetWidth(m.width - 4)
+
+	m.vpReady = true
+	m.refreshViewport()
+	if m.atBottom {
+		m.viewport.GotoBottom()
+	}
+	return m
+}
+
+func (m *Model) refreshViewport() {
+	if !m.vpReady {
+		return
+	}
+	m.viewport.SetContent(m.renderMessages())
+}
+
+func helpText() string {
+	return strings.Join([]string{
+		"",
+		"  Keyboard shortcuts",
+		"  ─────────────────────────────────",
+		"  Enter          Send message",
+		"  Shift+Enter    New line",
+		"  Up/Down        Navigate input history",
+		"  Ctrl+L         Clear screen",
+		"  Ctrl+C / Ctrl+D  Quit",
+		"  PgUp/PgDn      Scroll conversation",
+		"",
+		"  Slash commands",
+		"  ─────────────────────────────────",
+		"  /help   /clear  /reset  /model",
+		"  /tools  /context  /exit",
+		"",
+	}, "\n")
+}
+
+// handleStreamEvent processes one StreamEvent from the channel and returns any
+// follow-on cmds (always includes the next read unless the stream is done).
+func (m *Model) handleStreamEvent(ev StreamEvent) []tea.Cmd {
+	var cmds []tea.Cmd
+
+	switch ev.Kind {
+	case "chunk":
+		m.ensureAssistantMsg()
+		last := len(m.messages) - 1
+		m.messages[last].appendChunk(ev.Chunk)
+		m.refreshViewport()
+		if m.atBottom {
+			m.viewport.GotoBottom()
+		}
+		cmds = append(cmds, waitForStreamEvent(m.streamCh))
+
+	case "tool_call":
+		m.ensureAssistantMsg()
+		last := len(m.messages) - 1
+		m.messages[last].addToolEvent(ToolEvent{
+			Kind: ToolCall,
+			Name: ev.ToolName,
+			Args: ev.ToolArgs,
+		})
+		m.refreshViewport()
+		cmds = append(cmds, waitForStreamEvent(m.streamCh))
+
+	case "tool_exec":
+		m.ensureAssistantMsg()
+		last := len(m.messages) - 1
+		m.messages[last].addToolEvent(ToolEvent{
+			Kind:       ToolExec,
+			Name:       ev.ToolName,
+			Status:     ev.Status,
+			DurationMs: ev.DurationMs,
+			Summary:    ev.Summary,
+		})
+		m.refreshViewport()
+		cmds = append(cmds, waitForStreamEvent(m.streamCh))
+
+	case "progress":
+		m.ensureAssistantMsg()
+		last := len(m.messages) - 1
+		m.messages[last].addToolEvent(ToolEvent{
+			Kind:      ToolProgress,
+			Iteration: ev.Iteration,
+			Tools:     ev.Tools,
+		})
+		m.refreshViewport()
+		cmds = append(cmds, waitForStreamEvent(m.streamCh))
+
+	case "heartbeat":
+		cmds = append(cmds, waitForStreamEvent(m.streamCh))
+
+	case "approval":
+		// The stream goroutine already created a reply channel; store it.
+		// The stream pump is suspended until handleApprovalKey sends the answer.
+		ap := ApprovalRequestMsg{ToolName: ev.ToolName, Args: ev.ToolArgs, ReplyCh: ev.ReplyCh}
+		m.pendingApproval = &ap
+		m.refreshViewport()
+		// No next-read cmd here — handleApprovalKey will resume the stream pump.
+
+	case "error":
+		m.streaming = false
+		m.messages = append(m.messages, newSystemMessage("Error: "+ev.ErrMsg))
+		m.refreshViewport()
+		m.textarea.Focus()
+
+	case "done":
+		// handled as StreamDoneMsg — but also handle inline
+		m.streaming = false
+		if len(m.messages) > 0 {
+			last := len(m.messages) - 1
+			if m.messages[last].Role == RoleAssistant {
+				m.messages[last].finishStreaming()
+			}
+		}
+		m.refreshViewport()
+		m.viewport.GotoBottom()
+		m.textarea.Focus()
+		cmds = append(cmds, textarea.Blink)
+	}
+
+	return cmds
+}
+
+
+func max(a, b int) int {
+	if a > b {
+		return a
+	}
+	return b
+}
+
+// waitForStreamEvent returns a tea.Cmd that blocks until the next StreamEvent
+// arrives on ch, then returns it as a tea.Msg. The Update handler processes the
+// event and calls waitForStreamEvent again until the stream is done.
+func waitForStreamEvent(ch <-chan StreamEvent) tea.Cmd {
+	return func() tea.Msg {
+		ev, ok := <-ch
+		if !ok {
+			return StreamDoneMsg{}
+		}
+		return ev
+	}
+}

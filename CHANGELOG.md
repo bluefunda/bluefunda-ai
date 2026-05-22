@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.8.0](https://github.com/bluefunda/cai-cli/compare/v1.7.0...v1.8.0) (2026-05-22)
+
+
+### Features
+
+* replace REPL with full BubbleTea TUI ([#51](https://github.com/bluefunda/cai-cli/issues/51)) ([8478df6](https://github.com/bluefunda/cai-cli/commit/8478df6e03d41a865dbfae5bbe5752f52af743ee))
+
 ## [1.7.0](https://github.com/bluefunda/cai-cli/compare/v1.6.1...v1.7.0) (2026-05-20)
 
 

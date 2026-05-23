@@ -14,10 +14,10 @@ COPY . .
 
 ARG VERSION=dev
 RUN CGO_ENABLED=0 go build \
-    -ldflags "-X github.com/bluefunda/cai-cli/internal/cmd.Version=${VERSION}" \
-    -o /ai ./cmd/ai
+    -ldflags "-X github.com/bluefunda/bluefunda-ai/internal/cmd.Version=${VERSION}" \
+    -o /bai ./cmd/bai
 
 FROM alpine:3.21
 RUN apk --no-cache add ca-certificates
-COPY --from=builder /ai /usr/local/bin/ai
-ENTRYPOINT ["ai"]
+COPY --from=builder /bai /usr/local/bin/bai
+ENTRYPOINT ["bai"]

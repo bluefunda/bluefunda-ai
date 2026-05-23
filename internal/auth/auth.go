@@ -11,7 +11,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/bluefunda/cai-cli/internal/config"
+	"github.com/bluefunda/bluefunda-ai/internal/config"
 )
 
 // TokenResponse holds the tokens returned by Keycloak.

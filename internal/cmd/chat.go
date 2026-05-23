@@ -10,10 +10,10 @@ import (
 	"github.com/google/uuid"
 	"github.com/spf13/cobra"
 
-	pb "github.com/bluefunda/cai-cli/api/proto/bff"
-	caigrpc "github.com/bluefunda/cai-cli/internal/grpc"
-	"github.com/bluefunda/cai-cli/internal/ui"
-	"github.com/bluefunda/cai-cli/internal/ui/tui"
+	pb "github.com/bluefunda/bluefunda-ai/api/proto/bff"
+	caigrpc "github.com/bluefunda/bluefunda-ai/internal/grpc"
+	"github.com/bluefunda/bluefunda-ai/internal/ui"
+	"github.com/bluefunda/bluefunda-ai/internal/ui/tui"
 )
 
 var chatCmd = &cobra.Command{

@@ -5,7 +5,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	caigrpc "github.com/bluefunda/cai-cli/internal/grpc"
+	caigrpc "github.com/bluefunda/bluefunda-ai/internal/grpc"
 )
 
 var healthCmd = &cobra.Command{

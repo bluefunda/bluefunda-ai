@@ -1,4 +1,4 @@
-module github.com/bluefunda/cai-cli
+module github.com/bluefunda/bluefunda-ai
 
 go 1.25.0
 

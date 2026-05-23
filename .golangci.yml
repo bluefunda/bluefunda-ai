@@ -11,5 +11,5 @@ linters:
         - (*text/tabwriter.Writer).Flush
         - (*encoding/json.Encoder).Encode
         # Deferred cleanup — errors on close are unactionable in CLI
-        - (*github.com/bluefunda/cai-cli/internal/grpc.Conn).Close
+        - (*github.com/bluefunda/bluefunda-ai/internal/grpc.Conn).Close
         - (*google.golang.org/grpc.ClientConn).Close

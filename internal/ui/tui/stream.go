@@ -6,7 +6,7 @@ import (
 	"io"
 	"strings"
 
-	pb "github.com/bluefunda/cai-cli/api/proto/bff"
+	pb "github.com/bluefunda/bluefunda-ai/api/proto/bff"
 	"google.golang.org/grpc"
 )
 

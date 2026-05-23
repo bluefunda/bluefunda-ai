@@ -1,8 +1,8 @@
 #!/bin/sh
 set -e
 
-REPO="bluefunda/cai-cli"
-BINARY="ai"
+REPO="bluefunda/bluefunda-ai"
+BINARY="bai"
 INSTALL_DIR=""
 
 # Colors
@@ -38,8 +38,8 @@ else
 fi
 
 # Resolve install directory
-if [ -n "$AI_INSTALL_DIR" ]; then
-  INSTALL_DIR="$AI_INSTALL_DIR"
+if [ -n "$BAI_INSTALL_DIR" ]; then
+  INSTALL_DIR="$BAI_INSTALL_DIR"
 elif [ -w "/usr/local/bin" ]; then
   INSTALL_DIR="/usr/local/bin"
 else
@@ -48,9 +48,14 @@ else
 fi
 
 # Check dependencies
-for cmd in curl sha256sum; do
+for cmd in curl; do
   command -v "$cmd" >/dev/null 2>&1 || die "'$cmd' is required but not installed"
 done
+if [ "$OS" = "darwin" ]; then
+  command -v shasum >/dev/null 2>&1 || die "'shasum' is required but not installed"
+else
+  command -v sha256sum >/dev/null 2>&1 || die "'sha256sum' is required but not installed"
+fi
 if [ "$EXT" = "zip" ]; then
   command -v unzip >/dev/null 2>&1 || die "'unzip' is required but not installed"
 fi
@@ -75,7 +80,11 @@ curl -fsSL "${BASE_URL}/checksums.txt"  -o "${TMPDIR}/checksums.txt"
 
 # Verify checksum
 cd "$TMPDIR"
-grep "${ARCHIVE}" checksums.txt | sha256sum -c --quiet || die "Checksum verification failed"
+if [ "$OS" = "darwin" ]; then
+  grep "${ARCHIVE}" checksums.txt | shasum -a 256 -c --quiet || die "Checksum verification failed"
+else
+  grep "${ARCHIVE}" checksums.txt | sha256sum -c --quiet || die "Checksum verification failed"
+fi
 ok "Checksum verified"
 
 # Extract

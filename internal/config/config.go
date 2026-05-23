@@ -15,7 +15,7 @@ const (
 	DefaultBFFURL     = "cli.bluefunda.com:443"
 	DefaultDomain     = "bluefunda.com"
 	DefaultRealm      = "trm"
-	DefaultClientID   = "cai-cli"
+	DefaultClientID   = "bai"
 )
 
 // AuthURL returns the Keycloak OpenID Connect base URL for the given realm.
@@ -26,7 +26,7 @@ func AuthURL(domain, realm string) string {
 	return fmt.Sprintf("https://auth.%s/realms/%s/protocol/openid-connect", domain, realm)
 }
 
-// Config represents the CLI configuration stored in ~/.cai/config.yaml.
+// Config represents the CLI configuration stored in ~/.bai/config.yaml.
 type Config struct {
 	GatewayURL string   `yaml:"gateway_url"`
 	BFFURL     string   `yaml:"bff_url"`
@@ -49,13 +49,13 @@ type Defaults struct {
 	Output string `yaml:"output"`
 }
 
-// configDir returns ~/.cai, creating it if needed.
+// configDir returns ~/.bai, creating it if needed.
 func configDir() (string, error) {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return "", fmt.Errorf("home directory: %w", err)
 	}
-	dir := filepath.Join(home, ".cai")
+	dir := filepath.Join(home, ".bai")
 	if err := os.MkdirAll(dir, 0700); err != nil {
 		return "", fmt.Errorf("create config dir: %w", err)
 	}
@@ -71,7 +71,7 @@ func configPath() (string, error) {
 	return filepath.Join(dir, "config.yaml"), nil
 }
 
-// Load reads the config from ~/.cai/config.yaml.
+// Load reads the config from ~/.bai/config.yaml.
 // Returns defaults if the file does not exist.
 func Load() (*Config, error) {
 	path, err := configPath()
@@ -118,7 +118,7 @@ func defaultConfig() *Config {
 	}
 }
 
-// Save writes the config to ~/.cai/config.yaml.
+// Save writes the config to ~/.bai/config.yaml.
 func Save(cfg *Config) error {
 	path, err := configPath()
 	if err != nil {

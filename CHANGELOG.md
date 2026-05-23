@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.10.0](https://github.com/bluefunda/bluefunda-ai/compare/v1.9.0...v1.10.0) (2026-05-23)
+
+
+### Features
+
+* bai v2.0.0 — AI-first CLI redesign ([#55](https://github.com/bluefunda/bluefunda-ai/issues/55)) ([33b2b4b](https://github.com/bluefunda/bluefunda-ai/commit/33b2b4b3468ca1b2eb6e10635c052bdf69331e5e))
+
+
+### Bug Fixes
+
+* resolve lint and govulncheck CI failures ([#58](https://github.com/bluefunda/bluefunda-ai/issues/58)) ([8112266](https://github.com/bluefunda/bluefunda-ai/commit/8112266932fdd2f5285168160ec848caffff7315))
+
 ## [1.9.0](https://github.com/bluefunda/bluefunda-ai/compare/v1.8.0...v1.9.0) (2026-05-23)
 
 

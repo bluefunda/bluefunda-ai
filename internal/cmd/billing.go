@@ -12,8 +12,9 @@ import (
 )
 
 var billingCmd = &cobra.Command{
-	Use:   "billing",
-	Short: "Billing and subscription operations",
+	Use:    "billing",
+	Short:  "Billing and subscription operations",
+	Hidden: true,
 }
 
 // --- billing subscription ---

@@ -49,11 +49,12 @@ type tickMsg time.Time
 // ──────────────────────────────────────────────
 
 type SessionConfig struct {
-	ChatID    string
-	Model     string
-	IsCode    bool   // code session (has local tools)
-	WorkDir   string // for code sessions
-	AutoApply bool
+	ChatID        string
+	Model         string
+	IsCode        bool   // code session (has local tools)
+	WorkDir       string // for code sessions
+	AutoApply     bool
+	InitialPrompt string // auto-submitted as the first message
 }
 
 // StreamEvent is a discriminated union of all events that can arrive from a
@@ -132,7 +133,8 @@ type Model struct {
 	slashIdx     int
 
 	// Misc
-	quit bool
+	quit              bool
+	initialPromptSent bool
 }
 
 // New creates a new TUI model.
@@ -201,7 +203,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
-		return m.handleResize(), nil
+		newM := m.handleResize()
+		if newM.cfg.InitialPrompt != "" && !newM.initialPromptSent {
+			newM.initialPromptSent = true
+			newM.textarea.SetValue(newM.cfg.InitialPrompt)
+			return newM.submitInput()
+		}
+		return newM, nil
 
 	case tickMsg:
 		if m.streaming {
@@ -226,7 +234,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.messages = append(m.messages, newSystemMessage("Error: "+msg.Err.Error()))
 		}
 		m.refreshViewport()
-		m.viewport.GotoBottom()
+		m.scrollToLastMsgStart()
 		m.textarea.Focus()
 		cmds = append(cmds, textarea.Blink)
 
@@ -646,7 +654,7 @@ func (m *Model) handleStreamEvent(ev StreamEvent) []tea.Cmd {
 			}
 		}
 		m.refreshViewport()
-		m.viewport.GotoBottom()
+		m.scrollToLastMsgStart()
 		m.textarea.Focus()
 		cmds = append(cmds, textarea.Blink)
 	}
@@ -655,11 +663,42 @@ func (m *Model) handleStreamEvent(ev StreamEvent) []tea.Cmd {
 }
 
 
-func max(a, b int) int {
-	if a > b {
-		return a
+// scrollToLastMsgStart positions the viewport so the user sees the beginning
+// of the last message. For short messages that fit in the viewport it falls
+// back to GotoBottom so the full message is visible without dead space above.
+func (m *Model) scrollToLastMsgStart() {
+	if len(m.messages) == 0 {
+		m.viewport.GotoBottom()
+		return
 	}
-	return b
+
+	last := len(m.messages) - 1
+	innerWidth := m.width - 4
+	if innerWidth < 20 {
+		innerWidth = 20
+	}
+
+	lastRendered := m.renderMessageAt(last, innerWidth)
+	lastMsgLines := strings.Count(lastRendered, "\n") + 1
+	if lastMsgLines <= m.viewport.Height {
+		m.viewport.GotoBottom()
+		return
+	}
+
+	// Count lines rendered before the last message to find its start offset.
+	var sb strings.Builder
+	for i := 0; i < last; i++ {
+		if i > 0 {
+			sb.WriteByte('\n')
+		}
+		sb.WriteString(m.renderMessageAt(i, innerWidth))
+	}
+	if last > 0 {
+		sb.WriteByte('\n') // separator before the last message
+	}
+	linesBefore := strings.Count(sb.String(), "\n")
+	m.viewport.YOffset = linesBefore
+	m.atBottom = false
 }
 
 // waitForStreamEvent returns a tea.Cmd that blocks until the next StreamEvent

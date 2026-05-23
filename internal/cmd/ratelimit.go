@@ -14,6 +14,7 @@ var rateLimitCmd = &cobra.Command{
 	Use:     "rate-limit",
 	Aliases: []string{"rl"},
 	Short:   "Query current rate limit status",
+	Hidden:  true,
 	RunE:    runRateLimit,
 }
 

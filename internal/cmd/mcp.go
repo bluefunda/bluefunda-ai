@@ -13,7 +13,7 @@ import (
 
 var mcpCmd = &cobra.Command{
 	Use:   "mcp",
-	Short: "MCP server management",
+	Short: "Manage tool integrations",
 }
 
 // --- mcp list ---
@@ -60,12 +60,49 @@ func runMCPList(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-// --- mcp user ---
+// --- mcp add ---
+
+var mcpAddCmd = &cobra.Command{
+	Use:   "add <name>",
+	Short: "Activate an MCP server integration",
+	Args:  cobra.ExactArgs(1),
+	RunE:  runMCPAdd,
+}
+
+func runMCPAdd(cmd *cobra.Command, args []string) error {
+	conn, cfg, err := bffConn()
+	if err != nil {
+		return err
+	}
+	defer conn.Close()
+
+	ctx, cancel := caigrpc.ContextWithTimeout()
+	defer cancel()
+
+	resp, err := conn.Client.SelectMcp(ctx, &pb.SelectMcpRequest{
+		McpInfo: &pb.MCPInfo{Name: args[0]},
+	})
+	if err != nil {
+		return fmt.Errorf("activate mcp: %w", err)
+	}
+
+	p := printer(cfg)
+	if resp.GetError() != "" {
+		return fmt.Errorf("activate mcp: %s", resp.GetError())
+	}
+	if resp.GetSuccess() {
+		p.Success(fmt.Sprintf("Activated MCP server: %s", args[0]))
+	}
+	return nil
+}
+
+// --- mcp user (hidden, backward compat) ---
 
 var mcpUserCmd = &cobra.Command{
-	Use:   "user",
-	Short: "Show user's MCP server subscriptions",
-	RunE:  runMCPUser,
+	Use:    "user",
+	Short:  "Show user's MCP subscriptions",
+	Hidden: true,
+	RunE:   runMCPUser,
 }
 
 func runMCPUser(cmd *cobra.Command, args []string) error {
@@ -103,42 +140,16 @@ func runMCPUser(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-// --- mcp select ---
+// --- mcp select (hidden alias for mcp add) ---
 
 var mcpSelectCmd = &cobra.Command{
-	Use:   "select <name>",
-	Short: "Select/subscribe to an MCP server",
-	Args:  cobra.ExactArgs(1),
-	RunE:  runMCPSelect,
-}
-
-func runMCPSelect(cmd *cobra.Command, args []string) error {
-	conn, cfg, err := bffConn()
-	if err != nil {
-		return err
-	}
-	defer conn.Close()
-
-	ctx, cancel := caigrpc.ContextWithTimeout()
-	defer cancel()
-
-	resp, err := conn.Client.SelectMcp(ctx, &pb.SelectMcpRequest{
-		McpInfo: &pb.MCPInfo{Name: args[0]},
-	})
-	if err != nil {
-		return fmt.Errorf("select mcp: %w", err)
-	}
-
-	p := printer(cfg)
-	if resp.GetError() != "" {
-		return fmt.Errorf("select mcp: %s", resp.GetError())
-	}
-	if resp.GetSuccess() {
-		p.Success(fmt.Sprintf("Selected MCP server: %s", args[0]))
-	}
-	return nil
+	Use:    "select <name>",
+	Short:  "Select an MCP server (use `mcp add` instead)",
+	Args:   cobra.ExactArgs(1),
+	Hidden: true,
+	RunE:   runMCPAdd,
 }
 
 func init() {
-	mcpCmd.AddCommand(mcpListCmd, mcpUserCmd, mcpSelectCmd)
+	mcpCmd.AddCommand(mcpListCmd, mcpAddCmd, mcpUserCmd, mcpSelectCmd)
 }

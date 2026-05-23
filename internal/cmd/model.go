@@ -11,8 +11,9 @@ import (
 )
 
 var modelCmd = &cobra.Command{
-	Use:   "model",
-	Short: "LLM model operations",
+	Use:    "model",
+	Short:  "LLM model operations",
+	Hidden: true,
 }
 
 var modelListCmd = &cobra.Command{

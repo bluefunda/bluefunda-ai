@@ -11,8 +11,9 @@ import (
 )
 
 var userCmd = &cobra.Command{
-	Use:   "user",
-	Short: "User account operations",
+	Use:    "user",
+	Short:  "User account operations",
+	Hidden: true,
 }
 
 // --- user info ---

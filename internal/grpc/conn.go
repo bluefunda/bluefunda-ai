@@ -78,12 +78,12 @@ func (ts *TokenSource) Token() (string, error) {
 		if ts.cfg.Auth.AccessToken != "" {
 			return ts.cfg.Auth.AccessToken, nil
 		}
-		return "", fmt.Errorf("not authenticated; run 'ai login'")
+		return "", fmt.Errorf("not signed in — run `bai login`")
 	}
 
 	newToken, err := ts.refreshFunc()
 	if err != nil {
-		return "", fmt.Errorf("token refresh failed (run 'ai login'): %w", err)
+		return "", fmt.Errorf("token refresh failed (run `bai login`): %w", err)
 	}
 	return newToken, nil
 }
@@ -130,7 +130,7 @@ type Conn struct {
 // TLS is used automatically for remote targets; localhost uses plaintext.
 func Dial(target string, ts *TokenSource, opts ...grpc.DialOption) (*Conn, error) {
 	if target == "" {
-		return nil, fmt.Errorf("bff_url not configured; run 'ai login' or pass --bff")
+		return nil, fmt.Errorf("endpoint not configured — run `bai login`")
 	}
 
 	defaults := []grpc.DialOption{

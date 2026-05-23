@@ -1,28 +1,12 @@
 package cmd
 
-import (
-	"fmt"
+import "github.com/spf13/cobra"
 
-	"github.com/spf13/cobra"
-
-	caigrpc "github.com/bluefunda/bluefunda-ai/internal/grpc"
-)
-
+// healthCmd is kept for backward compatibility but hidden from help.
+// Use `bai doctor` instead.
 var healthCmd = &cobra.Command{
-	Use:   "health",
-	Short: "Check BFF connectivity (gRPC)",
-	RunE:  runHealth,
-}
-
-func runHealth(cmd *cobra.Command, args []string) error {
-	cfg := loadConfig()
-	if cfg.BFFURL == "" {
-		return fmt.Errorf("bff_url not configured; run 'ai login' or pass --bff")
-	}
-
-	if err := caigrpc.Ping(cfg.BFFURL); err != nil {
-		return fmt.Errorf("BFF unhealthy at %s: %w", cfg.BFFURL, err)
-	}
-	fmt.Fprintln(cmd.OutOrStdout(), "BFF healthy")
-	return nil
+	Use:    "health",
+	Short:  "Check connectivity (use `bai doctor` instead)",
+	Hidden: true,
+	RunE:   runDoctor,
 }

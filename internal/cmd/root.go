@@ -1,6 +1,8 @@
 package cmd
 
 import (
+	"strings"
+
 	"github.com/spf13/cobra"
 
 	"github.com/bluefunda/bluefunda-ai/internal/config"
@@ -12,32 +14,52 @@ var (
 	cfgBFF     string
 	cfgDomain  string
 	cfgOutput  string
+	rootNew    bool
 )
 
 // Version is set at build time via -ldflags.
 var Version = "dev"
 
 var rootCmd = &cobra.Command{
-	Use:     "bai",
-	Short:   "bai -- CLI for the BlueFunda AI platform",
-	Long:    "bai is a command-line interface for interacting with the BlueFunda AI platform via gRPC.",
-	Version: Version,
+	Use:   "bai [prompt]",
+	Short: "Your AI pair programmer",
+	Long:  "BlueFunda AI — start a session, ask a question, or jump straight into coding.",
+	Example: `  bai                          start interactive session
+  bai "fix the failing tests"  start with a message
+  bai code                     agentic coding mode
+  bai login                    sign in`,
+	Args: cobra.ArbitraryArgs,
+	RunE: runDefault,
+}
+
+func runDefault(cmd *cobra.Command, args []string) error {
+	prompt := strings.Join(args, " ")
+	return runChatSession("", prompt, "", "")
 }
 
 func init() {
+	// Infrastructure flags — hidden from help but still functional for power users and scripts.
 	rootCmd.PersistentFlags().StringVar(&cfgGateway, "gateway", "", "Gateway base URL (overrides config)")
-	rootCmd.PersistentFlags().StringVar(&cfgBFF, "bff", "", "BFF gRPC address host:port (overrides config)")
-	rootCmd.PersistentFlags().StringVar(&cfgDomain, "domain", "", "Domain (overrides config)")
+	rootCmd.PersistentFlags().StringVar(&cfgBFF, "bff", "", "gRPC endpoint host:port (overrides config)")
+	rootCmd.PersistentFlags().StringVar(&cfgDomain, "domain", "", "Auth domain (overrides config)")
+	_ = rootCmd.PersistentFlags().MarkHidden("gateway")
+	_ = rootCmd.PersistentFlags().MarkHidden("bff")
+	_ = rootCmd.PersistentFlags().MarkHidden("domain")
+
 	rootCmd.PersistentFlags().StringVarP(&cfgOutput, "output", "o", "", "Output format: table, json, quiet")
+	rootCmd.Flags().BoolVar(&rootNew, "new", false, "Force a new session")
 
 	rootCmd.AddCommand(
+		// Visible commands
 		loginCmd,
-		healthCmd,
-		versionCmd,
-		chatCmd,
 		codeCmd,
-		modelCmd,
+		doctorCmd,
 		mcpCmd,
+		versionCmd,
+		// Hidden backward-compat commands
+		chatCmd,
+		healthCmd,
+		modelCmd,
 		userCmd,
 		billingCmd,
 		rateLimitCmd,
@@ -49,7 +71,7 @@ func Execute() error {
 	return rootCmd.Execute()
 }
 
-// loadConfig loads the config and applies flag overrides.
+// loadConfig loads the config and applies any flag overrides.
 func loadConfig() *config.Config {
 	cfg, err := config.Load()
 	if err != nil {

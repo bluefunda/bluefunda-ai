@@ -43,13 +43,13 @@ func reAuthenticate(cfg *config.Config, p *ui.Printer) error {
 func bffConn() (*caigrpc.Conn, *config.Config, error) {
 	cfg := loadConfig()
 	if cfg.Auth.AccessToken == "" {
-		return nil, cfg, fmt.Errorf("not authenticated; run 'ai login'")
+		return nil, cfg, fmt.Errorf("not signed in — run `bai login`")
 	}
 
 	refreshFunc := func() (string, error) {
 		tok, err := auth.Refresh(cfg.Domain, cfg.Realm, cfg.Auth.RefreshToken)
 		if err != nil {
-			return "", fmt.Errorf("token refresh failed (run 'ai login'): %w", err)
+			return "", fmt.Errorf("token refresh failed — run `bai login`: %w", err)
 		}
 		if err := saveAuthTokens(cfg, tok); err != nil {
 			return "", fmt.Errorf("save tokens: %w", err)

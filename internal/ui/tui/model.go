@@ -906,7 +906,7 @@ func (m *Model) formatSessions(sessions []SessionInfo) string {
 		if len(title) > 40 {
 			title = title[:37] + "..."
 		}
-		sb.WriteString(fmt.Sprintf("  %2d.  %s  %s\n", i+1, id8, title))
+		fmt.Fprintf(&sb, "  %2d.  %s  %s\n", i+1, id8, title)
 	}
 	sb.WriteString("\n  /resume <number> to switch")
 	return sb.String()

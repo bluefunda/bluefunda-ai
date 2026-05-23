@@ -123,15 +123,15 @@ func printChecks(out interface{ Write([]byte) (int, error) }, checks []checkResu
 	fmt.Fprintln(out)
 	switch {
 	case errors > 0:
-		errStyle.Fprintf(out, "  %d error(s)", errors)
+		_, _ = errStyle.Fprintf(out, "  %d error(s)", errors)
 		if warnings > 0 {
-			fmt.Fprintf(out, ", %d warning(s)", warnings)
+			fmt.Fprintf(out, ", %d warning(s)", warnings) //nolint:errcheck
 		}
 		fmt.Fprintln(out)
 	case warnings > 0:
-		warnStyle.Fprintf(out, "  %d warning(s)\n", warnings)
+		_, _ = warnStyle.Fprintf(out, "  %d warning(s)\n", warnings)
 	default:
-		okStyle.Fprintln(out, "  All checks passed")
+		_, _ = okStyle.Fprintln(out, "  All checks passed")
 	}
 	fmt.Fprintln(out)
 }

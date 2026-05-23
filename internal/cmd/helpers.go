@@ -3,6 +3,9 @@ package cmd
 import (
 	"fmt"
 	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
 
 	"github.com/bluefunda/bluefunda-ai/internal/auth"
 	"github.com/bluefunda/bluefunda-ai/internal/config"
@@ -63,6 +66,15 @@ func bffConn() (*caigrpc.Conn, *config.Config, error) {
 		return nil, cfg, err
 	}
 	return conn, cfg, nil
+}
+
+// gitRepoName returns the basename of the git repository root, or "" if not in a git repo.
+func gitRepoName() string {
+	out, err := exec.Command("git", "rev-parse", "--show-toplevel").Output()
+	if err != nil {
+		return ""
+	}
+	return filepath.Base(strings.TrimSpace(string(out)))
 }
 
 // printer returns a Printer configured from flags and config.

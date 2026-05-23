@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -23,15 +24,17 @@ var (
 	codeModel     string
 	codeDir       string
 	codeAutoApply bool
+	codeAuto      bool
 )
 
 var codeCmd = &cobra.Command{
-	Use:   "code",
+	Use:   "code [prompt]",
 	Short: "Agentic coding session with local file system access",
 	Long: `Start an interactive coding session where the AI can read and write files,
 run commands, and search your project. Tools that modify the filesystem or
-run shell commands require your approval before execution (use --auto-apply
-to skip confirmation).`,
+run shell commands require your approval before execution (use --auto to
+skip confirmation).`,
+	Args: cobra.ArbitraryArgs,
 	RunE: runCode,
 }
 
@@ -39,6 +42,7 @@ func init() {
 	codeCmd.Flags().StringVar(&codeModel, "model", "", "LLM model to use")
 	codeCmd.Flags().StringVar(&codeDir, "dir", ".", "Working directory for file operations")
 	codeCmd.Flags().BoolVar(&codeAutoApply, "auto-apply", false, "Execute write/bash tools without prompting")
+	codeCmd.Flags().BoolVar(&codeAuto, "auto", false, "Same as --auto-apply")
 }
 
 // codeMessage mirrors the ConversationMsg format expected by cai-llm-router.
@@ -69,6 +73,10 @@ type cliCodePayload struct {
 }
 
 func runCode(cmd *cobra.Command, args []string) error {
+	if codeAuto {
+		codeAutoApply = true
+	}
+
 	conn, cfg, err := bffConn()
 	if err != nil {
 		return err
@@ -83,6 +91,8 @@ func runCode(cmd *cobra.Command, args []string) error {
 		model = "openai"
 	}
 
+	initialPrompt := strings.Join(args, " ")
+
 	if err := os.Chdir(codeDir); err != nil {
 		return fmt.Errorf("chdir to %s: %w", codeDir, err)
 	}
@@ -95,11 +105,17 @@ func runCode(cmd *cobra.Command, args []string) error {
 	chatID := uuid.New().String()
 	p := printer(cfg)
 
+	// autoApplyState and toolSchemasState are shared between the TUI (/auto,
+	// /chat, /code toggles) and the submit closure, so changes take effect on
+	// the very next turn.
+	autoApplyState := codeAutoApply
+	toolSchemasState := toolSchemas
+
 	// history is shared between TUI turns via closure.
 	var history []codeMessage
 	isFirstTurn := true
 
-	submitFn := func(cid, input string, isNew bool) <-chan tui.StreamEvent {
+	submitFn := func(cid, mdl, input string, isNew bool) <-chan tui.StreamEvent {
 		if conn.TS.NearExpiry(2 * time.Minute) {
 			if err := conn.TS.EnsureValidToken(); err != nil {
 				if authErr := reAuthenticate(cfg, p); authErr != nil {
@@ -113,12 +129,14 @@ func runCode(cmd *cobra.Command, args []string) error {
 
 		history = append(history, codeMessage{Role: "user", Content: input})
 		ch := make(chan tui.StreamEvent, 64)
+		currentAutoApply := autoApplyState   // snapshot at turn start
+		currentSchemas := toolSchemasState   // snapshot (empty = chat mode)
 
 		go func() {
 			defer close(ch)
 			newHistory, loopErr := agenticLoopTUI(
-				conn, cfg, cid, model, toolSchemas,
-				history, isFirstTurn && isNew, codeAutoApply,
+				conn, cfg, cid, mdl, currentSchemas,
+				history, isFirstTurn && isNew, currentAutoApply,
 				p, ch,
 			)
 			history = newHistory
@@ -136,11 +154,23 @@ func runCode(cmd *cobra.Command, args []string) error {
 
 	workDir, _ := os.Getwd()
 	tuiCfg := tui.SessionConfig{
-		ChatID:    chatID,
-		Model:     model,
-		IsCode:    true,
-		WorkDir:   workDir,
-		AutoApply: codeAutoApply,
+		ChatID:        chatID,
+		Model:         model,
+		IsCode:        true,
+		WorkDir:       workDir,
+		AutoApply:     codeAutoApply,
+		InitialPrompt: initialPrompt,
+		RepoName:      gitRepoName(),
+		SetAutoApplyFn: func(enabled bool) {
+			autoApplyState = enabled
+		},
+		SetCodeModeFn: func(enabled bool) {
+			if enabled {
+				toolSchemasState = toolSchemas // restore full tool schemas
+			} else {
+				toolSchemasState = "" // clear tools → chat mode
+			}
+		},
 	}
 	m := tui.New(tuiCfg, submitFn)
 	return tui.Run(m)

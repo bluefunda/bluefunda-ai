@@ -16,11 +16,42 @@ import (
 	"github.com/bluefunda/bluefunda-ai/internal/ui/tui"
 )
 
+// findRecentSession returns the most recent chat session if it was active within the
+// last 24 hours, so the user can pick up right where they left off. Returns ("","")
+// when no suitable session exists.
+func findRecentSession(conn *caigrpc.Conn) (chatID, title string) {
+	ctx, cancel := caigrpc.ContextWithTimeout()
+	defer cancel()
+	resp, err := conn.Client.GetChatIds(ctx, &pb.GetChatIdsRequest{})
+	if err != nil || len(resp.GetChats()) == 0 {
+		return "", ""
+	}
+	last := resp.GetChats()[0]
+	ts := last.GetLastUpdatedAt()
+	if ts == "" {
+		ts = last.GetCreatedAt()
+	}
+	if t, err := time.Parse(time.RFC3339, ts); err == nil {
+		if time.Since(t) > 24*time.Hour {
+			return "", ""
+		}
+	}
+	return last.GetChatId(), last.GetChatTitle()
+}
+
 // chatCmd is kept for backward compatibility but hidden from help.
 var chatCmd = &cobra.Command{
 	Use:    "chat",
 	Short:  "Chat operations",
 	Hidden: true,
+}
+
+// sessionsCmd is a convenience alias for `bai chat list`, hidden from main help.
+var sessionsCmd = &cobra.Command{
+	Use:    "sessions",
+	Short:  "List past chat sessions",
+	Hidden: true,
+	RunE:   runChatList,
 }
 
 // --- chat list ---
@@ -129,6 +160,14 @@ func runChatSession(chatID, initialPrompt, model, mcpServer string) error {
 		model = "openai"
 	}
 
+	var resumeTitle string
+	var isResume bool
+	if chatID == "" && !rootNew {
+		chatID, resumeTitle = findRecentSession(conn)
+		if chatID != "" {
+			isResume = true
+		}
+	}
 	if chatID == "" {
 		chatID = uuid.New().String()
 	}
@@ -136,7 +175,7 @@ func runChatSession(chatID, initialPrompt, model, mcpServer string) error {
 	p := printer(cfg)
 	var titleWg sync.WaitGroup
 
-	submitFn := func(cid, input string, isNew bool) <-chan tui.StreamEvent {
+	submitFn := func(cid, mdl, input string, isNew bool) <-chan tui.StreamEvent {
 		if conn.TS.NearExpiry(2 * time.Minute) {
 			if err := conn.TS.EnsureValidToken(); err != nil {
 				if authErr := reAuthenticate(cfg, p); authErr != nil {
@@ -151,7 +190,7 @@ func runChatSession(chatID, initialPrompt, model, mcpServer string) error {
 		req := &pb.ChatRequest{
 			ChatId:        cid,
 			Prompt:        input,
-			Model:         model,
+			Model:         mdl,
 			IsNewChat:     isNew,
 			McpServerName: mcpServer,
 		}
@@ -193,6 +232,92 @@ func runChatSession(chatID, initialPrompt, model, mcpServer string) error {
 		ChatID:        chatID,
 		Model:         model,
 		InitialPrompt: initialPrompt,
+		RepoName:      gitRepoName(),
+		ResumeTitle:   resumeTitle,
+		IsResume:      isResume,
+		ListSessionsFn: func() ([]tui.SessionInfo, error) {
+			ctx, cancel := caigrpc.ContextWithTimeout()
+			defer cancel()
+			resp, err := conn.Client.GetChatIds(ctx, &pb.GetChatIdsRequest{})
+			if err != nil {
+				return nil, err
+			}
+			sessions := make([]tui.SessionInfo, 0, len(resp.GetChats()))
+			for _, c := range resp.GetChats() {
+				sessions = append(sessions, tui.SessionInfo{
+					ID:    c.GetChatId(),
+					Title: c.GetChatTitle(),
+					Model: c.GetModel(),
+				})
+			}
+			return sessions, nil
+		},
+		AccountFn: func() (*tui.AccountInfo, error) {
+			ctx, cancel := caigrpc.ContextWithTimeout()
+			defer cancel()
+			resp, err := conn.Client.GetUserInfo(ctx, &pb.GetUserInfoRequest{})
+			if err != nil {
+				return nil, err
+			}
+			return &tui.AccountInfo{
+				Name:     resp.GetName(),
+				Email:    resp.GetEmail(),
+				Username: resp.GetPreferredUsername(),
+			}, nil
+		},
+		UsageFn: func() (*tui.UsageInfo, error) {
+			ctx, cancel := caigrpc.ContextWithTimeout()
+			defer cancel()
+			resp, err := conn.Client.QueryRateLimit(ctx, &pb.QueryRateLimitRequest{})
+			if err != nil {
+				return nil, err
+			}
+			info := &tui.UsageInfo{}
+			if s := resp.GetUserStats(); s != nil {
+				info.PlanType = s.GetPlanType()
+				info.HourlyPercent = s.GetHourlyPercentage()
+				info.DailyPercent = s.GetDailyPercentage()
+				info.MonthlyPercent = s.GetMonthlyPercentage()
+			}
+			if u := resp.GetTokenUsage(); u != nil {
+				info.InputTokens = int64(u.GetInputTokens())
+				info.OutputTokens = int64(u.GetOutputTokens())
+				info.TotalTokens = int64(u.GetTotalTokens())
+			}
+			return info, nil
+		},
+		MCPListFn: func() ([]tui.MCPInfo, error) {
+			ctx, cancel := caigrpc.ContextWithTimeout()
+			defer cancel()
+			resp, err := conn.Client.GetMcpInfo(ctx, &pb.GetMcpInfoRequest{})
+			if err != nil {
+				return nil, err
+			}
+			items := make([]tui.MCPInfo, 0, len(resp.GetMcpServers()))
+			for _, s := range resp.GetMcpServers() {
+				items = append(items, tui.MCPInfo{
+					Name:        s.GetName(),
+					Type:        s.GetType(),
+					Available:   s.GetIsAvailable(),
+					Description: s.GetShortDescription(),
+				})
+			}
+			return items, nil
+		},
+		MCPActivateFn: func(name string) error {
+			ctx, cancel := caigrpc.ContextWithTimeout()
+			defer cancel()
+			resp, err := conn.Client.SelectMcp(ctx, &pb.SelectMcpRequest{
+				McpInfo: &pb.MCPInfo{Name: name},
+			})
+			if err != nil {
+				return err
+			}
+			if resp.GetError() != "" {
+				return fmt.Errorf("%s", resp.GetError())
+			}
+			return nil
+		},
 	}
 	m := tui.New(cfg2, submitFn)
 	if err := tui.Run(m); err != nil {
@@ -363,7 +488,7 @@ func runChatStop(cmd *cobra.Command, args []string) error {
 // --- demo mode ---
 
 func runChatDemo() error {
-	submitFn := func(chatID, input string, isNew bool) <-chan tui.StreamEvent {
+	submitFn := func(chatID, _, input string, isNew bool) <-chan tui.StreamEvent {
 		ch := make(chan tui.StreamEvent, 128)
 		go func() {
 			defer close(ch)

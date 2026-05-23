@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"fmt"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -33,6 +34,14 @@ var rootCmd = &cobra.Command{
 }
 
 func runDefault(cmd *cobra.Command, args []string) error {
+	cfg := loadConfig()
+	if cfg.Auth.AccessToken == "" {
+		fmt.Println("Not signed in. Run `bai login` to get started.")
+		fmt.Println()
+		fmt.Println("  bai login     sign in with your BlueFunda account")
+		fmt.Println("  bai doctor    check configuration and connectivity")
+		return nil
+	}
 	prompt := strings.Join(args, " ")
 	return runChatSession("", prompt, "", "")
 }
@@ -53,9 +62,12 @@ func init() {
 		// Visible commands
 		loginCmd,
 		codeCmd,
+		configCmd,
 		doctorCmd,
 		mcpCmd,
 		versionCmd,
+		// Hidden commands
+		sessionsCmd,
 		// Hidden backward-compat commands
 		chatCmd,
 		healthCmd,

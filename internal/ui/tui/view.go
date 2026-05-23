@@ -57,8 +57,11 @@ func (m Model) renderHeader() string {
 	left := th.AssistantLabel.Render("BlueFunda AI") +
 		th.ToolDim.Render("  ·  ") +
 		th.ToolDim.Render(m.cfg.Model)
+	if m.cfg.RepoName != "" {
+		left += th.ToolDim.Render("  ·  " + m.cfg.RepoName)
+	}
 	if m.cfg.IsCode {
-		left += th.ToolDim.Render("  ·  code  ·  " + m.cfg.WorkDir)
+		left += th.ToolDim.Render("  ·  code")
 	}
 
 	right := th.ToolDim.Render(m.cfg.ChatID[:8])

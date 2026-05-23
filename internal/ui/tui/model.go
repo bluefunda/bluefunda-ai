@@ -2,6 +2,7 @@ package tui
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -9,6 +10,7 @@ import (
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/google/uuid"
 )
 
 // ──────────────────────────────────────────────
@@ -41,6 +43,36 @@ type ApprovalRequestMsg struct {
 }
 type ApprovalResponseMsg struct{ Approved bool }
 
+// SessionsLoadedMsg is the async result of listing sessions for /sessions.
+type SessionsLoadedMsg struct {
+	Sessions []SessionInfo
+	Err      error
+}
+
+// AccountLoadedMsg is the async result of /account.
+type AccountLoadedMsg struct {
+	Info *AccountInfo
+	Err  error
+}
+
+// UsageLoadedMsg is the async result of /usage.
+type UsageLoadedMsg struct {
+	Info *UsageInfo
+	Err  error
+}
+
+// MCPListLoadedMsg is the async result of listing MCP servers for /mcp.
+type MCPListLoadedMsg struct {
+	Items []MCPInfo
+	Err   error
+}
+
+// MCPActivatedMsg is the async result of activating an MCP server via /mcp <name>.
+type MCPActivatedMsg struct {
+	Name string
+	Err  error
+}
+
 // tickMsg drives the spinner animation.
 type tickMsg time.Time
 
@@ -49,11 +81,55 @@ type tickMsg time.Time
 // ──────────────────────────────────────────────
 
 type SessionConfig struct {
-	ChatID    string
-	Model     string
-	IsCode    bool   // code session (has local tools)
-	WorkDir   string // for code sessions
-	AutoApply bool
+	ChatID         string
+	Model          string
+	IsCode         bool   // code session (has local tools)
+	WorkDir        string // for code sessions
+	AutoApply      bool
+	InitialPrompt  string                        // auto-submitted as the first message
+	RepoName       string                        // git repo name shown in header
+	ResumeTitle    string                        // set when auto-resuming a past session
+	IsResume       bool                          // true = resuming; isNewChat starts false
+	ListSessionsFn func() ([]SessionInfo, error) // nil = listing not available
+	AccountFn      func() (*AccountInfo, error)      // nil = account info not available
+	UsageFn        func() (*UsageInfo, error)        // nil = usage not available
+	MCPListFn      func() ([]MCPInfo, error)         // nil = MCP listing not available
+	MCPActivateFn  func(name string) error           // nil = MCP activation not available
+	SetAutoApplyFn func(enabled bool)                // nil = auto-apply not available (non-code sessions)
+	SetCodeModeFn  func(enabled bool)                // nil = mode switch not supported in this session
+}
+
+// SessionInfo is one entry returned by ListSessionsFn for /sessions display.
+type SessionInfo struct {
+	ID    string
+	Title string
+	Model string
+}
+
+// AccountInfo holds the data shown by /account.
+type AccountInfo struct {
+	Name     string
+	Email    string
+	Username string
+}
+
+// MCPInfo is one MCP server entry shown by /mcp.
+type MCPInfo struct {
+	Name        string
+	Type        string
+	Available   bool
+	Description string
+}
+
+// UsageInfo holds the data shown by /usage.
+type UsageInfo struct {
+	PlanType       string
+	HourlyPercent  float64
+	DailyPercent   float64
+	MonthlyPercent float64
+	InputTokens    int64
+	OutputTokens   int64
+	TotalTokens    int64
 }
 
 // StreamEvent is a discriminated union of all events that can arrive from a
@@ -82,7 +158,8 @@ type StreamEvent struct {
 
 // SubmitFn opens a gRPC stream for the given input and pumps events into the
 // returned channel. The channel is closed when the stream ends.
-type SubmitFn func(chatID, input string, isNew bool) <-chan StreamEvent
+// model may be updated at runtime by /model — submitInput always passes m.cfg.Model.
+type SubmitFn func(chatID, model, input string, isNew bool) <-chan StreamEvent
 
 // ──────────────────────────────────────────────
 //  Model
@@ -132,7 +209,9 @@ type Model struct {
 	slashIdx     int
 
 	// Misc
-	quit bool
+	quit              bool
+	initialPromptSent bool
+	recentSessions    []SessionInfo
 }
 
 // New creates a new TUI model.
@@ -157,20 +236,31 @@ func New(cfg SessionConfig, submit SubmitFn) Model {
 	vp.SetContent("")
 
 	m := Model{
-		cfg:       cfg,
-		isNewChat: true,
-		submitFn:  submit,
-		theme:     th,
-		textarea:  ta,
-		viewport:  vp,
-		atBottom:  true,
+		cfg:        cfg,
+		isNewChat:  !cfg.IsResume,
+		submitFn:   submit,
+		theme:      th,
+		textarea:   ta,
+		viewport:   vp,
+		atBottom:   true,
 		historyIdx: -1,
 	}
 
 	// Show the welcome system message
-	welcome := fmt.Sprintf("Session %s  ·  model: %s", cfg.ChatID[:8], cfg.Model)
+	var welcome string
+	if cfg.IsResume {
+		welcome = "Resuming session " + cfg.ChatID[:8]
+		if cfg.ResumeTitle != "" {
+			welcome += "  ·  " + cfg.ResumeTitle
+		}
+	} else {
+		welcome = fmt.Sprintf("Session %s  ·  model: %s", cfg.ChatID[:8], cfg.Model)
+	}
+	if cfg.RepoName != "" {
+		welcome += "  ·  " + cfg.RepoName
+	}
 	if cfg.IsCode {
-		welcome += fmt.Sprintf("  ·  dir: %s", cfg.WorkDir)
+		welcome += fmt.Sprintf("  ·  code  ·  dir: %s", cfg.WorkDir)
 	}
 	m.messages = append(m.messages, newSystemMessage(welcome))
 	return m
@@ -201,7 +291,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
-		return m.handleResize(), nil
+		newM := m.handleResize()
+		if newM.cfg.InitialPrompt != "" && !newM.initialPromptSent {
+			newM.initialPromptSent = true
+			newM.textarea.SetValue(newM.cfg.InitialPrompt)
+			return newM.submitInput()
+		}
+		return newM, nil
 
 	case tickMsg:
 		if m.streaming {
@@ -226,7 +322,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.messages = append(m.messages, newSystemMessage("Error: "+msg.Err.Error()))
 		}
 		m.refreshViewport()
-		m.viewport.GotoBottom()
+		m.scrollToLastMsgStart()
 		m.textarea.Focus()
 		cmds = append(cmds, textarea.Blink)
 
@@ -236,6 +332,67 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.pendingApproval = &msg
 		m.refreshViewport()
 
+	case SessionsLoadedMsg:
+		// Remove the "Loading sessions…" placeholder
+		if len(m.messages) > 0 && m.messages[len(m.messages)-1].Role == RoleSystem {
+			m.messages = m.messages[:len(m.messages)-1]
+		}
+		if msg.Err != nil {
+			m.messages = append(m.messages, newSystemMessage("Error: "+msg.Err.Error()))
+		} else {
+			m.recentSessions = msg.Sessions
+			m.messages = append(m.messages, newSystemMessage(m.formatSessions(msg.Sessions)))
+		}
+		m.refreshViewport()
+		m.viewport.GotoBottom()
+
+	case AccountLoadedMsg:
+		if len(m.messages) > 0 && m.messages[len(m.messages)-1].Role == RoleSystem {
+			m.messages = m.messages[:len(m.messages)-1]
+		}
+		if msg.Err != nil {
+			m.messages = append(m.messages, newSystemMessage("Error: "+msg.Err.Error()))
+		} else {
+			m.messages = append(m.messages, newSystemMessage(formatAccount(msg.Info)))
+		}
+		m.refreshViewport()
+		m.viewport.GotoBottom()
+
+	case UsageLoadedMsg:
+		if len(m.messages) > 0 && m.messages[len(m.messages)-1].Role == RoleSystem {
+			m.messages = m.messages[:len(m.messages)-1]
+		}
+		if msg.Err != nil {
+			m.messages = append(m.messages, newSystemMessage("Error: "+msg.Err.Error()))
+		} else {
+			m.messages = append(m.messages, newSystemMessage(formatUsage(msg.Info)))
+		}
+		m.refreshViewport()
+		m.viewport.GotoBottom()
+
+	case MCPListLoadedMsg:
+		if len(m.messages) > 0 && m.messages[len(m.messages)-1].Role == RoleSystem {
+			m.messages = m.messages[:len(m.messages)-1]
+		}
+		if msg.Err != nil {
+			m.messages = append(m.messages, newSystemMessage("Error: "+msg.Err.Error()))
+		} else {
+			m.messages = append(m.messages, newSystemMessage(formatMCPList(msg.Items)))
+		}
+		m.refreshViewport()
+		m.viewport.GotoBottom()
+
+	case MCPActivatedMsg:
+		if len(m.messages) > 0 && m.messages[len(m.messages)-1].Role == RoleSystem {
+			m.messages = m.messages[:len(m.messages)-1]
+		}
+		if msg.Err != nil {
+			m.messages = append(m.messages, newSystemMessage("Error activating "+msg.Name+": "+msg.Err.Error()))
+		} else {
+			m.messages = append(m.messages, newSystemMessage("Activated MCP server: "+msg.Name))
+		}
+		m.refreshViewport()
+		m.viewport.GotoBottom()
 
 	// ── Keyboard ──────────────────────────────
 
@@ -436,7 +593,7 @@ func (m Model) submitInput() (tea.Model, tea.Cmd) {
 	m.isNewChat = false
 
 	// Open the stream and start pumping events via cmd chaining.
-	m.streamCh = m.submitFn(m.cfg.ChatID, input, isNew)
+	m.streamCh = m.submitFn(m.cfg.ChatID, m.cfg.Model, input, isNew)
 	return m, waitForStreamEvent(m.streamCh)
 }
 
@@ -465,8 +622,162 @@ func (m Model) handleSlashCommand(input string) (tea.Model, tea.Cmd) {
 		m.messages = append(m.messages, newSystemMessage(helpText()))
 		m.refreshViewport()
 
-	case input == "/model":
-		m.messages = append(m.messages, newSystemMessage("Model: "+m.cfg.Model))
+	case input == "/new":
+		m.cfg.ChatID = uuid.New().String()
+		m.isNewChat = true
+		m.messages = m.messages[:0]
+		m.messages = append(m.messages, newSystemMessage(
+			fmt.Sprintf("New session  ·  %s  ·  model: %s", m.cfg.ChatID[:8], m.cfg.Model)))
+		m.refreshViewport()
+
+	case input == "/model" || strings.HasPrefix(input, "/model "):
+		arg := strings.TrimSpace(strings.TrimPrefix(input, "/model"))
+		if arg == "" {
+			m.messages = append(m.messages, newSystemMessage("Model: "+m.cfg.Model))
+		} else {
+			m.cfg.Model = strings.TrimSpace(arg)
+			m.messages = append(m.messages, newSystemMessage("Switched to model: "+m.cfg.Model))
+		}
+		m.refreshViewport()
+
+	case input == "/sessions":
+		if m.cfg.ListSessionsFn != nil {
+			m.messages = append(m.messages, newSystemMessage("Loading sessions…"))
+			m.refreshViewport()
+			fn := m.cfg.ListSessionsFn
+			m.viewport.GotoBottom()
+			return m, func() tea.Msg {
+				sessions, err := fn()
+				return SessionsLoadedMsg{Sessions: sessions, Err: err}
+			}
+		}
+		m.messages = append(m.messages, newSystemMessage("Session listing not available"))
+		m.refreshViewport()
+
+	case strings.HasPrefix(input, "/resume "):
+		id := strings.TrimSpace(strings.TrimPrefix(input, "/resume "))
+		if n, err := strconv.Atoi(id); err == nil && n >= 1 && n <= len(m.recentSessions) {
+			s := m.recentSessions[n-1]
+			m.cfg.ChatID = s.ID
+			m.isNewChat = false
+			label := s.ID
+			if len(label) > 8 {
+				label = label[:8]
+			}
+			if s.Title != "" {
+				label += "  " + s.Title
+			}
+			m.messages = append(m.messages, newSystemMessage("Resumed: "+label))
+		} else {
+			m.cfg.ChatID = id
+			m.isNewChat = false
+			m.messages = append(m.messages, newSystemMessage("Resumed: "+id))
+		}
+		m.refreshViewport()
+
+	case input == "/mcp" || strings.HasPrefix(input, "/mcp "):
+		arg := strings.TrimSpace(strings.TrimPrefix(input, "/mcp"))
+		if arg == "" {
+			if m.cfg.MCPListFn != nil {
+				m.messages = append(m.messages, newSystemMessage("Loading MCP servers…"))
+				m.refreshViewport()
+				fn := m.cfg.MCPListFn
+				m.viewport.GotoBottom()
+				return m, func() tea.Msg {
+					items, err := fn()
+					return MCPListLoadedMsg{Items: items, Err: err}
+				}
+			}
+			m.messages = append(m.messages, newSystemMessage("MCP listing not available"))
+			m.refreshViewport()
+		} else {
+			if m.cfg.MCPActivateFn != nil {
+				name := strings.TrimSpace(arg)
+				m.messages = append(m.messages, newSystemMessage("Activating "+name+"…"))
+				m.refreshViewport()
+				fn := m.cfg.MCPActivateFn
+				m.viewport.GotoBottom()
+				return m, func() tea.Msg {
+					err := fn(name)
+					return MCPActivatedMsg{Name: name, Err: err}
+				}
+			}
+			m.messages = append(m.messages, newSystemMessage("MCP activation not available"))
+			m.refreshViewport()
+		}
+
+	case input == "/chat":
+		if !m.cfg.IsCode {
+			m.messages = append(m.messages, newSystemMessage("Already in chat mode"))
+			m.refreshViewport()
+			break
+		}
+		m.cfg.IsCode = false
+		if m.cfg.SetCodeModeFn != nil {
+			m.cfg.SetCodeModeFn(false)
+		}
+		m.messages = append(m.messages, newSystemMessage("Switched to chat mode — file tools unloaded"))
+		m.refreshViewport()
+
+	case input == "/code":
+		if m.cfg.IsCode {
+			m.messages = append(m.messages, newSystemMessage("Already in code mode — use /auto to toggle tool approval"))
+			m.refreshViewport()
+			break
+		}
+		if m.cfg.SetCodeModeFn != nil {
+			m.cfg.IsCode = true
+			m.cfg.SetCodeModeFn(true)
+			m.messages = append(m.messages, newSystemMessage("Switched to code mode — file tools loaded"))
+		} else {
+			m.messages = append(m.messages, newSystemMessage(
+				"File tools are not available in this session.\nStart with `bai code [prompt]` for the full agentic experience."))
+		}
+		m.refreshViewport()
+
+	case input == "/auto":
+		if !m.cfg.IsCode {
+			m.messages = append(m.messages, newSystemMessage("/auto is only available in code sessions (bai code)"))
+			m.refreshViewport()
+			break
+		}
+		m.cfg.AutoApply = !m.cfg.AutoApply
+		if m.cfg.SetAutoApplyFn != nil {
+			m.cfg.SetAutoApplyFn(m.cfg.AutoApply)
+		}
+		state := "disabled — tools will prompt for approval"
+		if m.cfg.AutoApply {
+			state = "enabled — tools will execute without prompting"
+		}
+		m.messages = append(m.messages, newSystemMessage("Auto-apply "+state))
+		m.refreshViewport()
+
+	case input == "/account":
+		if m.cfg.AccountFn != nil {
+			m.messages = append(m.messages, newSystemMessage("Loading account…"))
+			m.refreshViewport()
+			fn := m.cfg.AccountFn
+			m.viewport.GotoBottom()
+			return m, func() tea.Msg {
+				info, err := fn()
+				return AccountLoadedMsg{Info: info, Err: err}
+			}
+		}
+		m.messages = append(m.messages, newSystemMessage("Account info not available"))
+		m.refreshViewport()
+
+	case input == "/usage":
+		if m.cfg.UsageFn != nil {
+			m.messages = append(m.messages, newSystemMessage("Loading usage…"))
+			m.refreshViewport()
+			fn := m.cfg.UsageFn
+			m.viewport.GotoBottom()
+			return m, func() tea.Msg {
+				info, err := fn()
+				return UsageLoadedMsg{Info: info, Err: err}
+			}
+		}
+		m.messages = append(m.messages, newSystemMessage("Usage info not available"))
 		m.refreshViewport()
 
 	case input == "/tools" && m.cfg.IsCode:
@@ -562,10 +873,99 @@ func helpText() string {
 		"",
 		"  Slash commands",
 		"  ─────────────────────────────────",
-		"  /help   /clear  /reset  /model",
-		"  /tools  /context  /exit",
+		"  /new             Start a fresh session",
+		"  /model [name]    Show or switch model",
+		"  /sessions        List recent sessions",
+		"  /resume <id|n>   Resume a session",
+		"  /code            Switch to code mode (file tools)",
+		"  /chat            Switch to chat mode (no tools)",
+		"  /auto            Toggle auto-apply for code tools",
+		"  /mcp [name]      List or activate MCP servers",
+		"  /account         Show account info",
+		"  /usage           Show token usage",
+		"  /clear  /reset  /context  /exit",
 		"",
 	}, "\n")
+}
+
+func (m *Model) formatSessions(sessions []SessionInfo) string {
+	if len(sessions) == 0 {
+		return "No sessions found. Use /new to start one."
+	}
+	var sb strings.Builder
+	sb.WriteString("\n  Recent sessions:\n")
+	for i, s := range sessions {
+		id8 := s.ID
+		if len(id8) > 8 {
+			id8 = id8[:8]
+		}
+		title := s.Title
+		if title == "" {
+			title = "(untitled)"
+		}
+		if len(title) > 40 {
+			title = title[:37] + "..."
+		}
+		sb.WriteString(fmt.Sprintf("  %2d.  %s  %s\n", i+1, id8, title))
+	}
+	sb.WriteString("\n  /resume <number> to switch")
+	return sb.String()
+}
+
+func formatAccount(info *AccountInfo) string {
+	if info == nil {
+		return "No account info available."
+	}
+	return strings.Join([]string{
+		"",
+		"  Account",
+		"  ─────────────────────────────────",
+		"  Name:      " + info.Name,
+		"  Email:     " + info.Email,
+		"  Username:  " + info.Username,
+		"",
+	}, "\n")
+}
+
+func formatUsage(info *UsageInfo) string {
+	if info == nil {
+		return "No usage info available."
+	}
+	return strings.Join([]string{
+		"",
+		"  Usage  ·  plan: " + info.PlanType,
+		"  ─────────────────────────────────",
+		fmt.Sprintf("  Hourly:   %.1f%%", info.HourlyPercent),
+		fmt.Sprintf("  Daily:    %.1f%%", info.DailyPercent),
+		fmt.Sprintf("  Monthly:  %.1f%%", info.MonthlyPercent),
+		"",
+		fmt.Sprintf("  Input tokens:   %d", info.InputTokens),
+		fmt.Sprintf("  Output tokens:  %d", info.OutputTokens),
+		fmt.Sprintf("  Total tokens:   %d", info.TotalTokens),
+		"",
+	}, "\n")
+}
+
+func formatMCPList(items []MCPInfo) string {
+	if len(items) == 0 {
+		return "No MCP servers available. Visit your account to configure integrations."
+	}
+	var sb strings.Builder
+	sb.WriteString("\n  MCP servers:\n")
+	for _, s := range items {
+		status := "○"
+		if s.Available {
+			status = "●"
+		}
+		desc := s.Description
+		if len(desc) > 45 {
+			desc = desc[:42] + "..."
+		}
+		line := fmt.Sprintf("  %s  %-20s  %s", status, s.Name, desc)
+		sb.WriteString(line + "\n")
+	}
+	sb.WriteString("\n  /mcp <name> to activate  ·  ● = available")
+	return sb.String()
 }
 
 // handleStreamEvent processes one StreamEvent from the channel and returns any
@@ -646,7 +1046,7 @@ func (m *Model) handleStreamEvent(ev StreamEvent) []tea.Cmd {
 			}
 		}
 		m.refreshViewport()
-		m.viewport.GotoBottom()
+		m.scrollToLastMsgStart()
 		m.textarea.Focus()
 		cmds = append(cmds, textarea.Blink)
 	}
@@ -655,11 +1055,42 @@ func (m *Model) handleStreamEvent(ev StreamEvent) []tea.Cmd {
 }
 
 
-func max(a, b int) int {
-	if a > b {
-		return a
+// scrollToLastMsgStart positions the viewport so the user sees the beginning
+// of the last message. For short messages that fit in the viewport it falls
+// back to GotoBottom so the full message is visible without dead space above.
+func (m *Model) scrollToLastMsgStart() {
+	if len(m.messages) == 0 {
+		m.viewport.GotoBottom()
+		return
 	}
-	return b
+
+	last := len(m.messages) - 1
+	innerWidth := m.width - 4
+	if innerWidth < 20 {
+		innerWidth = 20
+	}
+
+	lastRendered := m.renderMessageAt(last, innerWidth)
+	lastMsgLines := strings.Count(lastRendered, "\n") + 1
+	if lastMsgLines <= m.viewport.Height {
+		m.viewport.GotoBottom()
+		return
+	}
+
+	// Count lines rendered before the last message to find its start offset.
+	var sb strings.Builder
+	for i := 0; i < last; i++ {
+		if i > 0 {
+			sb.WriteByte('\n')
+		}
+		sb.WriteString(m.renderMessageAt(i, innerWidth))
+	}
+	if last > 0 {
+		sb.WriteByte('\n') // separator before the last message
+	}
+	linesBefore := strings.Count(sb.String(), "\n")
+	m.viewport.YOffset = linesBefore
+	m.atBottom = false
 }
 
 // waitForStreamEvent returns a tea.Cmd that blocks until the next StreamEvent

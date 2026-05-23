@@ -41,6 +41,9 @@ jobs:
     needs: [release]
     if: ${{ needs.release.outputs.release_created }}
     uses: bluefunda/release-foundry/.github/workflows/docker-deploy.yml@main
+    permissions:
+      contents: read
+      packages: write
     with:
       tag: ${{ needs.release.outputs.tag_name }}
       build-args: VERSION=${{ needs.release.outputs.tag_name }}

@@ -28,12 +28,18 @@ func AuthURL(domain, realm string) string {
 
 // Config represents the CLI configuration stored in ~/.bai/config.yaml.
 type Config struct {
-	GatewayURL string   `yaml:"gateway_url"`
-	BFFURL     string   `yaml:"bff_url"`
+	GatewayURL string   `yaml:"gateway"`  // was: gateway_url
+	BFFURL     string   `yaml:"endpoint"` // was: bff_url
 	Domain     string   `yaml:"domain"`
 	Realm      string   `yaml:"realm"`
 	Auth       Auth     `yaml:"auth"`
 	Defaults   Defaults `yaml:"defaults"`
+}
+
+// legacyConfig holds the old YAML field names for one-time migration.
+type legacyConfig struct {
+	BFFURLOld  string `yaml:"bff_url"`
+	GatewayOld string `yaml:"gateway_url"`
 }
 
 // Auth holds persisted tokens.
@@ -89,7 +95,22 @@ func Load() (*Config, error) {
 	if err := yaml.Unmarshal(data, &cfg); err != nil {
 		return nil, fmt.Errorf("parse config: %w", err)
 	}
-	// Backfill defaults for missing fields
+
+	// One-time migration: read old field names if new ones are absent.
+	var needsSave bool
+	var legacy legacyConfig
+	if err := yaml.Unmarshal(data, &legacy); err == nil {
+		if cfg.BFFURL == "" && legacy.BFFURLOld != "" {
+			cfg.BFFURL = legacy.BFFURLOld
+			needsSave = true
+		}
+		if cfg.GatewayURL == "" && legacy.GatewayOld != "" {
+			cfg.GatewayURL = legacy.GatewayOld
+			needsSave = true
+		}
+	}
+
+	// Backfill defaults for missing fields.
 	if cfg.GatewayURL == "" {
 		cfg.GatewayURL = DefaultGatewayURL
 	}
@@ -105,6 +126,12 @@ func Load() (*Config, error) {
 	if cfg.Defaults.Model == "" {
 		cfg.Defaults.Model = "openai"
 	}
+
+	// Persist the migrated config so old field names are not re-read next time.
+	if needsSave {
+		_ = Save(&cfg)
+	}
+
 	return &cfg, nil
 }
 

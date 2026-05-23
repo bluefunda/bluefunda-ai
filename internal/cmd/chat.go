@@ -16,9 +16,42 @@ import (
 	"github.com/bluefunda/bluefunda-ai/internal/ui/tui"
 )
 
+// findRecentSession returns the most recent chat session if it was active within the
+// last 24 hours, so the user can pick up right where they left off. Returns ("","")
+// when no suitable session exists.
+func findRecentSession(conn *caigrpc.Conn) (chatID, title string) {
+	ctx, cancel := caigrpc.ContextWithTimeout()
+	defer cancel()
+	resp, err := conn.Client.GetChatIds(ctx, &pb.GetChatIdsRequest{})
+	if err != nil || len(resp.GetChats()) == 0 {
+		return "", ""
+	}
+	last := resp.GetChats()[0]
+	ts := last.GetLastUpdatedAt()
+	if ts == "" {
+		ts = last.GetCreatedAt()
+	}
+	if t, err := time.Parse(time.RFC3339, ts); err == nil {
+		if time.Since(t) > 24*time.Hour {
+			return "", ""
+		}
+	}
+	return last.GetChatId(), last.GetChatTitle()
+}
+
+// chatCmd is kept for backward compatibility but hidden from help.
 var chatCmd = &cobra.Command{
-	Use:   "chat",
-	Short: "Chat operations",
+	Use:    "chat",
+	Short:  "Chat operations",
+	Hidden: true,
+}
+
+// sessionsCmd is a convenience alias for `bai chat list`, hidden from main help.
+var sessionsCmd = &cobra.Command{
+	Use:    "sessions",
+	Short:  "List past chat sessions",
+	Hidden: true,
+	RunE:   runChatList,
 }
 
 // --- chat list ---
@@ -74,16 +107,17 @@ var (
 )
 
 var chatStartCmd = &cobra.Command{
-	Use:   "start [chatId]",
-	Short: "Start an interactive chat session with gRPC streaming",
-	Long:  "Start an interactive chat REPL. Use --new to create a new chat, or pass an existing chat ID to continue.",
-	Args:  cobra.MaximumNArgs(1),
-	RunE:  runChatStart,
+	Use:    "start [chatId | prompt]",
+	Short:  "Start an interactive session",
+	Long:   "Start an interactive session. Pass an existing chat UUID to resume it, a quoted prompt to auto-submit it, or omit the argument to start blank. Use --new to force a new session.",
+	Args:   cobra.MaximumNArgs(1),
+	Hidden: true,
+	RunE:   runChatStart,
 }
 
 func init() {
 	chatStartCmd.Flags().StringVar(&chatModel, "model", "", "LLM model to use")
-	chatStartCmd.Flags().BoolVar(&chatNew, "new", false, "Force new chat (generate UUID)")
+	chatStartCmd.Flags().BoolVar(&chatNew, "new", false, "Force new session (generate UUID)")
 	chatStartCmd.Flags().StringVar(&chatMCPServer, "mcp-server", "", "MCP server name")
 	chatStartCmd.Flags().BoolVar(&chatDemo, "demo", false, "Run with a mock backend (no auth required)")
 
@@ -95,13 +129,30 @@ func runChatStart(cmd *cobra.Command, args []string) error {
 		return runChatDemo()
 	}
 
+	var chatID, initialPrompt string
+	if len(args) > 0 && !chatNew {
+		if _, err := uuid.Parse(args[0]); err == nil {
+			chatID = args[0] // resume existing session by UUID
+		} else {
+			initialPrompt = args[0] // treat as initial prompt
+		}
+	} else if len(args) > 0 {
+		initialPrompt = args[0] // chatNew=true, still use as prompt
+	}
+
+	return runChatSession(chatID, initialPrompt, chatModel, chatMCPServer)
+}
+
+// runChatSession is the shared entry point for interactive sessions.
+// Called from the root command (bai) and the hidden chat start command.
+// chatID is optional — empty means generate a new UUID (new session).
+func runChatSession(chatID, initialPrompt, model, mcpServer string) error {
 	conn, cfg, err := bffConn()
 	if err != nil {
 		return err
 	}
 	defer conn.Close()
 
-	model := chatModel
 	if model == "" {
 		model = cfg.Defaults.Model
 	}
@@ -109,21 +160,22 @@ func runChatStart(cmd *cobra.Command, args []string) error {
 		model = "openai"
 	}
 
-	var chatID string
-	resuming := false
-	if len(args) > 0 && !chatNew {
-		chatID = args[0]
-		resuming = true
-	} else {
+	var resumeTitle string
+	var isResume bool
+	if chatID == "" && !rootNew {
+		chatID, resumeTitle = findRecentSession(conn)
+		if chatID != "" {
+			isResume = true
+		}
+	}
+	if chatID == "" {
 		chatID = uuid.New().String()
 	}
-	_ = resuming
 
 	p := printer(cfg)
 	var titleWg sync.WaitGroup
 
-	submitFn := func(cid, input string, isNew bool) <-chan tui.StreamEvent {
-		// Token check before each request
+	submitFn := func(cid, mdl, input string, isNew bool) <-chan tui.StreamEvent {
 		if conn.TS.NearExpiry(2 * time.Minute) {
 			if err := conn.TS.EnsureValidToken(); err != nil {
 				if authErr := reAuthenticate(cfg, p); authErr != nil {
@@ -138,9 +190,9 @@ func runChatStart(cmd *cobra.Command, args []string) error {
 		req := &pb.ChatRequest{
 			ChatId:        cid,
 			Prompt:        input,
-			Model:         model,
+			Model:         mdl,
 			IsNewChat:     isNew,
-			McpServerName: chatMCPServer,
+			McpServerName: mcpServer,
 		}
 
 		ctx, cancel := context.WithCancel(context.Background())
@@ -177,8 +229,95 @@ func runChatStart(cmd *cobra.Command, args []string) error {
 	}
 
 	cfg2 := tui.SessionConfig{
-		ChatID: chatID,
-		Model:  model,
+		ChatID:        chatID,
+		Model:         model,
+		InitialPrompt: initialPrompt,
+		RepoName:      gitRepoName(),
+		ResumeTitle:   resumeTitle,
+		IsResume:      isResume,
+		ListSessionsFn: func() ([]tui.SessionInfo, error) {
+			ctx, cancel := caigrpc.ContextWithTimeout()
+			defer cancel()
+			resp, err := conn.Client.GetChatIds(ctx, &pb.GetChatIdsRequest{})
+			if err != nil {
+				return nil, err
+			}
+			sessions := make([]tui.SessionInfo, 0, len(resp.GetChats()))
+			for _, c := range resp.GetChats() {
+				sessions = append(sessions, tui.SessionInfo{
+					ID:    c.GetChatId(),
+					Title: c.GetChatTitle(),
+					Model: c.GetModel(),
+				})
+			}
+			return sessions, nil
+		},
+		AccountFn: func() (*tui.AccountInfo, error) {
+			ctx, cancel := caigrpc.ContextWithTimeout()
+			defer cancel()
+			resp, err := conn.Client.GetUserInfo(ctx, &pb.GetUserInfoRequest{})
+			if err != nil {
+				return nil, err
+			}
+			return &tui.AccountInfo{
+				Name:     resp.GetName(),
+				Email:    resp.GetEmail(),
+				Username: resp.GetPreferredUsername(),
+			}, nil
+		},
+		UsageFn: func() (*tui.UsageInfo, error) {
+			ctx, cancel := caigrpc.ContextWithTimeout()
+			defer cancel()
+			resp, err := conn.Client.QueryRateLimit(ctx, &pb.QueryRateLimitRequest{})
+			if err != nil {
+				return nil, err
+			}
+			info := &tui.UsageInfo{}
+			if s := resp.GetUserStats(); s != nil {
+				info.PlanType = s.GetPlanType()
+				info.HourlyPercent = s.GetHourlyPercentage()
+				info.DailyPercent = s.GetDailyPercentage()
+				info.MonthlyPercent = s.GetMonthlyPercentage()
+			}
+			if u := resp.GetTokenUsage(); u != nil {
+				info.InputTokens = int64(u.GetInputTokens())
+				info.OutputTokens = int64(u.GetOutputTokens())
+				info.TotalTokens = int64(u.GetTotalTokens())
+			}
+			return info, nil
+		},
+		MCPListFn: func() ([]tui.MCPInfo, error) {
+			ctx, cancel := caigrpc.ContextWithTimeout()
+			defer cancel()
+			resp, err := conn.Client.GetMcpInfo(ctx, &pb.GetMcpInfoRequest{})
+			if err != nil {
+				return nil, err
+			}
+			items := make([]tui.MCPInfo, 0, len(resp.GetMcpServers()))
+			for _, s := range resp.GetMcpServers() {
+				items = append(items, tui.MCPInfo{
+					Name:        s.GetName(),
+					Type:        s.GetType(),
+					Available:   s.GetIsAvailable(),
+					Description: s.GetShortDescription(),
+				})
+			}
+			return items, nil
+		},
+		MCPActivateFn: func(name string) error {
+			ctx, cancel := caigrpc.ContextWithTimeout()
+			defer cancel()
+			resp, err := conn.Client.SelectMcp(ctx, &pb.SelectMcpRequest{
+				McpInfo: &pb.MCPInfo{Name: name},
+			})
+			if err != nil {
+				return err
+			}
+			if resp.GetError() != "" {
+				return fmt.Errorf("%s", resp.GetError())
+			}
+			return nil
+		},
 	}
 	m := tui.New(cfg2, submitFn)
 	if err := tui.Run(m); err != nil {
@@ -200,7 +339,7 @@ func generateTitle(conn *caigrpc.Conn, wg *sync.WaitGroup, chatID, prompt string
 
 var chatHistoryCmd = &cobra.Command{
 	Use:   "history <chatId>",
-	Short: "Get message history for a chat",
+	Short: "Get message history for a session",
 	Args:  cobra.ExactArgs(1),
 	RunE:  runChatHistory,
 }
@@ -243,7 +382,7 @@ func runChatHistory(cmd *cobra.Command, args []string) error {
 
 var chatContextCmd = &cobra.Command{
 	Use:   "context <chatId>",
-	Short: "Get context for a chat",
+	Short: "Get context for a session",
 	Args:  cobra.ExactArgs(1),
 	RunE:  runChatContext,
 }
@@ -273,7 +412,7 @@ var chatTitlePrompt string
 
 var chatTitleCmd = &cobra.Command{
 	Use:   "title <chatId>",
-	Short: "Generate a title for a chat",
+	Short: "Generate a title for a session",
 	Args:  cobra.ExactArgs(1),
 	RunE:  runChatTitle,
 }
@@ -317,7 +456,7 @@ func runChatTitle(cmd *cobra.Command, args []string) error {
 
 var chatStopCmd = &cobra.Command{
 	Use:   "stop <chatId>",
-	Short: "Stop a streaming chat",
+	Short: "Stop a streaming session",
 	Args:  cobra.ExactArgs(1),
 	RunE:  runChatStop,
 }
@@ -334,14 +473,14 @@ func runChatStop(cmd *cobra.Command, args []string) error {
 
 	resp, err := conn.Client.StopChat(ctx, &pb.StopChatRequest{ChatId: args[0]})
 	if err != nil {
-		return fmt.Errorf("stop chat: %w", err)
+		return fmt.Errorf("stop session: %w", err)
 	}
 
 	p := printer(cfg)
 	if resp.GetSuccess() {
-		p.Success("Chat stopped")
+		p.Success("Session stopped")
 	} else {
-		p.Error("Failed to stop chat")
+		p.Error("Failed to stop session")
 	}
 	return nil
 }
@@ -349,7 +488,7 @@ func runChatStop(cmd *cobra.Command, args []string) error {
 // --- demo mode ---
 
 func runChatDemo() error {
-	submitFn := func(chatID, input string, isNew bool) <-chan tui.StreamEvent {
+	submitFn := func(chatID, _, input string, isNew bool) <-chan tui.StreamEvent {
 		ch := make(chan tui.StreamEvent, 128)
 		go func() {
 			defer close(ch)
@@ -371,7 +510,6 @@ func demoRespond(input string, ch chan<- tui.StreamEvent) {
 	ch <- tui.StreamEvent{Kind: "heartbeat"}
 	time.Sleep(120 * time.Millisecond)
 
-	// Simulate a tool call for inputs that look like file/code questions
 	lc := strings.ToLower(input)
 	if strings.Contains(lc, "read") || strings.Contains(lc, "file") ||
 		strings.Contains(lc, "code") || strings.Contains(lc, "list") {
@@ -393,7 +531,6 @@ func demoRespond(input string, ch chan<- tui.StreamEvent) {
 		time.Sleep(80 * time.Millisecond)
 	}
 
-	// Stream the markdown response word-by-word
 	response := buildDemoResponse(input)
 	words := strings.Fields(response)
 	buf := ""
@@ -402,7 +539,6 @@ func demoRespond(input string, ch chan<- tui.StreamEvent) {
 		if i < len(words)-1 {
 			buf += " "
 		}
-		// Flush in small batches to simulate realistic token streaming
 		if len(buf) >= 6 || i == len(words)-1 {
 			ch <- tui.StreamEvent{Kind: "chunk", Chunk: buf}
 			buf = ""
@@ -416,7 +552,7 @@ func buildDemoResponse(input string) string {
 	lc := strings.ToLower(input)
 	switch {
 	case strings.Contains(lc, "hello") || strings.Contains(lc, "hi"):
-		return "Hello! I'm your AI coding assistant. How can I help you today?\n\nYou can ask me to:\n- **Read** and explain code files\n- **Write** or edit code\n- **Run** shell commands\n- **Search** your project\n\nType `/help` to see all available commands."
+		return "Hello! I'm your AI pair programmer. How can I help you today?\n\nYou can ask me to:\n- **Read** and explain code files\n- **Write** or edit code\n- **Run** shell commands\n- **Search** your project\n\nType `/help` to see available commands."
 
 	case strings.Contains(lc, "help"):
 		return "Here's what I can do:\n\n## File Operations\n- `read_file` — read any file\n- `write_file` — create or update files\n- `list_dir` — browse directories\n- `search_files` — glob pattern search\n\n## Shell\n- `bash` — run shell commands\n\n## Slash Commands\nType `/` to see the command palette."
@@ -425,10 +561,10 @@ func buildDemoResponse(input string) string {
 		return "I've read the file. Here's a summary:\n\n```go\nfunc main() {\n    if err := cmd.Execute(); err != nil {\n        os.Exit(1)\n    }\n}\n```\n\nThis is the entry point. It delegates to the cobra command tree in `internal/cmd/`. Want me to explore any specific part?"
 
 	case strings.Contains(lc, "test"):
-		return "Running the test suite:\n\n```\nok   internal/cmd       0.031s\nok   internal/config    0.004s\nok   internal/grpc      0.002s\nok   internal/ui        0.008s\n```\n\nAll **4 packages** passed. Coverage looks good."
+		return "Running the test suite:\n\n```\nok   internal/cmd       0.031s\nok   internal/config    0.004s\nok   internal/grpc      0.002s\nok   internal/ui        0.008s\n```\n\nAll **4 packages** passed."
 
 	default:
-		return fmt.Sprintf("I understand you're asking about: *%s*\n\nThis is a **demo mode** response — connect to a real backend with `ai chat start --new` to get actual AI responses.\n\nTry asking me to:\n- Read a file\n- Help with code\n- Run tests", input)
+		return fmt.Sprintf("I understand you're asking about: *%s*\n\nThis is a **demo mode** response — connect to a real backend with `bai --new` to get actual AI responses.\n\nTry asking me to read a file or help with code.", input)
 	}
 }
 

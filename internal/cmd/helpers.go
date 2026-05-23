@@ -3,6 +3,9 @@ package cmd
 import (
 	"fmt"
 	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
 
 	"github.com/bluefunda/bluefunda-ai/internal/auth"
 	"github.com/bluefunda/bluefunda-ai/internal/config"
@@ -43,13 +46,13 @@ func reAuthenticate(cfg *config.Config, p *ui.Printer) error {
 func bffConn() (*caigrpc.Conn, *config.Config, error) {
 	cfg := loadConfig()
 	if cfg.Auth.AccessToken == "" {
-		return nil, cfg, fmt.Errorf("not authenticated; run 'ai login'")
+		return nil, cfg, fmt.Errorf("not signed in — run `bai login`")
 	}
 
 	refreshFunc := func() (string, error) {
 		tok, err := auth.Refresh(cfg.Domain, cfg.Realm, cfg.Auth.RefreshToken)
 		if err != nil {
-			return "", fmt.Errorf("token refresh failed (run 'ai login'): %w", err)
+			return "", fmt.Errorf("token refresh failed — run `bai login`: %w", err)
 		}
 		if err := saveAuthTokens(cfg, tok); err != nil {
 			return "", fmt.Errorf("save tokens: %w", err)
@@ -63,6 +66,15 @@ func bffConn() (*caigrpc.Conn, *config.Config, error) {
 		return nil, cfg, err
 	}
 	return conn, cfg, nil
+}
+
+// gitRepoName returns the basename of the git repository root, or "" if not in a git repo.
+func gitRepoName() string {
+	out, err := exec.Command("git", "rev-parse", "--show-toplevel").Output()
+	if err != nil {
+		return ""
+	}
+	return filepath.Base(strings.TrimSpace(string(out)))
 }
 
 // printer returns a Printer configured from flags and config.

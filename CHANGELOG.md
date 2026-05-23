@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.9.0](https://github.com/bluefunda/bluefunda-ai/compare/v1.8.0...v1.9.0) (2026-05-23)
+
+
+### Features
+
+* rebrand cai-cli to BlueFunda AI (bai) ([#53](https://github.com/bluefunda/bluefunda-ai/issues/53)) ([604f24e](https://github.com/bluefunda/bluefunda-ai/commit/604f24ec308a971fbdb9b4666dbd9a3ac7c45679))
+
 ## [1.8.0](https://github.com/bluefunda/cai-cli/compare/v1.7.0...v1.8.0) (2026-05-22)
 
 

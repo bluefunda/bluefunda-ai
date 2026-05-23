@@ -1,11 +1,11 @@
 version: 2
 
-project_name: ai
+project_name: bai
 
 builds:
-  - id: ai
-    main: ./cmd/ai
-    binary: ai
+  - id: bai
+    main: ./cmd/bai
+    binary: bai
     env:
       - CGO_ENABLED=0
     goos:
@@ -16,13 +16,13 @@ builds:
       - arm64
     ldflags:
       - -s -w
-      - -X github.com/bluefunda/cai-cli/internal/cmd.Version={{ .Version }}
+      - -X github.com/bluefunda/bluefunda-ai/internal/cmd.Version={{ .Version }}
     flags:
       - -trimpath
 
 archives:
-  - id: ai
-    name_template: "ai_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+  - id: bai
+    name_template: "bai_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
     formats:
       - tar.gz
       - zip
@@ -37,25 +37,25 @@ archives:
       - none*
 
 nfpms:
-  - id: ai
-    package_name: ai
+  - id: bai
+    package_name: bai
     ids:
-      - ai
-    vendor: Bluefunda
-    maintainer: Bluefunda <support@bluefunda.com>
-    description: Cross-platform CLI for the CAI platform via gRPC.
-    license: MIT
+      - bai
+    vendor: BlueFunda
+    maintainer: BlueFunda <support@bluefunda.com>
+    description: Cross-platform CLI for BlueFunda AI — context-aware AI agents for SAP operations.
+    license: Apache-2.0
     formats:
       - deb
       - rpm
-    bindir: /opt/ai/bin
+    bindir: /opt/bai/bin
     contents:
-      - dst: /opt/ai/etc
+      - dst: /opt/bai/etc
         type: dir
-      - dst: /opt/ai/log
+      - dst: /opt/bai/log
         type: dir
-      - dst: /usr/local/bin/ai
-        src: /opt/ai/bin/ai
+      - dst: /usr/local/bin/bai
+        src: /opt/bai/bin/bai
         type: symlink
 
 notarize:
@@ -70,12 +70,12 @@ notarize:
         key: "{{ .Env.NOTARIZATION_KEY }}"
 
 homebrew_casks:
-  - name: ai
+  - name: bai
     ids:
-      - ai
+      - bai
     binaries:
-      - ai
-    homepage: https://github.com/bluefunda/cai-cli
+      - bai
+    homepage: https://github.com/bluefunda/bluefunda-ai
     description: CLI for BlueFunda AI — context-aware AI agents for SAP operations
     directory: Casks
     repository:
@@ -99,60 +99,60 @@ changelog:
 release:
   github:
     owner: bluefunda
-    name: cai-cli
+    name: bluefunda-ai
   draft: false
   replace_existing_draft: true
-  name_template: "AI CLI v{{ .Version }}"
+  name_template: "bai v{{ .Version }}"
   header: |
-    ## AI CLI v{{ .Version }}
+    ## BlueFunda AI CLI (bai) v{{ .Version }}
 
-    Cross-platform CLI for the CAI platform via gRPC.
+    Cross-platform CLI for BlueFunda AI — context-aware AI agents for SAP operations.
 
     ### Installation
 
     **Homebrew (macOS):**
     ```bash
     brew tap bluefunda/tap
-    brew install --cask ai
+    brew install --cask bai
     ```
 
-    **Linux (install script):**
+    **One-line installer (macOS and Linux):**
     ```bash
-    curl -fsSL https://github.com/bluefunda/cai-cli/releases/latest/download/install.sh | sh
+    curl -fsSL https://raw.githubusercontent.com/bluefunda/bluefunda-ai/main/install.sh | sh
     ```
 
     **Debian/Ubuntu (x86_64):**
     ```bash
-    curl -sL https://github.com/bluefunda/cai-cli/releases/download/v{{ .Version }}/ai_{{ .Version }}_linux_amd64.deb -o ai.deb
-    sudo dpkg -i ai.deb
+    curl -sL https://github.com/bluefunda/bluefunda-ai/releases/download/v{{ .Version }}/bai_{{ .Version }}_linux_amd64.deb -o bai.deb
+    sudo dpkg -i bai.deb
     ```
 
     **Debian/Ubuntu (ARM64):**
     ```bash
-    curl -sL https://github.com/bluefunda/cai-cli/releases/download/v{{ .Version }}/ai_{{ .Version }}_linux_arm64.deb -o ai.deb
-    sudo dpkg -i ai.deb
+    curl -sL https://github.com/bluefunda/bluefunda-ai/releases/download/v{{ .Version }}/bai_{{ .Version }}_linux_arm64.deb -o bai.deb
+    sudo dpkg -i bai.deb
     ```
 
-    **RPM-based (x86_64):**
+    **RHEL / Fedora / Rocky (x86_64):**
     ```bash
-    sudo rpm -i https://github.com/bluefunda/cai-cli/releases/download/v{{ .Version }}/ai_{{ .Version }}_linux_amd64.rpm
+    sudo rpm -i https://github.com/bluefunda/bluefunda-ai/releases/download/v{{ .Version }}/bai_{{ .Version }}_linux_amd64.rpm
     ```
 
-    **RPM-based (ARM64):**
+    **RHEL / Fedora / Rocky (ARM64):**
     ```bash
-    sudo rpm -i https://github.com/bluefunda/cai-cli/releases/download/v{{ .Version }}/ai_{{ .Version }}_linux_arm64.rpm
+    sudo rpm -i https://github.com/bluefunda/bluefunda-ai/releases/download/v{{ .Version }}/bai_{{ .Version }}_linux_arm64.rpm
     ```
 
     **macOS (manual):**
     ```bash
-    curl -sL https://github.com/bluefunda/cai-cli/releases/download/v{{ .Version }}/ai_{{ .Version }}_darwin_arm64.zip -o ai.zip
-    unzip ai.zip && chmod +x ai && sudo mv ai /usr/local/bin/
+    curl -sL https://github.com/bluefunda/bluefunda-ai/releases/download/v{{ .Version }}/bai_{{ .Version }}_darwin_arm64.zip -o bai.zip
+    unzip bai.zip && chmod +x bai && sudo mv bai /usr/local/bin/
     ```
 
     **Linux (manual):**
     ```bash
-    curl -sL https://github.com/bluefunda/cai-cli/releases/download/v{{ .Version }}/ai_{{ .Version }}_linux_amd64.tar.gz | tar xz
-    chmod +x ai && sudo mv ai /usr/local/bin/
+    curl -sL https://github.com/bluefunda/bluefunda-ai/releases/download/v{{ .Version }}/bai_{{ .Version }}_linux_amd64.tar.gz | tar xz
+    chmod +x bai && sudo mv bai /usr/local/bin/
     ```
 
 snapshot:

@@ -3,7 +3,7 @@ package main
 import (
 	"os"
 
-	"github.com/bluefunda/cai-cli/internal/cmd"
+	"github.com/bluefunda/bluefunda-ai/internal/cmd"
 )
 
 func main() {

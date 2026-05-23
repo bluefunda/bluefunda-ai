@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	pb "github.com/bluefunda/cai-cli/api/proto/bff"
+	pb "github.com/bluefunda/bluefunda-ai/api/proto/bff"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/test/bufconn"

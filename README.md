@@ -1,133 +1,232 @@
-# CAI CLI
+# BlueFunda AI
 
-Command line interface for [BlueFunda AI](https://bluefunda.com/bluefunda-ai/) — context-aware AI agents for SAP operations.
+[![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
+[![Go Reference](https://pkg.go.dev/badge/github.com/bluefunda/bluefunda-ai.svg)](https://pkg.go.dev/github.com/bluefunda/bluefunda-ai)
+[![Release](https://img.shields.io/github/v/release/bluefunda/bluefunda-ai)](https://github.com/bluefunda/bluefunda-ai/releases)
+[![CI](https://github.com/bluefunda/bluefunda-ai/actions/workflows/ci.yml/badge.svg)](https://github.com/bluefunda/bluefunda-ai/actions/workflows/ci.yml)
 
-The binary is `ai`. Use it to chat with BlueFunda AI, manage MCP tool integrations, and inspect your account and usage from the terminal.
+**`bai`** — A terminal-native AI assistant for SAP operations. Runs interactive TUI sessions, drives agentic coding loops, and integrates with the BlueFunda AI platform via gRPC.
 
-> **Prefer the browser?** You can also use BlueFunda AI directly at [bluefunda.com/login](https://bluefunda.com/login) — no install required.
+## Features
+
+- **Interactive TUI** — Full-screen chat interface powered by [Bubble Tea](https://github.com/charmbracelet/bubbletea)
+- **Agentic coding** — `bai ask` launches an autonomous loop that reads/writes files and runs tools
+- **Streaming output** — Token-by-token rendering with syntax-highlighted code blocks
+- **Model selection** — Switch between available LLM models on the fly
+- **MCP integration** — Model Context Protocol tool support for external integrations
+- **Multi-format output** — Table, JSON, and quiet modes for scripting
+- **Shell completions** — bash, zsh, fish, PowerShell
+- **macOS + Linux** — Native binaries for amd64 and arm64
 
 ## Installation
-
-### One-line installer (macOS and Linux)
-
-```bash
-sh -c "$(curl -fsSL https://raw.githubusercontent.com/bluefunda/cai-cli/main/install.sh)"
-```
-
-Installs to `/usr/local/bin` if writable, otherwise `~/.local/bin`. Override with `AI_INSTALL_DIR`.
 
 ### Homebrew (macOS)
 
 ```bash
 brew tap bluefunda/tap
-brew install --cask ai
+brew install --cask bai
 ```
 
-### From GitHub Releases
-
-Download the binary for your platform from the [releases page](https://github.com/bluefunda/cai-cli/releases/latest).
-
-| Platform       | Archive                              |
-|----------------|--------------------------------------|
-| macOS (ARM64)  | `ai_<version>_darwin_arm64.zip`      |
-| macOS (AMD64)  | `ai_<version>_darwin_amd64.zip`      |
-| Linux (AMD64)  | `ai_<version>_linux_amd64.tar.gz`    |
-| Linux (ARM64)  | `ai_<version>_linux_arm64.tar.gz`    |
-
-Linux users can also install via `.deb` or `.rpm`:
-
-**Debian / Ubuntu:**
-```bash
-VER=$(curl -fsSL https://api.github.com/repos/bluefunda/cai-cli/releases/latest | grep '"tag_name"' | sed 's/.*"v\([^"]*\)".*/\1/')
-ARCH=$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/')
-curl -sL "https://github.com/bluefunda/cai-cli/releases/download/v${VER}/ai_${VER}_linux_${ARCH}.deb" -o ai.deb
-sudo dpkg -i ai.deb
-```
-
-**RHEL / Fedora / Rocky:**
-```bash
-VER=$(curl -fsSL https://api.github.com/repos/bluefunda/cai-cli/releases/latest | grep '"tag_name"' | sed 's/.*"v\([^"]*\)".*/\1/')
-ARCH=$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/')
-sudo dnf install "https://github.com/bluefunda/cai-cli/releases/download/v${VER}/ai_${VER}_linux_${ARCH}.rpm"
-```
-
-### From Source
+### One-line installer (macOS and Linux)
 
 ```bash
-go install github.com/bluefunda/cai-cli/cmd/ai@latest
+curl -fsSL https://raw.githubusercontent.com/bluefunda/bluefunda-ai/main/install.sh | sh
 ```
 
-### Verify checksums
+### Debian / Ubuntu
 
 ```bash
-sha256sum -c checksums.txt
+curl -sL https://github.com/bluefunda/bluefunda-ai/releases/latest/download/bai_linux_amd64.deb -o bai.deb
+sudo dpkg -i bai.deb
 ```
+
+### RHEL / Fedora / Rocky
+
+```bash
+sudo dnf install https://github.com/bluefunda/bluefunda-ai/releases/latest/download/bai_linux_amd64.rpm
+```
+
+### From source
+
+```bash
+go install github.com/bluefunda/bluefunda-ai/cmd/bai@latest
+```
+
+### Manual download
+
+Download the latest binary for your platform from the [Releases](https://github.com/bluefunda/bluefunda-ai/releases) page.
 
 ## Quick Start
 
 ```bash
-# Authenticate (opens browser for OAuth device flow)
-ai login
+# Authenticate with BlueFunda AI
+bai login
 
-# Verify connection
-ai health
+# Open the interactive TUI
+bai
 
-# Start a chat
-ai chat start "Summarize last quarter's sales from SAP"
+# Ask a question directly
+bai ask "How do I create a transport request in SAP?"
 
-# List available models
-ai model list
+# Start a named chat session
+bai chat start "SAP BASIS help"
+
+# List available AI models
+bai model list
+
+# Check connection health
+bai health
 ```
 
-## Commands
+## TUI Usage
 
-| Command | Description |
-|---------|-------------|
-| `ai login` | Authenticate via OAuth2 device flow (Keycloak) |
-| `ai health` | Check gRPC connection to the backend |
-| `ai chat` | Manage chat sessions: `list`, `start`, `history`, `context`, `title`, `stop` |
-| `ai model` | List available LLM models |
-| `ai mcp` | Manage MCP tool integrations |
-| `ai user` | Show account information |
-| `ai billing` | Show billing and usage |
-| `ai ratelimit` | Show current rate-limit status |
-| `ai version` | Print CLI version |
+Launch the TUI by running `bai` with no arguments:
 
-Run `ai <command> --help` for full options.
+```
+bai
+```
 
-## Authentication
+**Key bindings:**
 
-CAI CLI uses the **OAuth2 device authorization flow**:
+| Key | Action |
+|-----|--------|
+| `Enter` | Send message |
+| `Ctrl+C` | Quit |
+| `/help` | Show slash commands |
+| `/clear` | Clear current session |
+| `/model` | Switch model |
 
-1. `ai login` requests a device code
-2. Your browser opens the verification URL
-3. The CLI polls for authorization completion
-4. Access and refresh tokens are stored locally in `~/.cai/`
+**Slash commands** are available inside the TUI by typing `/` followed by the command name.
 
-Tokens are refreshed automatically — you only need to log in once.
+## CLI Reference
+
+```
+bai [command] [flags]
+
+Commands:
+  login       Authenticate via OAuth device flow
+  ask         Start an agentic session (non-interactive)
+  chat        Manage chat sessions (list, start, history, context, title, stop)
+  model       List available AI models
+  mcp         Manage MCP tool integrations
+  user        Show current user account info
+  billing     View billing and usage
+  ratelimit   Show current rate limit status
+  health      Check gRPC connection health
+  version     Print version information
+  completion  Generate shell completions
+
+Global Flags:
+  --bff string      BFF gRPC address (overrides config)
+  --domain string   Domain override
+  -o, --output      Output format: table, json, quiet
+```
+
+### Agentic Mode
+
+```bash
+# Run a coding task autonomously
+bai ask "Refactor all ABAP function modules in ./src to use structured exceptions"
+
+# Ask with a specific model
+bai ask --model gpt-4o "Explain this ABAP program"
+```
+
+### Chat Management
+
+```bash
+bai chat list                          # List all chat sessions
+bai chat start "My chat"               # Start a new session
+bai chat history --id <id>             # View message history
+bai chat context --id <id>             # Show context window
+bai chat title --id <id> "New title"   # Rename a session
+bai chat stop --id <id>                # Stop a session
+```
 
 ## Configuration
 
-Configuration is loaded from `~/.cai/config.yaml`. Example:
+`bai` reads its configuration from `~/.bai/config.yaml`:
 
 ```yaml
-# ~/.cai/config.yaml
-endpoint: grpc.bluefunda.com:443
+endpoint: grpc.bluefunda.com:443    # BFF gRPC address
+domain: your-tenant.bluefunda.com   # Tenant domain
+defaults:
+  output: table                      # Default output format
 ```
 
-## About BlueFunda AI
+### Environment Variables
 
-BlueFunda AI brings intelligent automation to SAP — context-aware, no-code agents that execute complex tasks in minutes. Capabilities include:
+| Variable | Description |
+|----------|-------------|
+| `BAI_INSTALL_DIR` | Custom install directory for `install.sh` |
+| `BLUEFUNDA_TOKEN` | Bearer token (alternative to `bai login`) |
 
-- **AI-Powered SAP Management** — automate workflows across operations, data, and analytics
-- **No-Code Service Generation** — create SAP OData services from plain-text prompts
-- **Conversational Analytics** — ask data-driven questions in English, get visual insights from SAP
-- **Cross-Cloud Orchestration** — manage S/4HANA on AWS, Azure, and hybrid setups
+## Development
 
-BlueFunda AI also powers the AI features in [ABAPer](https://abaper.bluefunda.com).
+### Prerequisites
 
-Learn more at [bluefunda.com/bluefunda-ai](https://bluefunda.com/bluefunda-ai/).
+- Go 1.25+
+- `protoc` + `protoc-gen-go` + `protoc-gen-go-grpc` (for proto regeneration)
+- [goreleaser](https://goreleaser.com/) (for releases)
+
+### Build
+
+```bash
+make build      # Build bai binary
+make test       # Run tests with race detector
+make vet        # Run go vet
+make fmt        # Format code
+make snapshot   # Build release snapshot with goreleaser
+```
+
+### Project Layout
+
+```
+bluefunda-ai/
+├── cmd/bai/          # Entry point
+├── internal/
+│   ├── auth/         # OAuth2 device flow (RFC 8628)
+│   ├── cmd/          # Cobra command definitions
+│   ├── config/       # Config loader (~/.bai/config.yaml)
+│   ├── grpc/         # gRPC connection + interceptors
+│   ├── tools/        # Agentic tool implementations
+│   └── ui/           # Output formatting + BubbleTea TUI
+├── api/proto/        # Protobuf definitions + generated code
+└── scripts/          # Build utilities
+```
+
+### Regenerate Protobuf
+
+```bash
+make proto
+```
+
+### Running Tests
+
+```bash
+make test           # All tests with race detector
+make test-cover     # Tests + coverage report
+```
+
+## Releases
+
+Releases are automated via [Release Please](https://github.com/googleapis/release-please) and [GoReleaser](https://goreleaser.com/).
+
+- Merge a `feat:` or `fix:` commit to `main` to trigger a release PR
+- Merging the release PR publishes binaries to GitHub Releases, Homebrew tap, and package repositories
+
+See [CHANGELOG.md](CHANGELOG.md) for the full release history.
+
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for development workflow, code style, and how to submit pull requests.
+
+## Security
+
+To report a security vulnerability, see [SECURITY.md](SECURITY.md).
 
 ## License
 
-See [LICENSE](./LICENSE).
+Apache 2.0 — see [LICENSE](LICENSE).
+
+Copyright 2024 BlueFunda, Inc.

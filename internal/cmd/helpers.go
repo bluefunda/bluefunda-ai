@@ -4,10 +4,10 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/bluefunda/cai-cli/internal/auth"
-	"github.com/bluefunda/cai-cli/internal/config"
-	caigrpc "github.com/bluefunda/cai-cli/internal/grpc"
-	"github.com/bluefunda/cai-cli/internal/ui"
+	"github.com/bluefunda/bluefunda-ai/internal/auth"
+	"github.com/bluefunda/bluefunda-ai/internal/config"
+	caigrpc "github.com/bluefunda/bluefunda-ai/internal/grpc"
+	"github.com/bluefunda/bluefunda-ai/internal/ui"
 )
 
 // saveAuthTokens persists the token response into cfg and saves to disk.

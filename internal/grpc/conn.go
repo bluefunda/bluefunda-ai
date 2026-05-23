@@ -19,8 +19,8 @@ import (
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 
-	pb "github.com/bluefunda/cai-cli/api/proto/bff"
-	"github.com/bluefunda/cai-cli/internal/config"
+	pb "github.com/bluefunda/bluefunda-ai/api/proto/bff"
+	"github.com/bluefunda/bluefunda-ai/internal/config"
 )
 
 // DefaultTimeout for unary RPCs.

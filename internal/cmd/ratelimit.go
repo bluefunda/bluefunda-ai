@@ -5,9 +5,9 @@ import (
 
 	"github.com/spf13/cobra"
 
-	pb "github.com/bluefunda/cai-cli/api/proto/bff"
-	caigrpc "github.com/bluefunda/cai-cli/internal/grpc"
-	"github.com/bluefunda/cai-cli/internal/ui"
+	pb "github.com/bluefunda/bluefunda-ai/api/proto/bff"
+	caigrpc "github.com/bluefunda/bluefunda-ai/internal/grpc"
+	"github.com/bluefunda/bluefunda-ai/internal/ui"
 )
 
 var rateLimitCmd = &cobra.Command{

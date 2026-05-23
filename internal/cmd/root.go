@@ -3,8 +3,8 @@ package cmd
 import (
 	"github.com/spf13/cobra"
 
-	"github.com/bluefunda/cai-cli/internal/config"
-	"github.com/bluefunda/cai-cli/internal/ui"
+	"github.com/bluefunda/bluefunda-ai/internal/config"
+	"github.com/bluefunda/bluefunda-ai/internal/ui"
 )
 
 var (
@@ -18,9 +18,9 @@ var (
 var Version = "dev"
 
 var rootCmd = &cobra.Command{
-	Use:     "ai",
-	Short:   "AI -- CLI for the CAI platform",
-	Long:    "AI is a command-line interface for interacting with the CAI platform via gRPC.",
+	Use:     "bai",
+	Short:   "bai -- CLI for the BlueFunda AI platform",
+	Long:    "bai is a command-line interface for interacting with the BlueFunda AI platform via gRPC.",
 	Version: Version,
 }
 

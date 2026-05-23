@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/bluefunda/cai-cli/internal/config"
+	"github.com/bluefunda/bluefunda-ai/internal/config"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/metadata"

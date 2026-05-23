@@ -1,14 +1,14 @@
 # AGENTS.md
 
-Instructions for AI coding agents working on cai-cli.
+Instructions for AI coding agents working on bluefunda-ai.
 
 ## Project Overview
 
-Go 1.24 CLI for the CAI platform. Uses Cobra for commands, gRPC for backend communication with a BFF service, and OAuth2 device flow (Keycloak) for authentication.
+Go 1.25 CLI for the BlueFunda AI platform. Uses Cobra for commands, gRPC for backend communication with a BFF service, and OAuth2 device flow (Keycloak) for authentication.
 
-Binary name: `ai`
-Module: `github.com/bluefunda/cai-cli`
-Config location: `~/.cai/config.yaml`
+Binary name: `bai`
+Module: `github.com/bluefunda/bluefunda-ai`
+Config location: `~/.bai/config.yaml`
 
 ## Build and Test Commands
 
@@ -41,7 +41,7 @@ All four must pass with zero errors.
 ## Project Structure
 
 ```
-cmd/ai/main.go              # Entry point (delegates to internal/cmd.Execute)
+cmd/bai/main.go             # Entry point (delegates to internal/cmd.Execute)
 api/proto/
   bff.proto                  # Source-of-truth service definition (DO NOT hand-edit generated files)
   bff/                       # Generated Go code (bff.pb.go, bff_grpc.pb.go)
@@ -92,12 +92,12 @@ scripts/
 ### Do NOT modify
 - `api/proto/bff/*.pb.go` — Generated files. Run `make proto` instead.
 - `.github/workflows/*.yml` — CI/CD pipelines (uses shared workflows from `bluefunda/release-foundry`)
-- `cmd/ai/main.go` — Entry point; should remain a 3-line delegation to `internal/cmd.Execute()`
+- `cmd/bai/main.go` — Entry point; should remain a 3-line delegation to `internal/cmd.Execute()`
 
 ## Code Conventions
 
 ### Command pattern
-All commands follow: `ai <service> <operation> [flags]`
+All commands follow: `bai <service> <operation> [flags]`
 
 ```go
 var fooCmd = &cobra.Command{
@@ -140,7 +140,7 @@ Always support all three output formats (`table`, `json`, `quiet`) for new comma
 ### Version injection
 Version is set at build time via ldflags:
 ```
--X github.com/bluefunda/cai-cli/internal/cmd.Version=$(VERSION)
+-X github.com/bluefunda/bluefunda-ai/internal/cmd.Version=$(VERSION)
 ```
 Do not hardcode version strings.
 

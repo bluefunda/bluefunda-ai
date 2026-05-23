@@ -1,11 +1,11 @@
 .PHONY: build clean vet fmt tidy test proto snapshot release
 
-BINARY := ai
+BINARY := bai
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
-LDFLAGS := -ldflags "-X github.com/bluefunda/cai-cli/internal/cmd.Version=$(VERSION)"
+LDFLAGS := -ldflags "-X github.com/bluefunda/bluefunda-ai/internal/cmd.Version=$(VERSION)"
 
 build: tidy
-	go build $(LDFLAGS) -o $(BINARY) ./cmd/ai
+	go build $(LDFLAGS) -o $(BINARY) ./cmd/bai
 
 clean:
 	rm -f $(BINARY)

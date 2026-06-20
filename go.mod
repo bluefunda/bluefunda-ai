@@ -4,6 +4,7 @@ go 1.25.10
 
 require (
 	github.com/alecthomas/chroma/v2 v2.24.1
+	github.com/bluefunda/go-update v0.1.0
 	github.com/charmbracelet/bubbles v1.0.0
 	github.com/charmbracelet/bubbletea v1.3.10
 	github.com/charmbracelet/glamour v1.0.0

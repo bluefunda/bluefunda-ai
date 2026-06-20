@@ -65,6 +65,7 @@ func init() {
 		configCmd,
 		doctorCmd,
 		mcpCmd,
+		updateCmd,
 		versionCmd,
 		// Hidden commands
 		sessionsCmd,

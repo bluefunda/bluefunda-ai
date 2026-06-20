@@ -71,7 +71,7 @@ func ReadFile(path string, offset, limit int) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("read %s: %w", path, err)
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	if offset <= 0 && limit <= 0 {
 		b, err := os.ReadFile(path)
@@ -137,16 +137,16 @@ func EditFile(path, oldStr, newStr string, replaceAll bool) (string, error) {
 	}
 	tmpName := tmp.Name()
 	if _, err := tmp.WriteString(updated); err != nil {
-		tmp.Close()
-		os.Remove(tmpName)
+		_ = tmp.Close()
+		_ = os.Remove(tmpName)
 		return "", fmt.Errorf("write temp file: %w", err)
 	}
 	if err := tmp.Close(); err != nil {
-		os.Remove(tmpName)
+		_ = os.Remove(tmpName)
 		return "", fmt.Errorf("close temp file: %w", err)
 	}
 	if err := os.Rename(tmpName, path); err != nil {
-		os.Remove(tmpName)
+		_ = os.Remove(tmpName)
 		return "", fmt.Errorf("rename to %s: %w", path, err)
 	}
 

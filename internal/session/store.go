@@ -82,20 +82,20 @@ func Save(path string, messages []Message) error {
 	for _, m := range messages {
 		line, err := json.Marshal(m)
 		if err != nil {
-			tmp.Close()
-			os.Remove(tmpName)
+			_ = tmp.Close()
+			_ = os.Remove(tmpName)
 			return err
 		}
-		w.Write(line)
-		w.WriteByte('\n')
+		_, _ = w.Write(line)
+		_ = w.WriteByte('\n')
 	}
 	if err := w.Flush(); err != nil {
-		tmp.Close()
-		os.Remove(tmpName)
+		_ = tmp.Close()
+		_ = os.Remove(tmpName)
 		return err
 	}
 	if err := tmp.Close(); err != nil {
-		os.Remove(tmpName)
+		_ = os.Remove(tmpName)
 		return err
 	}
 	return os.Rename(tmpName, path)
@@ -107,7 +107,7 @@ func Load(path string) ([]Message, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	var msgs []Message
 	scanner := bufio.NewScanner(f)

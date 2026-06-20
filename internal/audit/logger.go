@@ -43,7 +43,7 @@ func NewLogger(sessionID string) (*Logger, error) {
 // Close flushes and closes the underlying file.
 func (l *Logger) Close() {
 	if l.file != nil {
-		l.file.Close()
+		_ = l.file.Close()
 	}
 }
 
@@ -117,7 +117,7 @@ func pruneOld(home string) {
 			continue
 		}
 		if t.Before(cutoff) {
-			os.RemoveAll(filepath.Join(auditRoot, e.Name()))
+			_ = os.RemoveAll(filepath.Join(auditRoot, e.Name()))
 		}
 	}
 }

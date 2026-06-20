@@ -1,6 +1,7 @@
 package tools
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -8,11 +9,12 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 )
 
-const bashTimeout = 30 * time.Second
+const bashTimeout = 120 * time.Second
 
 // Execute dispatches a tool call to the appropriate local implementation.
 // Arguments is the JSON string from the LLM tool call.
@@ -37,6 +39,11 @@ func Execute(name, argumentsJSON string) (string, error) {
 		dir, _ := args["dir"].(string)
 		pattern, _ := args["pattern"].(string)
 		return SearchFiles(dir, pattern)
+	case "search_content":
+		pattern, _ := args["pattern"].(string)
+		dir, _ := args["directory"].(string)
+		glob, _ := args["glob"].(string)
+		return SearchContent(pattern, dir, glob)
 	case "bash":
 		command, _ := args["command"].(string)
 		return Bash(command)
@@ -145,4 +152,107 @@ func Bash(command string) (string, error) {
 		return output, nil
 	}
 	return out.String(), nil
+}
+
+const searchContentMaxResults = 200
+
+// SearchContent searches file contents for a regex pattern.
+// Prefers ripgrep (rg) when available; falls back to pure-Go line scanning.
+// Returns matching lines as "filepath:linenum: content", capped at 200 results.
+func SearchContent(pattern, dir, glob string) (string, error) {
+	if pattern == "" {
+		return "", fmt.Errorf("pattern is required")
+	}
+	if dir == "" {
+		dir = "."
+	}
+
+	// Fast path: delegate to ripgrep when available.
+	if rgPath, err := exec.LookPath("rg"); err == nil {
+		return searchContentRg(rgPath, pattern, dir, glob)
+	}
+
+	return searchContentGo(pattern, dir, glob)
+}
+
+func searchContentRg(rgPath, pattern, dir, glob string) (string, error) {
+	args := []string{"--line-number", "--no-heading", "--max-count", "1",
+		"--max-filesize", "10M", pattern, dir}
+	if glob != "" {
+		args = append([]string{"--glob", glob}, args...)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, rgPath, args...)
+	var out bytes.Buffer
+	cmd.Stdout = &out
+	cmd.Stderr = &out
+	_ = cmd.Run() // rg exits 1 when no matches; that's fine
+
+	lines := strings.Split(strings.TrimRight(out.String(), "\n"), "\n")
+	if len(lines) == 1 && lines[0] == "" {
+		return "no matches found", nil
+	}
+	if len(lines) > searchContentMaxResults {
+		lines = lines[:searchContentMaxResults]
+		lines = append(lines, fmt.Sprintf("... (truncated at %d results)", searchContentMaxResults))
+	}
+	return strings.Join(lines, "\n"), nil
+}
+
+func searchContentGo(pattern, dir, glob string) (string, error) {
+	re, err := regexp.Compile(pattern)
+	if err != nil {
+		return "", fmt.Errorf("invalid pattern: %w", err)
+	}
+
+	var results []string
+	err = filepath.Walk(dir, func(path string, info os.FileInfo, err error) error {
+		if err != nil || info.IsDir() {
+			return nil
+		}
+		if glob != "" {
+			matched, _ := filepath.Match(glob, filepath.Base(path))
+			if !matched {
+				return nil
+			}
+		}
+		if info.Size() > 10*1024*1024 { // skip files > 10 MB
+			return nil
+		}
+		if len(results) >= searchContentMaxResults {
+			return filepath.SkipAll
+		}
+
+		f, err := os.Open(path)
+		if err != nil {
+			return nil
+		}
+		defer f.Close()
+
+		lineNum := 0
+		scanner := bufio.NewScanner(f)
+		for scanner.Scan() {
+			lineNum++
+			line := scanner.Text()
+			if re.MatchString(line) {
+				results = append(results, fmt.Sprintf("%s:%d: %s", path, lineNum, line))
+				if len(results) >= searchContentMaxResults {
+					return filepath.SkipAll
+				}
+			}
+		}
+		return nil
+	})
+	if err != nil && err != filepath.SkipAll {
+		return "", fmt.Errorf("search %s: %w", dir, err)
+	}
+	if len(results) == 0 {
+		return "no matches found", nil
+	}
+	if len(results) >= searchContentMaxResults {
+		results = append(results, fmt.Sprintf("... (truncated at %d results)", searchContentMaxResults))
+	}
+	return strings.Join(results, "\n"), nil
 }

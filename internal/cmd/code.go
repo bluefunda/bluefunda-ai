@@ -25,6 +25,7 @@ var (
 	codeDir       string
 	codeAutoApply bool
 	codeAuto      bool
+	codeMaxTurns  int
 )
 
 var codeCmd = &cobra.Command{
@@ -43,6 +44,7 @@ func init() {
 	codeCmd.Flags().StringVar(&codeDir, "dir", ".", "Working directory for file operations")
 	codeCmd.Flags().BoolVar(&codeAutoApply, "auto-apply", false, "Execute write/bash tools without prompting")
 	codeCmd.Flags().BoolVar(&codeAuto, "auto", false, "Same as --auto-apply")
+	codeCmd.Flags().IntVar(&codeMaxTurns, "max-turns", 20, "Maximum agentic loop iterations before stopping")
 }
 
 // codeMessage mirrors the ConversationMsg format expected by cai-llm-router.
@@ -110,9 +112,14 @@ func runCode(cmd *cobra.Command, args []string) error {
 	// the very next turn.
 	autoApplyState := codeAutoApply
 	toolSchemasState := toolSchemas
+	maxTurnsState := codeMaxTurns
 
 	// history is shared between TUI turns via closure.
+	// Pre-populate with project context from .bai/context.md or AGENTS.md.
 	var history []codeMessage
+	if ctx := loadContextFiles("."); ctx != "" {
+		history = append(history, codeMessage{Role: "system", Content: ctx})
+	}
 	isFirstTurn := true
 
 	submitFn := func(cid, mdl, input string, isNew bool) <-chan tui.StreamEvent {
@@ -137,13 +144,13 @@ func runCode(cmd *cobra.Command, args []string) error {
 			newHistory, loopErr := agenticLoopTUI(
 				conn, cfg, cid, mdl, currentSchemas,
 				history, isFirstTurn && isNew, currentAutoApply,
-				p, ch,
+				maxTurnsState, p, ch,
 			)
 			history = newHistory
 			isFirstTurn = false
 			if loopErr != nil {
 				if !caigrpc.IsAuthError(loopErr) {
-					ch <- tui.StreamEvent{Kind: "error", ErrMsg: loopErr.Error()}
+					ch <- tui.StreamEvent{Kind: "error", ErrMsg: ui.RewriteError(loopErr)}
 				}
 			}
 			ch <- tui.StreamEvent{Kind: "done"}
@@ -186,12 +193,15 @@ func agenticLoopTUI(
 	history []codeMessage,
 	isFirstTurn bool,
 	autoApply bool,
+	maxTurns int,
 	p *ui.Printer,
 	ch chan<- tui.StreamEvent,
 ) ([]codeMessage, error) {
-	const maxIterations = 20
+	if maxTurns <= 0 {
+		maxTurns = 20
+	}
 
-	for iteration := 0; iteration < maxIterations; iteration++ {
+	for iteration := 0; iteration < maxTurns; iteration++ {
 		req := buildCodeRequest(chatID, model, toolSchemas, history, isFirstTurn && iteration == 0)
 
 		ctx, cancel := context.WithCancel(context.Background())
@@ -241,7 +251,7 @@ func agenticLoopTUI(
 		}
 	}
 
-	ch <- tui.StreamEvent{Kind: "chunk", Chunk: "\n⚠  Maximum tool iterations reached.\n"}
+	ch <- tui.StreamEvent{Kind: "chunk", Chunk: fmt.Sprintf("\n⚠  Reached --max-turns limit (%d). Use --max-turns N to increase.\n", maxTurns)}
 	return history, nil
 }
 
@@ -348,7 +358,13 @@ func pumpCodeStream(
 
 // executeWithApprovalTUI runs a tool, using the TUI approval flow when needed.
 func executeWithApprovalTUI(tc ui.ToolCallEvent, autoApply bool, p *ui.Printer, ch chan<- tui.StreamEvent) (string, error) {
-	if tools.NeedsApproval(tc.Name) && !autoApply {
+	needsApproval := tools.NeedsApproval(tc.Name)
+	// Safe bash commands (read-only git, go build, make test, etc.) are
+	// auto-approved to reduce friction without expanding the blast radius.
+	if needsApproval && tc.Name == "bash" && tools.IsSafeBashCommand(tc.Arguments) {
+		needsApproval = false
+	}
+	if needsApproval && !autoApply {
 		replyCh := make(chan bool, 1)
 		ch <- tui.StreamEvent{
 			Kind:     "approval",

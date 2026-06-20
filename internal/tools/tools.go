@@ -1,6 +1,10 @@
 package tools
 
-import "encoding/json"
+import (
+	"encoding/json"
+	"fmt"
+	"strings"
+)
 
 // ToolCall represents a tool invocation request from the LLM.
 type ToolCall struct {
@@ -97,6 +101,22 @@ func LocalToolSchemas() (string, error) {
 				}`),
 			},
 		},
+		{
+			Type: "function",
+			Function: FunctionDef{
+				Name:        "search_content",
+				Description: "Search file contents using a regular expression. Returns matching lines as 'filepath:linenum: content'. Prefers ripgrep when available. Use this before read_file to locate relevant sections in large files.",
+				Parameters: json.RawMessage(`{
+					"type": "object",
+					"properties": {
+						"pattern":   {"type": "string", "description": "Regular expression to search for"},
+						"directory": {"type": "string", "description": "Directory to search in (default: current directory)"},
+						"glob":      {"type": "string", "description": "Optional glob to filter files, e.g. \"*.go\" or \"*.ts\""}
+					},
+					"required": ["pattern"]
+				}`),
+			},
+		},
 	}
 
 	b, err := json.Marshal(schemas)
@@ -111,6 +131,37 @@ func NeedsApproval(toolName string) bool {
 	switch toolName {
 	case "write_file", "bash":
 		return true
+	}
+	return false
+}
+
+// safeBashPrefixes lists command prefixes that are safe to auto-approve without a
+// TUI confirmation prompt. Commands that mutate shared state (rm, git push, git reset)
+// are deliberately excluded.
+var safeBashPrefixes = []string{
+	"git status", "git log", "git diff", "git show", "git branch", "git stash list",
+	"git remote", "git tag", "git describe", "git rev-parse",
+	"go vet", "go build", "go test", "go mod tidy", "go mod verify", "go mod graph",
+	"go run", "go generate", "go list", "golangci-lint",
+	"make build", "make test", "make lint", "make vet", "make check", "make clean",
+	"ls", "ls -", "find ", "cat ", "head ", "tail ", "wc ", "stat ",
+	"echo ", "pwd", "which ", "env", "printenv",
+	"grep ", "rg ", "sed ", "awk ",
+	"npm test", "npm run", "npx ",
+}
+
+// IsSafeBashCommand returns true when the bash command JSON matches a known-safe
+// prefix and should be executed without a user approval prompt.
+func IsSafeBashCommand(argumentsJSON string) bool {
+	var args map[string]any
+	if err := json.Unmarshal([]byte(argumentsJSON), &args); err != nil {
+		return false
+	}
+	cmd := strings.TrimSpace(fmt.Sprintf("%v", args["command"]))
+	for _, prefix := range safeBashPrefixes {
+		if strings.HasPrefix(cmd, prefix) {
+			return true
+		}
 	}
 	return false
 }

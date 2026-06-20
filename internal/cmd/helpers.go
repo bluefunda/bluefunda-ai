@@ -13,6 +13,52 @@ import (
 	"github.com/bluefunda/bluefunda-ai/internal/ui"
 )
 
+// loadContextFiles returns the combined contents of .bai/context.md (searching
+// upward from cwd to the git root) and ~/.bai/instructions.md (user-level).
+// Also checks AGENTS.md at each level for backward compatibility.
+// Returns an empty string if no context files are found.
+func loadContextFiles(cwd string) string {
+	var parts []string
+
+	if project := findContextFile(cwd); project != "" {
+		parts = append(parts, project)
+	}
+
+	if home, err := os.UserHomeDir(); err == nil {
+		if b, err := os.ReadFile(filepath.Join(home, ".bai", "instructions.md")); err == nil && len(b) > 0 {
+			parts = append(parts, string(b))
+		}
+	}
+
+	return strings.Join(parts, "\n\n---\n\n")
+}
+
+// findContextFile walks upward from dir until a git root, returning the contents
+// of the first .bai/context.md or AGENTS.md it finds, or "" if none exist.
+func findContextFile(dir string) string {
+	abs, err := filepath.Abs(dir)
+	if err != nil {
+		return ""
+	}
+	for {
+		if b, err := os.ReadFile(filepath.Join(abs, ".bai", "context.md")); err == nil && len(b) > 0 {
+			return string(b)
+		}
+		if b, err := os.ReadFile(filepath.Join(abs, "AGENTS.md")); err == nil && len(b) > 0 {
+			return string(b)
+		}
+		if _, err := os.Stat(filepath.Join(abs, ".git")); err == nil {
+			break // stop at git root
+		}
+		parent := filepath.Dir(abs)
+		if parent == abs {
+			break // filesystem root
+		}
+		abs = parent
+	}
+	return ""
+}
+
 // saveAuthTokens persists the token response into cfg and saves to disk.
 func saveAuthTokens(cfg *config.Config, tok *auth.TokenResponse) error {
 	cfg.Auth.AccessToken = tok.AccessToken

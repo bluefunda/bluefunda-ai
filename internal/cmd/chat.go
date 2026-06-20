@@ -46,12 +46,11 @@ var chatCmd = &cobra.Command{
 	Hidden: true,
 }
 
-// sessionsCmd is a convenience alias for `bai chat list`, hidden from main help.
+// sessionsCmd is a convenience alias for `bai chat list`.
 var sessionsCmd = &cobra.Command{
-	Use:    "sessions",
-	Short:  "List past chat sessions",
-	Hidden: true,
-	RunE:   runChatList,
+	Use:   "sessions",
+	Short: "List past chat sessions",
+	RunE:  runChatList,
 }
 
 // --- chat list ---

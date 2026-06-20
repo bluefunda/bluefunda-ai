@@ -13,8 +13,7 @@ import (
 var rateLimitCmd = &cobra.Command{
 	Use:     "rate-limit",
 	Aliases: []string{"rl"},
-	Short:   "Query current rate limit status",
-	Hidden:  true,
+	Short:   "Query current rate limit and token usage",
 	RunE:    runRateLimit,
 }
 

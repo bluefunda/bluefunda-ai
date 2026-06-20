@@ -77,6 +77,34 @@ func configPath() (string, error) {
 	return filepath.Join(dir, "config.yaml"), nil
 }
 
+// applyEnvOverrides copies BAI_* environment variables into cfg, overriding
+// values read from the YAML file. CLI flags take precedence over these.
+// Precedence order: CLI flags > BAI_* env vars > YAML file > compiled defaults.
+func applyEnvOverrides(cfg *Config) {
+	if v := os.Getenv("BAI_GATEWAY"); v != "" {
+		cfg.GatewayURL = v
+	}
+	if v := os.Getenv("BAI_BFF"); v != "" {
+		cfg.BFFURL = v
+	}
+	if v := os.Getenv("BAI_DOMAIN"); v != "" {
+		cfg.Domain = v
+	}
+	if v := os.Getenv("BAI_REALM"); v != "" {
+		cfg.Realm = v
+	}
+	if v := os.Getenv("BAI_MODEL"); v != "" {
+		cfg.Defaults.Model = v
+	}
+	// BAI_ACCESS_TOKEN lets CI/CD authenticate without running `bai login`.
+	// Set TokenExpiry far in the future so the token source does not attempt
+	// a device-flow refresh on a token it didn't issue.
+	if v := os.Getenv("BAI_ACCESS_TOKEN"); v != "" {
+		cfg.Auth.AccessToken = v
+		cfg.Auth.TokenExpiry = time.Now().Add(24 * time.Hour)
+	}
+}
+
 // Load reads the config from ~/.bai/config.yaml.
 // Returns defaults if the file does not exist.
 func Load() (*Config, error) {
@@ -87,7 +115,9 @@ func Load() (*Config, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return defaultConfig(), nil
+			cfg := defaultConfig()
+			applyEnvOverrides(cfg)
+			return cfg, nil
 		}
 		return nil, fmt.Errorf("read config: %w", err)
 	}
@@ -132,6 +162,7 @@ func Load() (*Config, error) {
 		_ = Save(&cfg)
 	}
 
+	applyEnvOverrides(&cfg)
 	return &cfg, nil
 }
 

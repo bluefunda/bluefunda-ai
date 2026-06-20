@@ -24,7 +24,7 @@ func (t *testBFF) GetUserInfo(_ context.Context, _ *pb.GetUserInfoRequest) (*pb.
 		Sub:               "user-123",
 		Name:              "Test User",
 		Email:             "test@example.com",
-		PreferredUsername:  "testuser",
+		PreferredUsername: "testuser",
 		EmailVerified:     true,
 		GivenName:         "Test",
 		FamilyName:        "User",

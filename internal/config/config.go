@@ -105,6 +105,55 @@ func applyEnvOverrides(cfg *Config) {
 	}
 }
 
+// ProjectConfig is the subset of Config that can be overridden per-project
+// via .bai/settings.yaml at the git root.
+type ProjectConfig struct {
+	Model       string `yaml:"model"`
+	MaxTurns    int    `yaml:"max_turns"`
+	Endpoint    string `yaml:"endpoint"`
+	Permissions struct {
+		Allow []string `yaml:"allow"`
+		Deny  []string `yaml:"deny"`
+	} `yaml:"permissions"`
+}
+
+// mergeProject applies non-zero values from p over cfg.
+func (cfg *Config) mergeProject(p *ProjectConfig) {
+	if p.Model != "" {
+		cfg.Defaults.Model = p.Model
+	}
+	if p.Endpoint != "" {
+		cfg.BFFURL = p.Endpoint
+	}
+}
+
+// FindProjectConfig walks upward from cwd until a .git directory, returning
+// the first .bai/settings.yaml found, or nil if none exists.
+func FindProjectConfig(cwd string) *ProjectConfig {
+	abs, err := filepath.Abs(cwd)
+	if err != nil {
+		return nil
+	}
+	for {
+		candidate := filepath.Join(abs, ".bai", "settings.yaml")
+		if data, err := os.ReadFile(candidate); err == nil {
+			var p ProjectConfig
+			if yaml.Unmarshal(data, &p) == nil {
+				return &p
+			}
+		}
+		if _, err := os.Stat(filepath.Join(abs, ".git")); err == nil {
+			break
+		}
+		parent := filepath.Dir(abs)
+		if parent == abs {
+			break
+		}
+		abs = parent
+	}
+	return nil
+}
+
 // Load reads the config from ~/.bai/config.yaml.
 // Returns defaults if the file does not exist.
 func Load() (*Config, error) {
@@ -163,6 +212,14 @@ func Load() (*Config, error) {
 	}
 
 	applyEnvOverrides(&cfg)
+
+	// Project config: walk cwd upward and merge .bai/settings.yaml.
+	if cwd, err := os.Getwd(); err == nil {
+		if p := FindProjectConfig(cwd); p != nil {
+			cfg.mergeProject(p)
+		}
+	}
+
 	return &cfg, nil
 }
 

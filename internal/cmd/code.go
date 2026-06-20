@@ -11,21 +11,29 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/spf13/cobra"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 
 	pb "github.com/bluefunda/bluefunda-ai/api/proto/bff"
+	"github.com/bluefunda/bluefunda-ai/internal/audit"
 	"github.com/bluefunda/bluefunda-ai/internal/config"
 	caigrpc "github.com/bluefunda/bluefunda-ai/internal/grpc"
+	"github.com/bluefunda/bluefunda-ai/internal/hooks"
+	"github.com/bluefunda/bluefunda-ai/internal/session"
 	"github.com/bluefunda/bluefunda-ai/internal/tools"
 	"github.com/bluefunda/bluefunda-ai/internal/ui"
 	"github.com/bluefunda/bluefunda-ai/internal/ui/tui"
 )
 
 var (
-	codeModel     string
-	codeDir       string
-	codeAutoApply bool
-	codeAuto      bool
-	codeMaxTurns  int
+	codeModel        string
+	codeDir          string
+	codeAutoApply    bool
+	codeAuto         bool
+	codeMaxTurns     int
+	codePrint        bool
+	codeOutputFormat string
+	codeResume       string
 )
 
 var codeCmd = &cobra.Command{
@@ -34,7 +42,10 @@ var codeCmd = &cobra.Command{
 	Long: `Start an interactive coding session where the AI can read and write files,
 run commands, and search your project. Tools that modify the filesystem or
 run shell commands require your approval before execution (use --auto to
-skip confirmation).`,
+skip confirmation).
+
+Use --print / -p for non-interactive (headless) mode: reads the prompt from
+the argument or stdin and writes output to stdout.`,
 	Args: cobra.ArbitraryArgs,
 	RunE: runCode,
 }
@@ -45,6 +56,9 @@ func init() {
 	codeCmd.Flags().BoolVar(&codeAutoApply, "auto-apply", false, "Execute write/bash tools without prompting")
 	codeCmd.Flags().BoolVar(&codeAuto, "auto", false, "Same as --auto-apply")
 	codeCmd.Flags().IntVar(&codeMaxTurns, "max-turns", 20, "Maximum agentic loop iterations before stopping")
+	codeCmd.Flags().BoolVarP(&codePrint, "print", "p", false, "Non-interactive mode: print output to stdout")
+	codeCmd.Flags().StringVar(&codeOutputFormat, "output-format", "text", "Output format for --print: text, json, stream-json")
+	codeCmd.Flags().StringVar(&codeResume, "resume", "", "Resume a previous session by ID")
 }
 
 // codeMessage mirrors the ConversationMsg format expected by cai-llm-router.
@@ -104,8 +118,60 @@ func runCode(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("build tool schemas: %w", err)
 	}
 
-	chatID := uuid.New().String()
+	workDir, _ := os.Getwd()
 	p := printer(cfg)
+
+	// --- Session persistence (#82) ---
+	sessionID := codeResume
+	if sessionID == "" {
+		sessionID = uuid.New().String()
+	}
+	sessPath, _ := session.Path(workDir, sessionID)
+
+	// --- Audit logging (#81) ---
+	auditLog, _ := audit.NewLogger(sessionID)
+	defer auditLog.Close()
+	auditLog.LogSessionStart(model, workDir, Version)
+
+	// --- Hook runner (#80) ---
+	hooksDir := hooks.FindHooksDir(".")
+	hookRunner := hooks.New(hooksDir, sessionID, workDir)
+
+	// --- History: context + optional resume (#82) ---
+	var history []codeMessage
+	if ctx := loadContextFiles("."); ctx != "" {
+		history = append(history, codeMessage{Role: "system", Content: ctx})
+	}
+	if codeResume != "" {
+		if msgs, err := session.Load(sessPath); err == nil {
+			for _, m := range msgs {
+				history = append(history, codeMessage{
+					Role:       m.Role,
+					Content:    m.Content,
+					ToolCallID: m.ToolCallID,
+				})
+			}
+		}
+	}
+
+	// --- Headless print mode (#77) ---
+	if codePrint || !isTerminal() {
+		if initialPrompt == "" {
+			b, err := io.ReadAll(os.Stdin)
+			if err != nil {
+				return fmt.Errorf("read stdin: %w", err)
+			}
+			initialPrompt = strings.TrimSpace(string(b))
+		}
+		if initialPrompt == "" {
+			return fmt.Errorf("prompt required in --print mode (pass as argument or pipe via stdin)")
+		}
+		return runCodePrint(conn, cfg, model, toolSchemas, initialPrompt, history,
+			codeMaxTurns, codeAutoApply, codeOutputFormat, sessPath, auditLog, hookRunner, p)
+	}
+
+	// --- Interactive TUI mode ---
+	chatID := uuid.New().String()
 
 	// autoApplyState and toolSchemasState are shared between the TUI (/auto,
 	// /chat, /code toggles) and the submit closure, so changes take effect on
@@ -113,13 +179,7 @@ func runCode(cmd *cobra.Command, args []string) error {
 	autoApplyState := codeAutoApply
 	toolSchemasState := toolSchemas
 	maxTurnsState := codeMaxTurns
-
-	// history is shared between TUI turns via closure.
-	// Pre-populate with project context from .bai/context.md or AGENTS.md.
-	var history []codeMessage
-	if ctx := loadContextFiles("."); ctx != "" {
-		history = append(history, codeMessage{Role: "system", Content: ctx})
-	}
+	turns := 0
 	isFirstTurn := true
 
 	submitFn := func(cid, mdl, input string, isNew bool) <-chan tui.StreamEvent {
@@ -136,18 +196,21 @@ func runCode(cmd *cobra.Command, args []string) error {
 
 		history = append(history, codeMessage{Role: "user", Content: input})
 		ch := make(chan tui.StreamEvent, 64)
-		currentAutoApply := autoApplyState   // snapshot at turn start
-		currentSchemas := toolSchemasState   // snapshot (empty = chat mode)
+		currentAutoApply := autoApplyState // snapshot at turn start
+		currentSchemas := toolSchemasState // snapshot (empty = chat mode)
 
 		go func() {
 			defer close(ch)
 			newHistory, loopErr := agenticLoopTUI(
 				conn, cfg, cid, mdl, currentSchemas,
 				history, isFirstTurn && isNew, currentAutoApply,
-				maxTurnsState, p, ch,
+				maxTurnsState, auditLog, hookRunner, p, ch,
 			)
 			history = newHistory
+			turns++
 			isFirstTurn = false
+			// Persist session after every turn (#82).
+			session.Save(sessPath, toSessionMsgs(history)) //nolint:errcheck
 			if loopErr != nil {
 				if !caigrpc.IsAuthError(loopErr) {
 					ch <- tui.StreamEvent{Kind: "error", ErrMsg: ui.RewriteError(loopErr)}
@@ -159,7 +222,6 @@ func runCode(cmd *cobra.Command, args []string) error {
 		return ch
 	}
 
-	workDir, _ := os.Getwd()
 	tuiCfg := tui.SessionConfig{
 		ChatID:        chatID,
 		Model:         model,
@@ -180,8 +242,128 @@ func runCode(cmd *cobra.Command, args []string) error {
 		},
 	}
 	m := tui.New(tuiCfg, submitFn)
-	return tui.Run(m)
+	err = tui.Run(m)
+	auditLog.LogSessionEnd(turns, "end_turn")
+	return err
 }
+
+// runCodePrint runs the agentic loop in headless mode, writing output to stdout.
+func runCodePrint(
+	conn *caigrpc.Conn,
+	cfg *config.Config,
+	model, toolSchemas, prompt string,
+	history []codeMessage,
+	maxTurns int,
+	autoApply bool,
+	outputFormat string,
+	sessPath string,
+	auditLog *audit.Logger,
+	hookRunner *hooks.Runner,
+	p *ui.Printer,
+) error {
+	history = append(history, codeMessage{Role: "user", Content: prompt})
+	chatID := uuid.New().String()
+
+	ch := make(chan tui.StreamEvent, 128)
+
+	var jsonEvents []map[string]any
+
+	go func() {
+		defer close(ch)
+		newHistory, loopErr := agenticLoopTUI(
+			conn, cfg, chatID, model, toolSchemas,
+			history, true, autoApply,
+			maxTurns, auditLog, hookRunner, p, ch,
+		)
+		session.Save(sessPath, toSessionMsgs(newHistory)) //nolint:errcheck
+		if loopErr != nil {
+			ch <- tui.StreamEvent{Kind: "error", ErrMsg: ui.RewriteError(loopErr)}
+		}
+		ch <- tui.StreamEvent{Kind: "done"}
+	}()
+
+	var textBuf strings.Builder
+	exitCode := 0
+
+	for ev := range ch {
+		switch ev.Kind {
+		case "chunk":
+			switch outputFormat {
+			case "stream-json":
+				enc := json.NewEncoder(os.Stdout)
+				enc.Encode(map[string]any{"type": "text", "text": ev.Chunk}) //nolint:errcheck
+			case "json":
+				textBuf.WriteString(ev.Chunk)
+			default:
+				fmt.Print(ev.Chunk)
+			}
+		case "tool_call":
+			if outputFormat == "stream-json" {
+				enc := json.NewEncoder(os.Stdout)
+				enc.Encode(map[string]any{"type": "tool_use", "name": ev.ToolName, "input": ev.ToolArgs}) //nolint:errcheck
+			}
+		case "tool_exec":
+			if outputFormat == "stream-json" {
+				enc := json.NewEncoder(os.Stdout)
+				enc.Encode(map[string]any{"type": "tool_result", "name": ev.ToolName, "status": ev.Status, "duration_ms": ev.DurationMs}) //nolint:errcheck
+			}
+		case "error":
+			exitCode = 1
+			if outputFormat == "stream-json" {
+				enc := json.NewEncoder(os.Stdout)
+				enc.Encode(map[string]any{"type": "error", "error": ev.ErrMsg}) //nolint:errcheck
+			} else {
+				fmt.Fprintln(os.Stderr, "error:", ev.ErrMsg)
+			}
+		case "done":
+			result := map[string]any{"type": "result", "stop_reason": "end_turn"}
+			switch outputFormat {
+			case "stream-json":
+				enc := json.NewEncoder(os.Stdout)
+				enc.Encode(result) //nolint:errcheck
+			case "json":
+				result["text"] = textBuf.String()
+				jsonEvents = append(jsonEvents, result)
+				enc := json.NewEncoder(os.Stdout)
+				enc.Encode(jsonEvents) //nolint:errcheck
+			}
+		}
+		_ = jsonEvents
+	}
+
+	if exitCode != 0 {
+		os.Exit(exitCode)
+	}
+	return nil
+}
+
+// isTerminal returns true when stdout is connected to an interactive terminal.
+func isTerminal() bool {
+	fi, err := os.Stdout.Stat()
+	if err != nil {
+		return false
+	}
+	return (fi.Mode() & os.ModeCharDevice) != 0
+}
+
+// toSessionMsgs converts internal codeMessages to the exported session.Message type.
+func toSessionMsgs(msgs []codeMessage) []session.Message {
+	out := make([]session.Message, len(msgs))
+	for i, m := range msgs {
+		out[i] = session.Message{
+			Role:       m.Role,
+			Content:    m.Content,
+			ToolCallID: m.ToolCallID,
+		}
+	}
+	return out
+}
+
+const (
+	rateLimitInitialDelay = 10 * time.Second
+	rateLimitMaxDelay     = 5 * time.Minute
+	rateLimitMaxRetries   = 3
+)
 
 // agenticLoopTUI runs the agentic loop for one user turn, sending tool events
 // and content chunks to ch for TUI rendering. It handles approval prompts by
@@ -194,12 +376,16 @@ func agenticLoopTUI(
 	isFirstTurn bool,
 	autoApply bool,
 	maxTurns int,
+	auditLog *audit.Logger,
+	hookRunner *hooks.Runner,
 	p *ui.Printer,
 	ch chan<- tui.StreamEvent,
 ) ([]codeMessage, error) {
 	if maxTurns <= 0 {
 		maxTurns = 20
 	}
+
+	rateLimitRetries := 0
 
 	for iteration := 0; iteration < maxTurns; iteration++ {
 		req := buildCodeRequest(chatID, model, toolSchemas, history, isFirstTurn && iteration == 0)
@@ -208,14 +394,39 @@ func agenticLoopTUI(
 		stream, err := conn.Client.Chat(ctx, req)
 		if err != nil {
 			cancel()
+			// Rate limit backoff (#83)
+			if st, ok := status.FromError(err); ok && st.Code() == codes.ResourceExhausted {
+				if rateLimitRetries >= rateLimitMaxRetries {
+					return history, err
+				}
+				delay := rateLimitDelay(rateLimitRetries)
+				ch <- tui.StreamEvent{Kind: "chunk", Chunk: fmt.Sprintf("\n⏳ Rate limited. Retrying in %s (attempt %d/%d)...\n", delay.Round(time.Second), rateLimitRetries+1, rateLimitMaxRetries)}
+				time.Sleep(delay)
+				rateLimitRetries++
+				iteration-- // don't count this iteration
+				continue
+			}
 			return history, err
 		}
+		rateLimitRetries = 0
 
 		// Pump this iteration's stream into ch, collecting tool calls.
 		toolCalls, err := pumpCodeStream(stream, cancel, ch)
 		if err != nil {
+			// Rate limit backoff on stream errors too (#83)
+			if st, ok := status.FromError(err); ok && st.Code() == codes.ResourceExhausted {
+				if rateLimitRetries < rateLimitMaxRetries {
+					delay := rateLimitDelay(rateLimitRetries)
+					ch <- tui.StreamEvent{Kind: "chunk", Chunk: fmt.Sprintf("\n⏳ Rate limited. Retrying in %s (attempt %d/%d)...\n", delay.Round(time.Second), rateLimitRetries+1, rateLimitMaxRetries)}
+					time.Sleep(delay)
+					rateLimitRetries++
+					iteration--
+					continue
+				}
+			}
 			return history, err
 		}
+		rateLimitRetries = 0
 
 		if len(toolCalls) == 0 {
 			return history, nil
@@ -225,16 +436,16 @@ func agenticLoopTUI(
 		assistantMsg := codeMessage{Role: "assistant"}
 		for _, tc := range toolCalls {
 			assistantMsg.ToolCalls = append(assistantMsg.ToolCalls, codeToolCall{
-				ID:   tc.ID,
-				Type: "function",
+				ID:       tc.ID,
+				Type:     "function",
 				Function: codeFuncCall{Name: tc.Name, Arguments: tc.Arguments},
 			})
 		}
 		history = append(history, assistantMsg)
 
-		// Execute tools with TUI approval
+		// Execute tools with TUI approval, hooks, and audit
 		for _, tc := range toolCalls {
-			result, execErr := executeWithApprovalTUI(tc, autoApply, p, ch)
+			result, execErr := executeWithApprovalTUI(tc, autoApply, auditLog, hookRunner, p, ch)
 			history = append(history, codeMessage{
 				Role:       "tool",
 				Content:    result,
@@ -242,10 +453,10 @@ func agenticLoopTUI(
 			})
 			if execErr != nil {
 				ch <- tui.StreamEvent{
-					Kind:   "tool_exec",
+					Kind:     "tool_exec",
 					ToolName: tc.Name,
-					Status: "error",
-					Summary: execErr.Error(),
+					Status:   "error",
+					Summary:  execErr.Error(),
 				}
 			}
 		}
@@ -253,6 +464,15 @@ func agenticLoopTUI(
 
 	ch <- tui.StreamEvent{Kind: "chunk", Chunk: fmt.Sprintf("\n⚠  Reached --max-turns limit (%d). Use --max-turns N to increase.\n", maxTurns)}
 	return history, nil
+}
+
+// rateLimitDelay returns exponential backoff delay for the given retry index.
+func rateLimitDelay(retry int) time.Duration {
+	d := rateLimitInitialDelay * (1 << retry)
+	if d > rateLimitMaxDelay {
+		d = rateLimitMaxDelay
+	}
+	return d
 }
 
 // pumpCodeStream reads a gRPC stream for one agentic iteration, forwarding
@@ -356,30 +576,70 @@ func pumpCodeStream(
 	}
 }
 
-// executeWithApprovalTUI runs a tool, using the TUI approval flow when needed.
-func executeWithApprovalTUI(tc ui.ToolCallEvent, autoApply bool, p *ui.Printer, ch chan<- tui.StreamEvent) (string, error) {
-	needsApproval := tools.NeedsApproval(tc.Name)
-	// Safe bash commands (read-only git, go build, make test, etc.) are
-	// auto-approved to reduce friction without expanding the blast radius.
-	if needsApproval && tc.Name == "bash" && tools.IsSafeBashCommand(tc.Arguments) {
-		needsApproval = false
+// executeWithApprovalTUI runs a tool, running hooks, audit logging, and the
+// TUI approval flow as needed.
+func executeWithApprovalTUI(
+	tc ui.ToolCallEvent,
+	autoApply bool,
+	auditLog *audit.Logger,
+	hookRunner *hooks.Runner,
+	p *ui.Printer,
+	ch chan<- tui.StreamEvent,
+) (string, error) {
+	// --- Pre-tool hooks (#80) ---
+	hookResult := hookRunner.PreToolUse(tc.Name, tc.Arguments)
+	if hookResult.Block {
+		msg := hookResult.SystemMessage
+		if msg == "" {
+			msg = "Tool blocked by pre-tool hook."
+		}
+		auditLog.LogToolCall(tc.Name, tc.Arguments, false, false)
+		auditLog.LogToolResult(tc.Name, 0, false)
+		return msg, nil
 	}
+	// Use modified input if hook rewrote it.
+	argsJSON := tc.Arguments
+	if hookResult.ModifiedInput != nil {
+		if b, err := json.Marshal(hookResult.ModifiedInput); err == nil {
+			argsJSON = string(b)
+		}
+	}
+
+	// --- Approval gate ---
+	needsApproval := tools.NeedsApproval(tc.Name)
+	autoApproved := false
+	// Safe bash commands are auto-approved to reduce friction.
+	if needsApproval && tc.Name == "bash" && tools.IsSafeBashCommand(argsJSON) {
+		needsApproval = false
+		autoApproved = true
+	}
+	approved := !needsApproval || autoApply
 	if needsApproval && !autoApply {
 		replyCh := make(chan bool, 1)
 		ch <- tui.StreamEvent{
 			Kind:     "approval",
 			ToolName: tc.Name,
-			ToolArgs: tc.Arguments,
+			ToolArgs: argsJSON,
 			ReplyCh:  replyCh,
 		}
-		if approved := <-replyCh; !approved {
+		approved = <-replyCh
+		if !approved {
+			auditLog.LogToolCall(tc.Name, argsJSON, false, false)
+			auditLog.LogToolResult(tc.Name, 0, false)
 			return "User declined to execute this tool.", nil
 		}
 	}
 
+	auditLog.LogToolCall(tc.Name, argsJSON, approved, autoApproved)
+
+	// --- Execute ---
 	start := time.Now()
-	result, execErr := tools.Execute(tc.Name, tc.Arguments)
+	result, execErr := tools.Execute(tc.Name, argsJSON)
 	elapsed := time.Since(start)
+	auditLog.LogToolResult(tc.Name, elapsed.Milliseconds(), execErr == nil)
+
+	// --- Post-tool hooks (#80) ---
+	hookRunner.PostToolUse(tc.Name, argsJSON, result)
 
 	status := "ok"
 	if execErr != nil {
@@ -420,4 +680,3 @@ func buildCodeRequest(chatID, model, toolSchemas string, history []codeMessage, 
 		Prompt:    string(payloadJSON),
 	}
 }
-

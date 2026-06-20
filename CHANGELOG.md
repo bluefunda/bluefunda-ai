@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.11.0](https://github.com/bluefunda/bluefunda-ai/compare/v1.10.0...v1.11.0) (2026-06-20)
+
+
+### Features
+
+* **update:** add `bai update` self-update command ([#65](https://github.com/bluefunda/bluefunda-ai/issues/65)) ([921ecda](https://github.com/bluefunda/bluefunda-ai/commit/921ecda4dbc06d1b63464440c2e7046fda8c05da))
+
+
+### Bug Fixes
+
+* **deps:** bump go to 1.25.11 to resolve GO-2026-5039 and GO-2026-5037 ([#67](https://github.com/bluefunda/bluefunda-ai/issues/67)) ([c8b699b](https://github.com/bluefunda/bluefunda-ai/commit/c8b699b00111921d2b037b45b8289e90476c90e0))
+
 ## [1.10.0](https://github.com/bluefunda/bluefunda-ai/compare/v1.9.0...v1.10.0) (2026-05-23)
 
 

@@ -6,16 +6,16 @@ import "github.com/charmbracelet/lipgloss"
 // through a single source of truth. Claude Code dark palette.
 type Theme struct {
 	// Base colors
-	Background  lipgloss.Color
-	Foreground  lipgloss.Color
-	Secondary   lipgloss.Color // dimmed text
-	Muted       lipgloss.Color // very dim, borders
-	Accent      lipgloss.Color // muted blue highlight
-	AccentBold  lipgloss.Color // brighter blue for active elements
-	Success     lipgloss.Color
-	Warning     lipgloss.Color
-	ErrorColor  lipgloss.Color
-	ToolColor   lipgloss.Color // purple-ish for tool calls
+	Background lipgloss.Color
+	Foreground lipgloss.Color
+	Secondary  lipgloss.Color // dimmed text
+	Muted      lipgloss.Color // very dim, borders
+	Accent     lipgloss.Color // muted blue highlight
+	AccentBold lipgloss.Color // brighter blue for active elements
+	Success    lipgloss.Color
+	Warning    lipgloss.Color
+	ErrorColor lipgloss.Color
+	ToolColor  lipgloss.Color // purple-ish for tool calls
 
 	// Composed styles
 	UserLabel      lipgloss.Style

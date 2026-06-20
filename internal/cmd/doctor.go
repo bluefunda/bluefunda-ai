@@ -98,11 +98,11 @@ func runDoctor(cmd *cobra.Command, args []string) error {
 }
 
 func printChecks(out interface{ Write([]byte) (int, error) }, checks []checkResult, warnings, errors int) {
-	okStyle   := color.New(color.FgGreen)
+	okStyle := color.New(color.FgGreen)
 	warnStyle := color.New(color.FgYellow)
-	errStyle  := color.New(color.FgRed)
+	errStyle := color.New(color.FgRed)
 	infoStyle := color.New(color.Faint)
-	dimStyle  := color.New(color.Faint)
+	dimStyle := color.New(color.Faint)
 
 	for _, c := range checks {
 		var icon string

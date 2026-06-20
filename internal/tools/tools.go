@@ -15,8 +15,8 @@ type ToolCall struct {
 
 // ToolSchema is the JSON schema definition sent to the LLM.
 type ToolSchema struct {
-	Type     string       `json:"type"`
-	Function FunctionDef  `json:"function"`
+	Type     string      `json:"type"`
+	Function FunctionDef `json:"function"`
 }
 
 // FunctionDef describes a tool function.
@@ -33,11 +33,13 @@ func LocalToolSchemas() (string, error) {
 			Type: "function",
 			Function: FunctionDef{
 				Name:        "read_file",
-				Description: "Read the full contents of a local file. Use this before editing a file to understand its current state.",
+				Description: "Read a local file. For large files use offset and limit to read a window of lines — lines are returned with line numbers. Omit offset/limit to read the full file.",
 				Parameters: json.RawMessage(`{
 					"type": "object",
 					"properties": {
-						"path": {"type": "string", "description": "Absolute or relative file path"}
+						"path":   {"type": "string", "description": "Absolute or relative file path"},
+						"offset": {"type": "integer", "description": "First line to return (1-based). Default: 0 (start of file)."},
+						"limit":  {"type": "integer", "description": "Maximum number of lines to return. Default: 0 (all lines)."}
 					},
 					"required": ["path"]
 				}`),
@@ -46,8 +48,25 @@ func LocalToolSchemas() (string, error) {
 		{
 			Type: "function",
 			Function: FunctionDef{
+				Name:        "edit_file",
+				Description: "Replace a unique string in a file with a new string. Use for surgical edits without rewriting the entire file. Fails if old_string appears more than once (add surrounding context to make it unique) or not at all.",
+				Parameters: json.RawMessage(`{
+					"type": "object",
+					"properties": {
+						"path":        {"type": "string", "description": "Absolute or relative file path"},
+						"old_string":  {"type": "string", "description": "The exact string to replace (must appear exactly once unless replace_all is true)"},
+						"new_string":  {"type": "string", "description": "The replacement string"},
+						"replace_all": {"type": "boolean", "description": "Replace all occurrences instead of requiring uniqueness. Default: false."}
+					},
+					"required": ["path", "old_string", "new_string"]
+				}`),
+			},
+		},
+		{
+			Type: "function",
+			Function: FunctionDef{
 				Name:        "write_file",
-				Description: "Write content to a local file. Creates the file if it does not exist; overwrites it if it does.",
+				Description: "Write content to a local file, creating it if it does not exist and overwriting it if it does. Prefer edit_file for modifying existing files.",
 				Parameters: json.RawMessage(`{
 					"type": "object",
 					"properties": {

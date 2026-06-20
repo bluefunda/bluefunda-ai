@@ -27,7 +27,15 @@ func Execute(name, argumentsJSON string) (string, error) {
 	switch name {
 	case "read_file":
 		path, _ := args["path"].(string)
-		return ReadFile(path)
+		offset, _ := args["offset"].(float64)
+		limit, _ := args["limit"].(float64)
+		return ReadFile(path, int(offset), int(limit))
+	case "edit_file":
+		path, _ := args["path"].(string)
+		oldStr, _ := args["old_string"].(string)
+		newStr, _ := args["new_string"].(string)
+		replaceAll, _ := args["replace_all"].(bool)
+		return EditFile(path, oldStr, newStr, replaceAll)
 	case "write_file":
 		path, _ := args["path"].(string)
 		content, _ := args["content"].(string)
@@ -52,16 +60,101 @@ func Execute(name, argumentsJSON string) (string, error) {
 	}
 }
 
-// ReadFile returns the contents of a file.
-func ReadFile(path string) (string, error) {
+// ReadFile returns the contents of a file, optionally starting at line offset
+// and reading at most limit lines. offset=0, limit=0 reads the whole file.
+// Lines are returned prefixed with their 1-based line number.
+func ReadFile(path string, offset, limit int) (string, error) {
 	if path == "" {
 		return "", fmt.Errorf("path is required")
+	}
+	f, err := os.Open(path)
+	if err != nil {
+		return "", fmt.Errorf("read %s: %w", path, err)
+	}
+	defer f.Close()
+
+	if offset <= 0 && limit <= 0 {
+		b, err := os.ReadFile(path)
+		if err != nil {
+			return "", fmt.Errorf("read %s: %w", path, err)
+		}
+		return string(b), nil
+	}
+
+	var sb strings.Builder
+	scanner := bufio.NewScanner(f)
+	lineNum := 0
+	written := 0
+	for scanner.Scan() {
+		lineNum++
+		if lineNum <= offset {
+			continue
+		}
+		fmt.Fprintf(&sb, "%4d\t%s\n", lineNum, scanner.Text())
+		written++
+		if limit > 0 && written >= limit {
+			break
+		}
+	}
+	return sb.String(), nil
+}
+
+// EditFile replaces the first (or all) occurrence(s) of oldStr with newStr in
+// the file at path. Returns an error if oldStr does not appear exactly once
+// when replaceAll is false.
+func EditFile(path, oldStr, newStr string, replaceAll bool) (string, error) {
+	if path == "" {
+		return "", fmt.Errorf("path is required")
+	}
+	if oldStr == "" {
+		return "", fmt.Errorf("old_string is required")
 	}
 	b, err := os.ReadFile(path)
 	if err != nil {
 		return "", fmt.Errorf("read %s: %w", path, err)
 	}
-	return string(b), nil
+	content := string(b)
+	count := strings.Count(content, oldStr)
+	if count == 0 {
+		return "", fmt.Errorf("old_string not found in %s", path)
+	}
+	if !replaceAll && count > 1 {
+		return "", fmt.Errorf("old_string matches %d occurrences in %s; add more surrounding context to make it unique", count, path)
+	}
+
+	var updated string
+	if replaceAll {
+		updated = strings.ReplaceAll(content, oldStr, newStr)
+	} else {
+		updated = strings.Replace(content, oldStr, newStr, 1)
+	}
+
+	// Atomic write: temp file in same directory, then rename.
+	dir := filepath.Dir(path)
+	tmp, err := os.CreateTemp(dir, ".bai-edit-*")
+	if err != nil {
+		return "", fmt.Errorf("create temp file: %w", err)
+	}
+	tmpName := tmp.Name()
+	if _, err := tmp.WriteString(updated); err != nil {
+		tmp.Close()
+		os.Remove(tmpName)
+		return "", fmt.Errorf("write temp file: %w", err)
+	}
+	if err := tmp.Close(); err != nil {
+		os.Remove(tmpName)
+		return "", fmt.Errorf("close temp file: %w", err)
+	}
+	if err := os.Rename(tmpName, path); err != nil {
+		os.Remove(tmpName)
+		return "", fmt.Errorf("rename to %s: %w", path, err)
+	}
+
+	n := 1
+	if replaceAll {
+		n = count
+	}
+	return fmt.Sprintf("edited %d occurrence(s) in %s", n, path), nil
 }
 
 // WriteFile writes content to a file, creating parent directories as needed.

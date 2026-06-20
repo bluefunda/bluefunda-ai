@@ -20,7 +20,7 @@ type ToolEvent struct {
 	Kind       ToolEventKind
 	Name       string
 	Args       string
-	Status     string  // "ok" | "error"
+	Status     string // "ok" | "error"
 	DurationMs int64
 	Summary    string
 	Iteration  int
@@ -37,11 +37,11 @@ const (
 
 // ChatMessage is one logical message in the conversation.
 type ChatMessage struct {
-	Role        MsgRole
-	Content     string
-	ToolEvents  []ToolEvent
-	Streaming   bool
-	Timestamp   time.Time
+	Role       MsgRole
+	Content    string
+	ToolEvents []ToolEvent
+	Streaming  bool
+	Timestamp  time.Time
 	// rendered is the cached glamour-rendered form of Content (assistant only)
 	rendered string
 	// renderWidth is the width used when rendering was last produced

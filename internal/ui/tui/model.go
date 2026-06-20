@@ -91,12 +91,12 @@ type SessionConfig struct {
 	ResumeTitle    string                        // set when auto-resuming a past session
 	IsResume       bool                          // true = resuming; isNewChat starts false
 	ListSessionsFn func() ([]SessionInfo, error) // nil = listing not available
-	AccountFn      func() (*AccountInfo, error)      // nil = account info not available
-	UsageFn        func() (*UsageInfo, error)        // nil = usage not available
-	MCPListFn      func() ([]MCPInfo, error)         // nil = MCP listing not available
-	MCPActivateFn  func(name string) error           // nil = MCP activation not available
-	SetAutoApplyFn func(enabled bool)                // nil = auto-apply not available (non-code sessions)
-	SetCodeModeFn  func(enabled bool)                // nil = mode switch not supported in this session
+	AccountFn      func() (*AccountInfo, error)  // nil = account info not available
+	UsageFn        func() (*UsageInfo, error)    // nil = usage not available
+	MCPListFn      func() ([]MCPInfo, error)     // nil = MCP listing not available
+	MCPActivateFn  func(name string) error       // nil = MCP activation not available
+	SetAutoApplyFn func(enabled bool)            // nil = auto-apply not available (non-code sessions)
+	SetCodeModeFn  func(enabled bool)            // nil = mode switch not supported in this session
 }
 
 // SessionInfo is one entry returned by ListSessionsFn for /sessions display.
@@ -1053,7 +1053,6 @@ func (m *Model) handleStreamEvent(ev StreamEvent) []tea.Cmd {
 
 	return cmds
 }
-
 
 // scrollToLastMsgStart positions the viewport so the user sees the beginning
 // of the last message. For short messages that fit in the viewport it falls

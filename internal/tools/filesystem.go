@@ -486,10 +486,10 @@ func WebSearch(query string) (string, error) {
 	}
 
 	var sb strings.Builder
-	sb.WriteString(fmt.Sprintf("Search: %s\n\n", query))
+	fmt.Fprintf(&sb, "Search: %s\n\n", query)
 
 	if ddg.AbstractText != "" {
-		sb.WriteString(fmt.Sprintf("## %s\n%s\n%s\n\n", ddg.AbstractSource, ddg.AbstractText, ddg.AbstractURL))
+		fmt.Fprintf(&sb, "## %s\n%s\n%s\n\n", ddg.AbstractSource, ddg.AbstractText, ddg.AbstractURL)
 	}
 
 	count := 0
@@ -498,7 +498,7 @@ func WebSearch(query string) (string, error) {
 			break
 		}
 		if t.Text != "" && t.FirstURL != "" {
-			sb.WriteString(fmt.Sprintf("- %s\n  %s\n", t.Text, t.FirstURL))
+			fmt.Fprintf(&sb, "- %s\n  %s\n", t.Text, t.FirstURL)
 			count++
 		}
 		for _, sub := range t.Topics {
@@ -506,7 +506,7 @@ func WebSearch(query string) (string, error) {
 				break
 			}
 			if sub.Text != "" && sub.FirstURL != "" {
-				sb.WriteString(fmt.Sprintf("- %s\n  %s\n", sub.Text, sub.FirstURL))
+				fmt.Fprintf(&sb, "- %s\n  %s\n", sub.Text, sub.FirstURL)
 				count++
 			}
 		}

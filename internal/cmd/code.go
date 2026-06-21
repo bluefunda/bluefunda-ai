@@ -658,7 +658,7 @@ func executeTools(
 		allAutoApproved = true
 		for _, tc := range toolCalls {
 			needsApproval := tools.NeedsApproval(tc.Name) || mcp.IsMCPTool(tc.Name)
-			if needsApproval && !(tc.Name == "bash" && tools.IsSafeBashCommand(tc.Arguments)) {
+			if needsApproval && (tc.Name != "bash" || !tools.IsSafeBashCommand(tc.Arguments)) {
 				allAutoApproved = false
 				break
 			}

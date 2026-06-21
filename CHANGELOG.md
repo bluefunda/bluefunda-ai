@@ -1,5 +1,18 @@
 # Changelog
 
+## [1.13.0](https://github.com/bluefunda/bluefunda-ai/compare/v1.12.1...v1.13.0) (2026-06-21)
+
+
+### Features
+
+* **ux:** --continue flag, shell completion, sessions view, rg check, /tools update ([#95](https://github.com/bluefunda/bluefunda-ai/issues/95)) ([6f53324](https://github.com/bluefunda/bluefunda-ai/commit/6f53324630d12c5347edaab3716d29fa98cfb80e))
+* **ux:** --version flag, custom slash commands, parallel tools, WebFetch/WebSearch ([#93](https://github.com/bluefunda/bluefunda-ai/issues/93)) ([fd875ec](https://github.com/bluefunda/bluefunda-ai/commit/fd875ecf2f33c7000c851f6f31bcfde4f96572ba))
+
+
+### Bug Fixes
+
+* **lint:** QF1012 WriteString+Sprintf→Fprintf; QF1001 De Morgan's law ([#96](https://github.com/bluefunda/bluefunda-ai/issues/96)) ([20d8994](https://github.com/bluefunda/bluefunda-ai/commit/20d8994e4a5bcfff1cce343806ab2db8ad8ca283))
+
 ## [1.12.1](https://github.com/bluefunda/bluefunda-ai/compare/v1.12.0...v1.12.1) (2026-06-21)
 
 

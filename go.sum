@@ -14,8 +14,8 @@ github.com/aymanbagabas/go-udiff v0.3.1 h1:LV+qyBQ2pqe0u42ZsUEtPiCaUoqgA9gYRDs3v
 github.com/aymanbagabas/go-udiff v0.3.1/go.mod h1:G0fsKmG+P6ylD0r6N/KgQD/nWzgfnl8ZBcNLgcbrw8E=
 github.com/aymerick/douceur v0.2.0 h1:Mv+mAeH1Q+n9Fr+oyamOlAkUNPWPlA8PPGR0QAaYuPk=
 github.com/aymerick/douceur v0.2.0/go.mod h1:wlT5vV2O3h55X9m7iVYN0TBM0NH/MmbLnd30/FjWUq4=
-github.com/bluefunda/go-update v0.1.0 h1:/1uT2OUTJpvoPU44BfNYDcW3YI2c+Ktlb7p6+qJaYFY=
-github.com/bluefunda/go-update v0.1.0/go.mod h1:OXECIVc6XVlW22jDsF9g9GyPrj/Maqu5nBBwYii1d5A=
+github.com/bluefunda/go-update v0.1.1-0.20260621073004-c803d0276223 h1:pVBCH4VBPNRi2nGlHzONw4UZLe80ZneKuMM00LGT6Jk=
+github.com/bluefunda/go-update v0.1.1-0.20260621073004-c803d0276223/go.mod h1:OXECIVc6XVlW22jDsF9g9GyPrj/Maqu5nBBwYii1d5A=
 github.com/cespare/xxhash/v2 v2.3.0 h1:UL815xU9SqsFlibzuggzjXhog7bL6oX9BbNZnL2UFvs=
 github.com/cespare/xxhash/v2 v2.3.0/go.mod h1:VGX0DQ3Q6kWi7AoAeZDth3/j3BFtOZR5XLFGgcrjCOs=
 github.com/charmbracelet/bubbles v1.0.0 h1:12J8/ak/uCZEMQ6KU7pcfwceyjLlWsDLAxB5fXonfvc=

@@ -37,32 +37,24 @@ var (
 	codeOutputFormat string
 	codeResume       string
 	codeContinue     bool
+	codeNoTools      bool
 )
 
+// codeCmd is a deprecated alias for the root 'bai' command.
+// It is hidden from help but preserved for backward compatibility.
 var codeCmd = &cobra.Command{
-	Use:   "code [prompt]",
-	Short: "Agentic coding session with local file system access",
-	Long: `Start an interactive coding session where the AI can read and write files,
-run commands, and search your project. Tools that modify the filesystem or
-run shell commands require your approval before execution (use --auto to
-skip confirmation).
-
-Use --print / -p for non-interactive (headless) mode: reads the prompt from
-the argument or stdin and writes output to stdout.`,
-	Example: `  bai code                                     interactive coding session
-  bai code "fix the failing tests"             start with a prompt
-  bai code -c                                  resume most recent session
-  bai code --resume <id>                       resume a specific session
-  bai code --auto "add godoc to all exports"   auto-approve all tools
-  bai code --max-turns 50 "refactor auth"      increase turn limit
-  bai code -p "explain main.go"                headless, output to stdout
-  echo "list TODOs" | bai code -p              pipe prompt from stdin
-  bai code -p "…" --output-format stream-json  NDJSON event stream`,
-	Args: cobra.ArbitraryArgs,
-	RunE: runCode,
+	Use:    "code [prompt]",
+	Short:  "Deprecated: use 'bai' directly",
+	Hidden: true,
+	Args:   cobra.ArbitraryArgs,
+	RunE: func(cmd *cobra.Command, args []string) error {
+		fmt.Fprintln(os.Stderr, "Note: 'bai code' is now just 'bai'. This alias will be removed in a future release.")
+		return runAgenticSession(args)
+	},
 }
 
 func init() {
+	// Keep flags on codeCmd so existing scripts using 'bai code --auto' etc. still work.
 	codeCmd.Flags().StringVar(&codeModel, "model", "", "LLM model to use")
 	codeCmd.Flags().StringVar(&codeDir, "dir", ".", "Working directory for file operations")
 	codeCmd.Flags().BoolVar(&codeAutoApply, "auto-apply", false, "Execute write/bash tools without prompting")
@@ -107,7 +99,7 @@ type cliCodePayload struct {
 	Tools   string        `json:"tools"`
 }
 
-func runCode(cmd *cobra.Command, args []string) error {
+func runAgenticSession(args []string) error {
 	if codeAuto {
 		codeAutoApply = true
 	}
@@ -132,16 +124,19 @@ func runCode(cmd *cobra.Command, args []string) error {
 
 	// Apply project-level max_turns override if the flag wasn't set explicitly.
 	if projCfgEarly := config.FindProjectConfig("."); projCfgEarly != nil {
-		if projCfgEarly.MaxTurns > 0 {
-			if !cmd.Flags().Changed("max-turns") {
-				codeMaxTurns = projCfgEarly.MaxTurns
-			}
+		if projCfgEarly.MaxTurns > 0 && codeMaxTurns == 20 {
+			// project config wins when the user hasn't explicitly set --max-turns
+			codeMaxTurns = projCfgEarly.MaxTurns
 		}
 	}
 
-	toolSchemas, err := tools.LocalToolSchemas()
-	if err != nil {
-		return fmt.Errorf("build tool schemas: %w", err)
+	var toolSchemas string
+	if !codeNoTools {
+		var err error
+		toolSchemas, err = tools.LocalToolSchemas()
+		if err != nil {
+			return fmt.Errorf("build tool schemas: %w", err)
+		}
 	}
 
 	workDir, _ := os.Getwd()

@@ -228,12 +228,13 @@ func runChatSession(chatID, initialPrompt, model, mcpServer string) error {
 	}
 
 	cfg2 := tui.SessionConfig{
-		ChatID:        chatID,
-		Model:         model,
-		InitialPrompt: initialPrompt,
-		RepoName:      gitRepoName(),
-		ResumeTitle:   resumeTitle,
-		IsResume:      isResume,
+		ChatID:         chatID,
+		Model:          model,
+		InitialPrompt:  initialPrompt,
+		RepoName:       gitRepoName(),
+		ResumeTitle:    resumeTitle,
+		IsResume:       isResume,
+		CustomCommands: loadCustomSlashCommands("."),
 		ListSessionsFn: func() ([]tui.SessionInfo, error) {
 			ctx, cancel := caigrpc.ContextWithTimeout()
 			defer cancel()

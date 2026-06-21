@@ -436,8 +436,23 @@ func agenticLoopTUI(
 	}
 
 	rateLimitRetries := 0
+	var lastPromptTokens int32 // prompt token count from the most recent iteration
 
 	for iteration := 0; iteration < maxTurns; iteration++ {
+		// Compact context before starting a new iteration if we're approaching the
+		// context window limit. Skip the very first iteration (no usage yet).
+		if iteration > 0 && lastPromptTokens > compactionThreshold {
+			ch <- tui.StreamEvent{Kind: "chunk", Chunk: fmt.Sprintf(
+				"\n⚡ Context at ~%dk tokens — compacting history...\n",
+				lastPromptTokens/1000,
+			)}
+			if compacted, compactErr := compactHistory(conn, chatID, model, history); compactErr == nil {
+				history = compacted
+				lastPromptTokens = 0
+				ch <- tui.StreamEvent{Kind: "chunk", Chunk: "✅ History compacted. Continuing...\n\n"}
+			}
+		}
+
 		req := buildCodeRequest(chatID, model, toolSchemas, history, isFirstTurn && iteration == 0)
 
 		ctx, cancel := context.WithCancel(context.Background())
@@ -461,7 +476,10 @@ func agenticLoopTUI(
 		rateLimitRetries = 0
 
 		// Pump this iteration's stream into ch, collecting tool calls.
-		toolCalls, err := pumpCodeStream(stream, cancel, ch)
+		toolCalls, usage, err := pumpCodeStream(stream, cancel, ch)
+		if usage.PromptTokens > 0 {
+			lastPromptTokens = usage.PromptTokens
+		}
 		if err != nil {
 			// Rate limit backoff on stream errors too (#83)
 			if st, ok := status.FromError(err); ok && st.Code() == codes.ResourceExhausted {
@@ -527,6 +545,12 @@ func rateLimitDelay(retry int) time.Duration {
 	return d
 }
 
+// iterationUsage holds token counts reported by the backend for one agentic iteration.
+type iterationUsage struct {
+	PromptTokens     int32
+	CompletionTokens int32
+}
+
 // pumpCodeStream reads a gRPC stream for one agentic iteration, forwarding
 // content/tool events to ch and collecting tool_call events for return.
 func pumpCodeStream(
@@ -535,7 +559,7 @@ func pumpCodeStream(
 	},
 	cancelFn context.CancelFunc,
 	ch chan<- tui.StreamEvent,
-) ([]ui.ToolCallEvent, error) {
+) ([]ui.ToolCallEvent, iterationUsage, error) {
 	defer cancelFn()
 	tf := &tui.ExportedThinkFilter{}
 	var toolCalls []ui.ToolCallEvent
@@ -547,9 +571,9 @@ func pumpCodeStream(
 				if tail := tf.Flush(); tail != "" {
 					ch <- tui.StreamEvent{Kind: "chunk", Chunk: tail}
 				}
-				return toolCalls, nil
+				return toolCalls, iterationUsage{}, nil
 			}
-			return toolCalls, fmt.Errorf("stream recv: %w", err)
+			return toolCalls, iterationUsage{}, fmt.Errorf("stream recv: %w", err)
 		}
 
 		switch ev.GetType() {
@@ -563,10 +587,13 @@ func pumpCodeStream(
 			if tail := tf.Flush(); tail != "" {
 				ch <- tui.StreamEvent{Kind: "chunk", Chunk: tail}
 			}
-			return toolCalls, nil
+			return toolCalls, iterationUsage{
+				PromptTokens:     ev.GetUsagePromptTokens(),
+				CompletionTokens: ev.GetUsageCompletionTokens(),
+			}, nil
 
 		case "error", "stream_error":
-			return toolCalls, fmt.Errorf("%s", ev.GetError())
+			return toolCalls, iterationUsage{}, fmt.Errorf("%s", ev.GetError())
 
 		case "tool_call":
 			var tc ui.ToolCallEvent
@@ -626,6 +653,83 @@ func pumpCodeStream(
 			ch <- tui.StreamEvent{Kind: "heartbeat"}
 		}
 	}
+}
+
+// compactionThreshold is the prompt-token count above which bai code compacts
+// the conversation history before the next agentic iteration. 100k is safely
+// below the 128k floor across all supported models (claude-sonnet 200k,
+// gpt-4.1 128k) leaving room for the compaction summary itself.
+const compactionThreshold int32 = 100_000
+
+// compactHistory sends the full history to the LLM with a summarisation prompt
+// (no tools, single turn) and returns a trimmed history containing only system
+// messages, the summary, and the last four messages (two exchanges).
+func compactHistory(
+	conn *caigrpc.Conn,
+	chatID, model string,
+	history []codeMessage,
+) ([]codeMessage, error) {
+	const summaryPrompt = "Summarise the conversation so far in a single assistant message. " +
+		"Include: the overall goal, key decisions, every file created or modified (with paths), " +
+		"tool results that matter, and any open questions. Be concise but complete enough that " +
+		"the session can continue without the original messages."
+
+	summaryHistory := append(append([]codeMessage(nil), history...),
+		codeMessage{Role: "user", Content: summaryPrompt},
+	)
+
+	// No tool schemas — one-shot text response only.
+	req := buildCodeRequest(chatID, model, "", summaryHistory, false)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	stream, err := conn.Client.Chat(ctx, req)
+	if err != nil {
+		return nil, err
+	}
+
+	var buf strings.Builder
+	tf := &tui.ExportedThinkFilter{}
+	for {
+		ev, recvErr := stream.Recv()
+		if recvErr != nil {
+			break
+		}
+		switch ev.GetType() {
+		case "content", "stream_chunk":
+			buf.WriteString(tf.Filter(ev.GetContent()))
+		case "done", "stream_end":
+			goto summarised
+		case "error", "stream_error":
+			return nil, fmt.Errorf("compaction: %s", ev.GetError())
+		}
+	}
+summarised:
+	summary := strings.TrimSpace(buf.String())
+	if summary == "" {
+		return history, nil // nothing to compact
+	}
+
+	// Collect system messages from the original history.
+	compact := make([]codeMessage, 0, 8)
+	for _, m := range history {
+		if m.Role == "system" {
+			compact = append(compact, m)
+		}
+	}
+
+	// Add the summary as an assistant message, then keep the last 4 messages
+	// (the two most recent exchanges) for continuity.
+	compact = append(compact, codeMessage{
+		Role:    "assistant",
+		Content: "[Conversation summary]\n" + summary,
+	})
+	tail := history
+	if len(tail) > 4 {
+		tail = tail[len(tail)-4:]
+	}
+	compact = append(compact, tail...)
+	return compact, nil
 }
 
 // toolResult holds the outcome of one tool call.

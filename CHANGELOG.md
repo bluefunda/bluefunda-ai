@@ -1,5 +1,19 @@
 # Changelog
 
+## [1.12.0](https://github.com/bluefunda/bluefunda-ai/compare/v1.11.0...v1.12.0) (2026-06-21)
+
+
+### Features
+
+* **code:** sprint 1 parity improvements — search, context, config, UX ([#86](https://github.com/bluefunda/bluefunda-ai/issues/86)) ([cd50cdb](https://github.com/bluefunda/bluefunda-ai/commit/cd50cdb2744f03da60cd13821ce7fd873965a223))
+* **code:** sprint 2 — edit_file, sessions, hooks, audit, rate-limit backoff, headless mode ([#88](https://github.com/bluefunda/bluefunda-ai/issues/88)) ([157742a](https://github.com/bluefunda/bluefunda-ai/commit/157742ae50f732129d066be87dc9c43e9bf88311))
+* **init,mcp:** bai init scaffold and local MCP client (stdio transport) ([#90](https://github.com/bluefunda/bluefunda-ai/issues/90)) ([d246715](https://github.com/bluefunda/bluefunda-ai/commit/d2467153469cf29af4ea918f922eda1d2f246859))
+
+
+### Bug Fixes
+
+* **lint:** add blank-identifier assignments for unchecked file-op error returns ([#89](https://github.com/bluefunda/bluefunda-ai/issues/89)) ([bbd9f5c](https://github.com/bluefunda/bluefunda-ai/commit/bbd9f5c4e9c600f1f005727543d66e94347a11a2))
+
 ## [1.11.0](https://github.com/bluefunda/bluefunda-ai/compare/v1.10.0...v1.11.0) (2026-06-20)
 
 

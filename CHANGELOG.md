@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.16.0](https://github.com/bluefunda/bluefunda-ai/compare/v1.15.0...v1.16.0) (2026-06-21)
+
+
+### Features
+
+* **cmd:** model aliases — auto/fast/think, default auto ([#104](https://github.com/bluefunda/bluefunda-ai/issues/104)) ([#105](https://github.com/bluefunda/bluefunda-ai/issues/105)) ([0aecc34](https://github.com/bluefunda/bluefunda-ai/commit/0aecc34bece1801fd7fce723b318cce62372d84c))
+
 ## [1.15.0](https://github.com/bluefunda/bluefunda-ai/compare/v1.14.0...v1.15.0) (2026-06-21)
 
 

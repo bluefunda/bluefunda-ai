@@ -122,9 +122,7 @@ func runCode(cmd *cobra.Command, args []string) error {
 	if model == "" {
 		model = cfg.Defaults.Model
 	}
-	if model == "" {
-		model = "openai"
-	}
+	model = resolveModelAlias(model)
 
 	initialPrompt := strings.Join(args, " ")
 

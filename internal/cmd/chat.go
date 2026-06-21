@@ -188,9 +188,7 @@ func runChatSession(chatID, initialPrompt, model, mcpServer string) error {
 	if model == "" {
 		model = cfg.Defaults.Model
 	}
-	if model == "" {
-		model = "openai"
-	}
+	model = resolveModelAlias(model)
 
 	var resumeTitle string
 	var isResume bool
@@ -602,6 +600,25 @@ func buildDemoResponse(input string) string {
 }
 
 // --- helpers ---
+
+// resolveModelAlias maps well-known user-facing aliases to backend model strings.
+//
+//   - "auto" / ""   → "" (cai-llm-router routing rules decide)
+//   - "fast"        → "groq" (fast-responder agent: Groq llama-3.3-70b)
+//   - "think"       → ":think" (cai-bff parses the suffix and sets thinkingMode)
+//   - anything else → passed through unchanged (openai, anthropic, groq:..., etc.)
+func resolveModelAlias(alias string) string {
+	switch alias {
+	case "auto", "":
+		return ""
+	case "fast":
+		return "groq"
+	case "think", "thinking":
+		return ":think"
+	default:
+		return alias
+	}
+}
 
 func truncate(s string, max int) string {
 	s = strings.ReplaceAll(s, "\n", " ")

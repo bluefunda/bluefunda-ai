@@ -17,6 +17,9 @@ var (
 	cfgDomain  string
 	cfgOutput  string
 	rootNew    bool
+	rootModel  string
+	rootFast   bool
+	rootThink  bool
 )
 
 // Version is set at build time via -ldflags.
@@ -44,7 +47,14 @@ func runDefault(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 	prompt := strings.Join(args, " ")
-	return runChatSession("", prompt, "", "")
+	model := rootModel
+	if rootFast {
+		model = "fast"
+	}
+	if rootThink {
+		model = "think"
+	}
+	return runChatSession("", prompt, model, "")
 }
 
 func init() {
@@ -58,6 +68,9 @@ func init() {
 
 	rootCmd.PersistentFlags().StringVarP(&cfgOutput, "output", "o", "", "Output format: table, json, quiet")
 	rootCmd.Flags().BoolVar(&rootNew, "new", false, "Force a new session")
+	rootCmd.Flags().StringVarP(&rootModel, "model", "m", "", "Model to use: auto, fast, think, openai, anthropic, ...")
+	rootCmd.Flags().BoolVar(&rootFast, "fast", false, "Use fast model (Groq, low-latency)")
+	rootCmd.Flags().BoolVar(&rootThink, "think", false, "Enable extended thinking")
 	rootCmd.Flags().BoolP("version", "v", false, "Print version and exit")
 	rootCmd.PersistentPreRunE = func(cmd *cobra.Command, args []string) error {
 		if v, _ := cmd.Flags().GetBool("version"); v {

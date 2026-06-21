@@ -6,6 +6,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
+	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -13,6 +16,8 @@ import (
 	"strings"
 	"time"
 )
+
+const webTimeout = 30 * time.Second
 
 const bashTimeout = 120 * time.Second
 
@@ -52,6 +57,12 @@ func Execute(name, argumentsJSON string) (string, error) {
 		dir, _ := args["directory"].(string)
 		glob, _ := args["glob"].(string)
 		return SearchContent(pattern, dir, glob)
+	case "web_fetch":
+		rawURL, _ := args["url"].(string)
+		return WebFetch(rawURL)
+	case "web_search":
+		query, _ := args["query"].(string)
+		return WebSearch(query)
 	case "bash":
 		command, _ := args["command"].(string)
 		return Bash(command)
@@ -348,4 +359,161 @@ func searchContentGo(pattern, dir, glob string) (string, error) {
 		results = append(results, fmt.Sprintf("... (truncated at %d results)", searchContentMaxResults))
 	}
 	return strings.Join(results, "\n"), nil
+}
+
+// WebFetch fetches a URL and returns its content as plain text. HTML tags are
+// stripped to reduce token usage. Content is capped at 50 000 characters.
+func WebFetch(rawURL string) (string, error) {
+	if rawURL == "" {
+		return "", fmt.Errorf("url is required")
+	}
+	if !strings.HasPrefix(rawURL, "http://") && !strings.HasPrefix(rawURL, "https://") {
+		rawURL = "https://" + rawURL
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), webTimeout)
+	defer cancel()
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
+	if err != nil {
+		return "", fmt.Errorf("build request: %w", err)
+	}
+	req.Header.Set("User-Agent", "bai/1.0 (https://bluefunda.com)")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("fetch %s: %w", rawURL, err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 512*1024)) // 512 KB cap
+	if err != nil {
+		return "", fmt.Errorf("read body: %w", err)
+	}
+
+	text := stripHTML(string(body))
+	if len(text) > 50_000 {
+		text = text[:50_000] + "\n\n... (truncated at 50 000 chars)"
+	}
+	return fmt.Sprintf("URL: %s\nStatus: %d\n\n%s", rawURL, resp.StatusCode, text), nil
+}
+
+// stripHTML removes HTML tags and normalises whitespace.
+func stripHTML(s string) string {
+	// Remove script and style blocks.
+	for _, tag := range []string{"script", "style", "head"} {
+		open := "<" + tag
+		close := "</" + tag + ">"
+		for {
+			start := strings.Index(strings.ToLower(s), open)
+			if start < 0 {
+				break
+			}
+			end := strings.Index(strings.ToLower(s[start:]), close)
+			if end < 0 {
+				s = s[:start]
+				break
+			}
+			s = s[:start] + s[start+end+len(close):]
+		}
+	}
+	// Strip remaining tags.
+	inTag := false
+	var out strings.Builder
+	for _, r := range s {
+		switch {
+		case r == '<':
+			inTag = true
+		case r == '>':
+			inTag = false
+			out.WriteByte(' ')
+		case !inTag:
+			out.WriteRune(r)
+		}
+	}
+	// Collapse whitespace.
+	lines := strings.Split(out.String(), "\n")
+	var cleaned []string
+	for _, l := range lines {
+		l = strings.TrimSpace(l)
+		if l != "" {
+			cleaned = append(cleaned, l)
+		}
+	}
+	return strings.Join(cleaned, "\n")
+}
+
+// WebSearch searches the web using DuckDuckGo's Lite JSON API (no API key
+// required) and returns the top results as title + URL + snippet.
+func WebSearch(query string) (string, error) {
+	if query == "" {
+		return "", fmt.Errorf("query is required")
+	}
+
+	apiURL := "https://api.duckduckgo.com/?q=" + url.QueryEscape(query) +
+		"&format=json&no_html=1&skip_disambig=1"
+
+	ctx, cancel := context.WithTimeout(context.Background(), webTimeout)
+	defer cancel()
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, apiURL, nil)
+	if err != nil {
+		return "", fmt.Errorf("build request: %w", err)
+	}
+	req.Header.Set("User-Agent", "bai/1.0 (https://bluefunda.com)")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("search: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	var ddg struct {
+		AbstractText   string `json:"AbstractText"`
+		AbstractURL    string `json:"AbstractURL"`
+		AbstractSource string `json:"AbstractSource"`
+		RelatedTopics  []struct {
+			Text     string `json:"Text"`
+			FirstURL string `json:"FirstURL"`
+			Topics   []struct {
+				Text     string `json:"Text"`
+				FirstURL string `json:"FirstURL"`
+			} `json:"Topics"`
+		} `json:"RelatedTopics"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&ddg); err != nil {
+		return "", fmt.Errorf("parse response: %w", err)
+	}
+
+	var sb strings.Builder
+	sb.WriteString(fmt.Sprintf("Search: %s\n\n", query))
+
+	if ddg.AbstractText != "" {
+		sb.WriteString(fmt.Sprintf("## %s\n%s\n%s\n\n", ddg.AbstractSource, ddg.AbstractText, ddg.AbstractURL))
+	}
+
+	count := 0
+	for _, t := range ddg.RelatedTopics {
+		if count >= 8 {
+			break
+		}
+		if t.Text != "" && t.FirstURL != "" {
+			sb.WriteString(fmt.Sprintf("- %s\n  %s\n", t.Text, t.FirstURL))
+			count++
+		}
+		for _, sub := range t.Topics {
+			if count >= 8 {
+				break
+			}
+			if sub.Text != "" && sub.FirstURL != "" {
+				sb.WriteString(fmt.Sprintf("- %s\n  %s\n", sub.Text, sub.FirstURL))
+				count++
+			}
+		}
+	}
+
+	if sb.Len() == len(fmt.Sprintf("Search: %s\n\n", query)) {
+		return fmt.Sprintf("No results found for: %s\nTry web_fetch with a specific URL instead.", query), nil
+	}
+	return sb.String(), nil
 }

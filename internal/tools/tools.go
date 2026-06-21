@@ -136,6 +136,34 @@ func LocalToolSchemas() (string, error) {
 				}`),
 			},
 		},
+		{
+			Type: "function",
+			Function: FunctionDef{
+				Name:        "web_fetch",
+				Description: "Fetch a URL and return its content as plain text. Useful for reading documentation, specs, package READMEs, or any web resource. HTML is stripped. Content capped at 50 000 characters.",
+				Parameters: json.RawMessage(`{
+					"type": "object",
+					"properties": {
+						"url": {"type": "string", "description": "Full URL to fetch (https:// assumed if scheme is omitted)"}
+					},
+					"required": ["url"]
+				}`),
+			},
+		},
+		{
+			Type: "function",
+			Function: FunctionDef{
+				Name:        "web_search",
+				Description: "Search the web using DuckDuckGo and return the top results (title, URL, snippet). Use to look up APIs, error messages, or library documentation.",
+				Parameters: json.RawMessage(`{
+					"type": "object",
+					"properties": {
+						"query": {"type": "string", "description": "Search query"}
+					},
+					"required": ["query"]
+				}`),
+			},
+		},
 	}
 
 	b, err := json.Marshal(schemas)

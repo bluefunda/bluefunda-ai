@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"fmt"
+	"os"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -57,6 +58,14 @@ func init() {
 
 	rootCmd.PersistentFlags().StringVarP(&cfgOutput, "output", "o", "", "Output format: table, json, quiet")
 	rootCmd.Flags().BoolVar(&rootNew, "new", false, "Force a new session")
+	rootCmd.Flags().BoolP("version", "v", false, "Print version and exit")
+	rootCmd.PersistentPreRunE = func(cmd *cobra.Command, args []string) error {
+		if v, _ := cmd.Flags().GetBool("version"); v {
+			fmt.Println("bai version " + Version)
+			os.Exit(0)
+		}
+		return nil
+	}
 
 	rootCmd.AddCommand(
 		// Visible commands

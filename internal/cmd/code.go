@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -47,6 +48,14 @@ skip confirmation).
 
 Use --print / -p for non-interactive (headless) mode: reads the prompt from
 the argument or stdin and writes output to stdout.`,
+	Example: `  bai code                                     interactive coding session
+  bai code "fix the failing tests"             start with a prompt
+  bai code --auto "add godoc to all exports"   auto-approve all tools
+  bai code --max-turns 50 "refactor auth"      increase turn limit
+  bai code -p "explain main.go"                headless, output to stdout
+  echo "list TODOs" | bai code -p              pipe prompt from stdin
+  bai code -p "…" --output-format stream-json  NDJSON event stream
+  bai code --resume <id>                        resume a previous session`,
 	Args: cobra.ArbitraryArgs,
 	RunE: runCode,
 }
@@ -237,13 +246,14 @@ func runCode(cmd *cobra.Command, args []string) error {
 	}
 
 	tuiCfg := tui.SessionConfig{
-		ChatID:        chatID,
-		Model:         model,
-		IsCode:        true,
-		WorkDir:       workDir,
-		AutoApply:     codeAutoApply,
-		InitialPrompt: initialPrompt,
-		RepoName:      gitRepoName(),
+		ChatID:         chatID,
+		Model:          model,
+		IsCode:         true,
+		WorkDir:        workDir,
+		AutoApply:      codeAutoApply,
+		InitialPrompt:  initialPrompt,
+		RepoName:       gitRepoName(),
+		CustomCommands: loadCustomSlashCommands("."),
 		SetAutoApplyFn: func(enabled bool) {
 			autoApplyState = enabled
 		},
@@ -459,20 +469,22 @@ func agenticLoopTUI(
 		}
 		history = append(history, assistantMsg)
 
-		// Execute tools with TUI approval, hooks, and audit
-		for _, tc := range toolCalls {
-			result, execErr := executeWithApprovalTUI(tc, autoApply, auditLog, hookRunner, mcpMgr, p, ch)
+		// Execute tools — run concurrently when all can be auto-approved,
+		// fall back to sequential when any requires a TUI approval prompt.
+		toolResults := executeTools(toolCalls, autoApply, auditLog, hookRunner, mcpMgr, p, ch)
+		for i, tc := range toolCalls {
+			r := toolResults[i]
 			history = append(history, codeMessage{
 				Role:       "tool",
-				Content:    result,
+				Content:    r.result,
 				ToolCallID: tc.ID,
 			})
-			if execErr != nil {
+			if r.err != nil {
 				ch <- tui.StreamEvent{
 					Kind:     "tool_exec",
 					ToolName: tc.Name,
 					Status:   "error",
-					Summary:  execErr.Error(),
+					Summary:  r.err.Error(),
 				}
 			}
 		}
@@ -590,6 +602,74 @@ func pumpCodeStream(
 			ch <- tui.StreamEvent{Kind: "heartbeat"}
 		}
 	}
+}
+
+// toolResult holds the outcome of one tool call.
+type toolResult struct {
+	result string
+	err    error
+}
+
+// executeTools runs toolCalls sequentially or concurrently depending on whether
+// any call requires interactive TUI approval. When all tools can be auto-approved
+// (read-only ops, safe bash prefixes, --auto-apply) they execute in parallel,
+// preserving result order. Sequential fallback is used when any tool needs a
+// user prompt, to avoid multiple concurrent approval dialogs.
+func executeTools(
+	toolCalls []ui.ToolCallEvent,
+	autoApply bool,
+	auditLog *audit.Logger,
+	hookRunner *hooks.Runner,
+	mcpMgr *mcp.Manager,
+	p *ui.Printer,
+	ch chan<- tui.StreamEvent,
+) []toolResult {
+	// Fast path: single tool — no parallelism overhead.
+	if len(toolCalls) <= 1 {
+		results := make([]toolResult, len(toolCalls))
+		for i, tc := range toolCalls {
+			r, e := executeWithApprovalTUI(tc, autoApply, auditLog, hookRunner, mcpMgr, p, ch)
+			results[i] = toolResult{result: r, err: e}
+		}
+		return results
+	}
+
+	// Check whether all tools can run without interactive approval.
+	allAutoApproved := autoApply
+	if !allAutoApproved {
+		allAutoApproved = true
+		for _, tc := range toolCalls {
+			needsApproval := tools.NeedsApproval(tc.Name) || mcp.IsMCPTool(tc.Name)
+			if needsApproval && !(tc.Name == "bash" && tools.IsSafeBashCommand(tc.Arguments)) {
+				allAutoApproved = false
+				break
+			}
+		}
+	}
+
+	if !allAutoApproved {
+		// Sequential: approval dialogs must not overlap.
+		results := make([]toolResult, len(toolCalls))
+		for i, tc := range toolCalls {
+			r, e := executeWithApprovalTUI(tc, autoApply, auditLog, hookRunner, mcpMgr, p, ch)
+			results[i] = toolResult{result: r, err: e}
+		}
+		return results
+	}
+
+	// Parallel: all tools are auto-approved — run concurrently, collect in order.
+	results := make([]toolResult, len(toolCalls))
+	var wg sync.WaitGroup
+	for i, tc := range toolCalls {
+		wg.Add(1)
+		go func(idx int, t ui.ToolCallEvent) {
+			defer wg.Done()
+			r, e := executeWithApprovalTUI(t, true, auditLog, hookRunner, mcpMgr, p, ch)
+			results[idx] = toolResult{result: r, err: e}
+		}(i, tc)
+	}
+	wg.Wait()
+	return results
 }
 
 // executeWithApprovalTUI runs a tool, running hooks, audit logging, and the

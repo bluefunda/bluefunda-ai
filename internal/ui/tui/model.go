@@ -97,6 +97,7 @@ type SessionConfig struct {
 	MCPActivateFn  func(name string) error       // nil = MCP activation not available
 	SetAutoApplyFn func(enabled bool)            // nil = auto-apply not available (non-code sessions)
 	SetCodeModeFn  func(enabled bool)            // nil = mode switch not supported in this session
+	CustomCommands []SlashCommand                // loaded from .bai/commands/*.md
 }
 
 // SessionInfo is one entry returned by ListSessionsFn for /sessions display.
@@ -791,6 +792,21 @@ func (m Model) handleSlashCommand(input string) (tea.Model, tea.Cmd) {
 		m.refreshViewport()
 
 	default:
+		// Check custom commands loaded from .bai/commands/*.md.
+		cmdName := strings.Fields(input)[0] // e.g. "/review"
+		for _, c := range m.cfg.CustomCommands {
+			if c.Name == cmdName && c.Prompt != "" {
+				m.messages = append(m.messages, newUserMessage(c.Prompt))
+				m.streaming = true
+				m.textarea.Blur()
+				m.refreshViewport()
+				m.viewport.GotoBottom()
+				isNew := m.isNewChat
+				m.isNewChat = false
+				m.streamCh = m.submitFn(m.cfg.ChatID, m.cfg.Model, c.Prompt, isNew)
+				return m, waitForStreamEvent(m.streamCh)
+			}
+		}
 		m.messages = append(m.messages, newSystemMessage("Unknown command: "+input))
 		m.refreshViewport()
 	}
@@ -813,7 +829,7 @@ func (m *Model) acceptSlashCommand() (tea.Model, tea.Cmd) {
 func (m *Model) updateSlashMenu() {
 	val := m.textarea.Value()
 	if strings.HasPrefix(val, "/") && !strings.Contains(val, "\n") {
-		m.slashMatches = matchSlashCommands(val)
+		m.slashMatches = matchSlashCommands(val, m.cfg.CustomCommands)
 		m.showSlash = len(m.slashMatches) > 0
 		if m.slashIdx >= len(m.slashMatches) {
 			m.slashIdx = 0

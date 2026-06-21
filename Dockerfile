@@ -1,6 +1,7 @@
-FROM golang:1.25-alpine AS builder
+FROM golang:1.26-alpine AS builder
 
 ARG GH_PAT
+RUN apk add --no-cache git
 RUN if [ -n "$GH_PAT" ]; then \
       git config --global url."https://${GH_PAT}@github.com/".insteadOf "https://github.com/"; \
     fi

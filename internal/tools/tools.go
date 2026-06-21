@@ -145,6 +145,21 @@ func LocalToolSchemas() (string, error) {
 	return string(b), nil
 }
 
+// MergeSchemas appends extra ToolSchemas to the JSON-encoded base schema string
+// and returns the combined JSON.
+func MergeSchemas(base string, extra []ToolSchema) (string, error) {
+	var schemas []ToolSchema
+	if err := json.Unmarshal([]byte(base), &schemas); err != nil {
+		return "", fmt.Errorf("parse base schemas: %w", err)
+	}
+	schemas = append(schemas, extra...)
+	b, err := json.Marshal(schemas)
+	if err != nil {
+		return "", err
+	}
+	return string(b), nil
+}
+
 // NeedsApproval returns true for tools that modify state and require user confirmation.
 func NeedsApproval(toolName string) bool {
 	switch toolName {

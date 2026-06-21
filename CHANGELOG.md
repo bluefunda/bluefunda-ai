@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.14.0](https://github.com/bluefunda/bluefunda-ai/compare/v1.13.1...v1.14.0) (2026-06-21)
+
+
+### Features
+
+* **tui:** track cumulative token usage from stream_end events ([#99](https://github.com/bluefunda/bluefunda-ai/issues/99)) ([6e5c442](https://github.com/bluefunda/bluefunda-ai/commit/6e5c4420f5c5cbce0d428f55ce3ff8ddd1a30dea))
+
 ## [1.13.1](https://github.com/bluefunda/bluefunda-ai/compare/v1.13.0...v1.13.1) (2026-06-21)
 
 

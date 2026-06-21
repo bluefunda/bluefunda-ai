@@ -105,12 +105,20 @@ func applyEnvOverrides(cfg *Config) {
 	}
 }
 
+// MCPServerConfig configures one local MCP server started via stdio transport.
+type MCPServerConfig struct {
+	Command string            `yaml:"command"`
+	Args    []string          `yaml:"args"`
+	Env     map[string]string `yaml:"env"`
+}
+
 // ProjectConfig is the subset of Config that can be overridden per-project
 // via .bai/settings.yaml at the git root.
 type ProjectConfig struct {
-	Model       string `yaml:"model"`
-	MaxTurns    int    `yaml:"max_turns"`
-	Endpoint    string `yaml:"endpoint"`
+	Model       string                     `yaml:"model"`
+	MaxTurns    int                        `yaml:"max_turns"`
+	Endpoint    string                     `yaml:"endpoint"`
+	MCPServers  map[string]MCPServerConfig `yaml:"mcp_servers"`
 	Permissions struct {
 		Allow []string `yaml:"allow"`
 		Deny  []string `yaml:"deny"`

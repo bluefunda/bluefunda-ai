@@ -19,6 +19,7 @@ import (
 	"github.com/bluefunda/bluefunda-ai/internal/config"
 	caigrpc "github.com/bluefunda/bluefunda-ai/internal/grpc"
 	"github.com/bluefunda/bluefunda-ai/internal/hooks"
+	"github.com/bluefunda/bluefunda-ai/internal/mcp"
 	"github.com/bluefunda/bluefunda-ai/internal/session"
 	"github.com/bluefunda/bluefunda-ai/internal/tools"
 	"github.com/bluefunda/bluefunda-ai/internal/ui"
@@ -121,6 +122,19 @@ func runCode(cmd *cobra.Command, args []string) error {
 	workDir, _ := os.Getwd()
 	p := printer(cfg)
 
+	// --- Local MCP servers (#85) ---
+	// Start servers defined in .bai/settings.yaml mcp_servers and merge their
+	// tools into the schema sent to the LLM on every agentic turn.
+	projCfg := config.FindProjectConfig(".")
+	mcpMgr := mcp.NewManager(context.Background(), projCfg)
+	defer mcpMgr.Close()
+	if extra := mcpMgr.ToolSchemas(); len(extra) > 0 {
+		merged, mergeErr := tools.MergeSchemas(toolSchemas, extra)
+		if mergeErr == nil {
+			toolSchemas = merged
+		}
+	}
+
 	// --- Session persistence (#82) ---
 	sessionID := codeResume
 	if sessionID == "" {
@@ -167,7 +181,7 @@ func runCode(cmd *cobra.Command, args []string) error {
 			return fmt.Errorf("prompt required in --print mode (pass as argument or pipe via stdin)")
 		}
 		return runCodePrint(conn, cfg, model, toolSchemas, initialPrompt, history,
-			codeMaxTurns, codeAutoApply, codeOutputFormat, sessPath, auditLog, hookRunner, p)
+			codeMaxTurns, codeAutoApply, codeOutputFormat, sessPath, auditLog, hookRunner, mcpMgr, p)
 	}
 
 	// --- Interactive TUI mode ---
@@ -204,7 +218,7 @@ func runCode(cmd *cobra.Command, args []string) error {
 			newHistory, loopErr := agenticLoopTUI(
 				conn, cfg, cid, mdl, currentSchemas,
 				history, isFirstTurn && isNew, currentAutoApply,
-				maxTurnsState, auditLog, hookRunner, p, ch,
+				maxTurnsState, auditLog, hookRunner, mcpMgr, p, ch,
 			)
 			history = newHistory
 			turns++
@@ -259,6 +273,7 @@ func runCodePrint(
 	sessPath string,
 	auditLog *audit.Logger,
 	hookRunner *hooks.Runner,
+	mcpMgr *mcp.Manager,
 	p *ui.Printer,
 ) error {
 	history = append(history, codeMessage{Role: "user", Content: prompt})
@@ -273,7 +288,7 @@ func runCodePrint(
 		newHistory, loopErr := agenticLoopTUI(
 			conn, cfg, chatID, model, toolSchemas,
 			history, true, autoApply,
-			maxTurns, auditLog, hookRunner, p, ch,
+			maxTurns, auditLog, hookRunner, mcpMgr, p, ch,
 		)
 		session.Save(sessPath, toSessionMsgs(newHistory)) //nolint:errcheck
 		if loopErr != nil {
@@ -378,6 +393,7 @@ func agenticLoopTUI(
 	maxTurns int,
 	auditLog *audit.Logger,
 	hookRunner *hooks.Runner,
+	mcpMgr *mcp.Manager,
 	p *ui.Printer,
 	ch chan<- tui.StreamEvent,
 ) ([]codeMessage, error) {
@@ -445,7 +461,7 @@ func agenticLoopTUI(
 
 		// Execute tools with TUI approval, hooks, and audit
 		for _, tc := range toolCalls {
-			result, execErr := executeWithApprovalTUI(tc, autoApply, auditLog, hookRunner, p, ch)
+			result, execErr := executeWithApprovalTUI(tc, autoApply, auditLog, hookRunner, mcpMgr, p, ch)
 			history = append(history, codeMessage{
 				Role:       "tool",
 				Content:    result,
@@ -577,12 +593,14 @@ func pumpCodeStream(
 }
 
 // executeWithApprovalTUI runs a tool, running hooks, audit logging, and the
-// TUI approval flow as needed.
+// TUI approval flow as needed. MCP tools (mcp__<server>__<tool>) are routed
+// through mcpMgr; all other tools go through the local tools.Execute.
 func executeWithApprovalTUI(
 	tc ui.ToolCallEvent,
 	autoApply bool,
 	auditLog *audit.Logger,
 	hookRunner *hooks.Runner,
+	mcpMgr *mcp.Manager,
 	p *ui.Printer,
 	ch chan<- tui.StreamEvent,
 ) (string, error) {
@@ -606,7 +624,8 @@ func executeWithApprovalTUI(
 	}
 
 	// --- Approval gate ---
-	needsApproval := tools.NeedsApproval(tc.Name)
+	// MCP tools always require approval (they can do anything).
+	needsApproval := tools.NeedsApproval(tc.Name) || mcp.IsMCPTool(tc.Name)
 	autoApproved := false
 	// Safe bash commands are auto-approved to reduce friction.
 	if needsApproval && tc.Name == "bash" && tools.IsSafeBashCommand(argsJSON) {
@@ -634,7 +653,13 @@ func executeWithApprovalTUI(
 
 	// --- Execute ---
 	start := time.Now()
-	result, execErr := tools.Execute(tc.Name, argsJSON)
+	var result string
+	var execErr error
+	if mcp.IsMCPTool(tc.Name) {
+		result, execErr = mcpMgr.Execute(context.Background(), tc.Name, argsJSON)
+	} else {
+		result, execErr = tools.Execute(tc.Name, argsJSON)
+	}
 	elapsed := time.Since(start)
 	auditLog.LogToolResult(tc.Name, elapsed.Milliseconds(), execErr == nil)
 

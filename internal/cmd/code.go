@@ -94,9 +94,15 @@ type codeFuncCall struct {
 	Arguments string `json:"arguments"`
 }
 
+// cliPayloadVersion is incremented on any breaking change to cliCodePayload.
+// cai-llm-router validates this and returns a clear error on mismatch so
+// users know to upgrade their bai client.
+const cliPayloadVersion = 1
+
 // cliCodePayload is encoded in Prompt to work around proto fields 8+ being stripped
 // by the load balancer between cli.bluefunda.com:443 and the BFF gRPC endpoint.
 type cliCodePayload struct {
+	V       int           `json:"v"` // payload format version — must match cliPayloadVersion in cai-llm-router
 	History []codeMessage `json:"history"`
 	Tools   string        `json:"tools"`
 }
@@ -794,7 +800,7 @@ func executeWithApprovalTUI(
 // model is prefixed with "cli/" so cai-llm-router can decode them. This works around
 // the load balancer stripping proto fields 8+ (local_tools, code_messages) in transit.
 func buildCodeRequest(chatID, model, toolSchemas string, history []codeMessage, isNewChat bool) *pb.ChatRequest {
-	payload := cliCodePayload{History: history, Tools: toolSchemas}
+	payload := cliCodePayload{V: cliPayloadVersion, History: history, Tools: toolSchemas}
 	payloadJSON, _ := json.Marshal(payload)
 	return &pb.ChatRequest{
 		ChatId:    chatID,

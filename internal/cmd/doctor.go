@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"fmt"
+	"os/exec"
 	"time"
 
 	"github.com/fatih/color"
@@ -90,7 +91,16 @@ func runDoctor(cmd *cobra.Command, args []string) error {
 		checks = append(checks, checkResult{"Model default", "ok", cfg.Defaults.Model})
 	}
 
-	// 6. MCP servers (informational)
+	// 6. ripgrep — used by search_content for fast code search
+	if _, err := exec.LookPath("rg"); err != nil {
+		checks = append(checks, checkResult{"ripgrep (rg)", "warn",
+			"not found — search_content falls back to pure-Go (slower); install via package manager"})
+		warnings++
+	} else {
+		checks = append(checks, checkResult{"ripgrep (rg)", "ok", "available"})
+	}
+
+	// 7. MCP servers (informational)
 	checks = append(checks, checkResult{"MCP servers", "info", "run `bai mcp list` to view available integrations"})
 
 	printChecks(out, checks, warnings, errors)

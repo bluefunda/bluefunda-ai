@@ -77,6 +77,7 @@ func init() {
 		mcpCmd,
 		updateCmd,
 		versionCmd,
+		completionCmd,
 		// Hidden commands
 		sessionsCmd,
 		// Hidden backward-compat commands

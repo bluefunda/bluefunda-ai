@@ -783,7 +783,8 @@ func (m Model) handleSlashCommand(input string) (tea.Model, tea.Cmd) {
 
 	case input == "/tools" && m.cfg.IsCode:
 		m.messages = append(m.messages, newSystemMessage(
-			"Available tools: read_file · write_file · list_dir · search_files · bash"))
+			"Available tools: read_file · edit_file · write_file · list_dir · search_files · search_content · bash · web_fetch · web_search\n"+
+				"MCP tools: mcp__<server>__<tool>  (configure in .bai/settings.yaml)"))
 		m.refreshViewport()
 
 	case input == "/context":

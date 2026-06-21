@@ -36,6 +36,7 @@ var (
 	codePrint        bool
 	codeOutputFormat string
 	codeResume       string
+	codeContinue     bool
 )
 
 var codeCmd = &cobra.Command{
@@ -50,12 +51,13 @@ Use --print / -p for non-interactive (headless) mode: reads the prompt from
 the argument or stdin and writes output to stdout.`,
 	Example: `  bai code                                     interactive coding session
   bai code "fix the failing tests"             start with a prompt
+  bai code -c                                  resume most recent session
+  bai code --resume <id>                       resume a specific session
   bai code --auto "add godoc to all exports"   auto-approve all tools
   bai code --max-turns 50 "refactor auth"      increase turn limit
   bai code -p "explain main.go"                headless, output to stdout
   echo "list TODOs" | bai code -p              pipe prompt from stdin
-  bai code -p "…" --output-format stream-json  NDJSON event stream
-  bai code --resume <id>                        resume a previous session`,
+  bai code -p "…" --output-format stream-json  NDJSON event stream`,
 	Args: cobra.ArbitraryArgs,
 	RunE: runCode,
 }
@@ -69,6 +71,7 @@ func init() {
 	codeCmd.Flags().BoolVarP(&codePrint, "print", "p", false, "Non-interactive mode: print output to stdout")
 	codeCmd.Flags().StringVar(&codeOutputFormat, "output-format", "text", "Output format for --print: text, json, stream-json")
 	codeCmd.Flags().StringVar(&codeResume, "resume", "", "Resume a previous session by ID")
+	codeCmd.Flags().BoolVarP(&codeContinue, "continue", "c", false, "Resume the most recent code session")
 }
 
 // codeMessage mirrors the ConversationMsg format expected by cai-llm-router.
@@ -123,6 +126,15 @@ func runCode(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("chdir to %s: %w", codeDir, err)
 	}
 
+	// Apply project-level max_turns override if the flag wasn't set explicitly.
+	if projCfgEarly := config.FindProjectConfig("."); projCfgEarly != nil {
+		if projCfgEarly.MaxTurns > 0 {
+			if !cmd.Flags().Changed("max-turns") {
+				codeMaxTurns = projCfgEarly.MaxTurns
+			}
+		}
+	}
+
 	toolSchemas, err := tools.LocalToolSchemas()
 	if err != nil {
 		return fmt.Errorf("build tool schemas: %w", err)
@@ -145,7 +157,13 @@ func runCode(cmd *cobra.Command, args []string) error {
 	}
 
 	// --- Session persistence (#82) ---
+	// --continue/-c resumes the most recent session for this working directory.
 	sessionID := codeResume
+	if sessionID == "" && codeContinue {
+		if infos, err := session.List(workDir); err == nil && len(infos) > 0 {
+			sessionID = infos[0].ID
+		}
+	}
 	if sessionID == "" {
 		sessionID = uuid.New().String()
 	}
@@ -165,7 +183,7 @@ func runCode(cmd *cobra.Command, args []string) error {
 	if ctx := loadContextFiles("."); ctx != "" {
 		history = append(history, codeMessage{Role: "system", Content: ctx})
 	}
-	if codeResume != "" {
+	if codeResume != "" || codeContinue {
 		if msgs, err := session.Load(sessPath); err == nil {
 			for _, m := range msgs {
 				history = append(history, codeMessage{

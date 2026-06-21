@@ -3,6 +3,7 @@ package cmd
 import (
 	"context"
 	"fmt"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -12,6 +13,7 @@ import (
 
 	pb "github.com/bluefunda/bluefunda-ai/api/proto/bff"
 	caigrpc "github.com/bluefunda/bluefunda-ai/internal/grpc"
+	"github.com/bluefunda/bluefunda-ai/internal/session"
 	"github.com/bluefunda/bluefunda-ai/internal/ui"
 	"github.com/bluefunda/bluefunda-ai/internal/ui/tui"
 )
@@ -46,11 +48,42 @@ var chatCmd = &cobra.Command{
 	Hidden: true,
 }
 
-// sessionsCmd is a convenience alias for `bai chat list`.
+// sessionsCmd lists both server-side chat sessions and local code sessions.
 var sessionsCmd = &cobra.Command{
 	Use:   "sessions",
-	Short: "List past chat sessions",
-	RunE:  runChatList,
+	Short: "List past chat and code sessions",
+	RunE:  runSessionsList,
+}
+
+func runSessionsList(cmd *cobra.Command, args []string) error {
+	cwd, _ := os.Getwd()
+	codeSessions, _ := session.List(cwd)
+
+	if len(codeSessions) > 0 {
+		conn, cfg, err := bffConn()
+		p := printer(cfg)
+		if err == nil {
+			defer conn.Close()
+			// Print code sessions first.
+			_ = p
+		}
+		fmt.Println("Code sessions (bai code):")
+		headers := []string{"ID", "TURNS", "UPDATED", "LAST MESSAGE"}
+		rows := make([][]string, 0, len(codeSessions))
+		for _, s := range codeSessions {
+			rows = append(rows, []string{
+				s.ID[:8],
+				fmt.Sprintf("%d", s.Turns),
+				s.UpdatedAt.Format("2006-01-02 15:04"),
+				truncate(s.LastMsg, 50),
+			})
+		}
+		printer(cfg).Table(headers, rows)
+		fmt.Println()
+	}
+
+	fmt.Println("Chat sessions (bai / bai chat):")
+	return runChatList(cmd, args)
 }
 
 // --- chat list ---

@@ -118,7 +118,7 @@ func contextTemplate(repo, lang string) string {
 	sb.WriteString("\n\n")
 
 	if lang != "" {
-		sb.WriteString(fmt.Sprintf("**Language:** %s\n\n", lang))
+		fmt.Fprintf(&sb, "**Language:** %s\n\n", lang)
 	}
 
 	sb.WriteString(`## Project overview

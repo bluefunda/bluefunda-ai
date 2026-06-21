@@ -200,7 +200,7 @@ func (c *Client) Call(ctx context.Context, toolName, argsJSON string) (string, e
 
 // Stop terminates the MCP server subprocess.
 func (c *Client) Stop() {
-	c.stdin.Close()
+	_ = c.stdin.Close()
 	if c.cmd.Process != nil {
 		c.cmd.Process.Kill() //nolint:errcheck
 	}

@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.12.1](https://github.com/bluefunda/bluefunda-ai/compare/v1.12.0...v1.12.1) (2026-06-21)
+
+
+### Bug Fixes
+
+* **docker:** install git in builder stage; bump base image to golang:1.26 ([#91](https://github.com/bluefunda/bluefunda-ai/issues/91)) ([66ae177](https://github.com/bluefunda/bluefunda-ai/commit/66ae177a45a4307615e1eff96565837072f3622f))
+
 ## [1.12.0](https://github.com/bluefunda/bluefunda-ai/compare/v1.11.0...v1.12.0) (2026-06-21)
 
 

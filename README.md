@@ -1,36 +1,18 @@
 # BlueFunda AI
 
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
-[![Go Reference](https://pkg.go.dev/badge/github.com/bluefunda/bluefunda-ai.svg)](https://pkg.go.dev/github.com/bluefunda/bluefunda-ai)
 [![Release](https://img.shields.io/github/v/release/bluefunda/bluefunda-ai)](https://github.com/bluefunda/bluefunda-ai/releases)
 [![CI](https://github.com/bluefunda/bluefunda-ai/actions/workflows/ci.yml/badge.svg)](https://github.com/bluefunda/bluefunda-ai/actions/workflows/ci.yml)
 
-**`bai`** — A terminal-native AI assistant for SAP operations. Runs interactive TUI sessions, drives agentic coding loops, and integrates with the BlueFunda AI platform via gRPC.
-
-## Features
-
-- **Interactive TUI** — Full-screen chat interface powered by [Bubble Tea](https://github.com/charmbracelet/bubbletea)
-- **Agentic coding** — `bai ask` launches an autonomous loop that reads/writes files and runs tools
-- **Streaming output** — Token-by-token rendering with syntax-highlighted code blocks
-- **Model selection** — Switch between available LLM models on the fly
-- **MCP integration** — Model Context Protocol tool support for external integrations
-- **Multi-format output** — Table, JSON, and quiet modes for scripting
-- **Shell completions** — bash, zsh, fish, PowerShell
-- **macOS + Linux** — Native binaries for amd64 and arm64
+**`bai`** — A terminal-native AI assistant for the BlueFunda platform. Interactive TUI chat, agentic coding loops with local tool execution, and self-update via Homebrew or direct download.
 
 ## Installation
 
-### Homebrew (macOS)
+### Homebrew (macOS / Linux)
 
 ```bash
 brew tap bluefunda/tap
-brew install --cask bai
-```
-
-### One-line installer (macOS and Linux)
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/bluefunda/bluefunda-ai/main/install.sh | sh
+brew install bai
 ```
 
 ### Debian / Ubuntu
@@ -43,190 +25,183 @@ sudo dpkg -i bai.deb
 ### RHEL / Fedora / Rocky
 
 ```bash
-sudo dnf install https://github.com/bluefunda/bluefunda-ai/releases/latest/download/bai_linux_amd64.rpm
-```
-
-### From source
-
-```bash
-go install github.com/bluefunda/bluefunda-ai/cmd/bai@latest
+sudo rpm -U https://github.com/bluefunda/bluefunda-ai/releases/latest/download/bai_linux_amd64.rpm
 ```
 
 ### Manual download
 
-Download the latest binary for your platform from the [Releases](https://github.com/bluefunda/bluefunda-ai/releases) page.
+Download the latest binary from the [Releases](https://github.com/bluefunda/bluefunda-ai/releases) page.
 
 ## Quick Start
 
 ```bash
-# Authenticate with BlueFunda AI
-bai login
-
-# Open the interactive TUI
-bai
-
-# Ask a question directly
-bai ask "How do I create a transport request in SAP?"
-
-# Start a named chat session
-bai chat start "SAP BASIS help"
-
-# List available AI models
-bai model list
-
-# Check connection health
-bai health
+bai login          # authenticate with your BlueFunda account
+bai                # open the interactive TUI
+bai "explain X"    # start with a message
+bai code           # agentic coding mode (reads/writes local files)
+bai update         # self-update to the latest release
 ```
 
-## TUI Usage
+## Usage
 
-Launch the TUI by running `bai` with no arguments:
+### Interactive chat — `bai`
 
+```bash
+bai                          # auto model (router decides)
+bai --fast                   # Groq fast-responder (~300ms)
+bai --think                  # extended thinking
+bai -m anthropic             # explicit model
+bai "fix the failing tests"  # auto-submit prompt on open
+bai --new                    # force a new session (don't resume)
 ```
-bai
-```
 
-**Key bindings:**
+**TUI key bindings:**
 
 | Key | Action |
 |-----|--------|
 | `Enter` | Send message |
 | `Ctrl+C` | Quit |
-| `/help` | Show slash commands |
-| `/clear` | Clear current session |
-| `/model` | Switch model |
+| `/` | Slash command palette |
+| `/model <name>` | Switch model mid-session |
+| `/clear` | Clear session |
+| `/help` | Show all slash commands |
 
-**Slash commands** are available inside the TUI by typing `/` followed by the command name.
+### Agentic coding — `bai code`
 
-## CLI Reference
-
-```
-bai [command] [flags]
-
-Commands:
-  login       Authenticate via OAuth device flow
-  ask         Start an agentic session (non-interactive)
-  chat        Manage chat sessions (list, start, history, context, title, stop)
-  model       List available AI models
-  mcp         Manage MCP tool integrations
-  user        Show current user account info
-  billing     View billing and usage
-  ratelimit   Show current rate limit status
-  health      Check gRPC connection health
-  version     Print version information
-  completion  Generate shell completions
-
-Global Flags:
-  --bff string      BFF gRPC address (overrides config)
-  --domain string   Domain override
-  -o, --output      Output format: table, json, quiet
-```
-
-### Agentic Mode
+Runs an autonomous tool-calling loop with access to local files and shell:
 
 ```bash
-# Run a coding task autonomously
-bai ask "Refactor all ABAP function modules in ./src to use structured exceptions"
-
-# Ask with a specific model
-bai ask --model gpt-4o "Explain this ABAP program"
+bai code                              # interactive TUI + local tools
+bai code "add unit tests for auth"    # auto-submit prompt
+bai code --model fast                 # use Groq for faster iterations
+bai code --auto                       # auto-approve all tool calls
+bai code --max-turns 30               # increase iteration budget
+bai code --continue                   # resume most recent session
+bai code --resume <session-id>        # resume a specific session
+bai code --dir ~/myproject            # run in a specific directory
 ```
 
-### Chat Management
+**Available local tools:** `read_file`, `write_file`, `edit_file`, `list_dir`, `search_files`, `grep`, `bash`
+
+**Context auto-compaction:** when the conversation exceeds ~100k prompt tokens, `bai code` automatically summarises history and continues — no silent crashes on long sessions.
+
+### Model aliases
+
+| Alias | Behaviour |
+|-------|-----------|
+| `auto` | Let cai-llm-router's routing rules decide (default) |
+| `fast` | Groq llama-3.3-70b — low latency (~300ms) |
+| `think` | Extended thinking mode |
+| `openai`, `anthropic`, `groq`, … | Pass-through to a specific provider |
+
+Set the default in `~/.bai/config.yaml`:
+```yaml
+defaults:
+  model: auto   # or fast, think, openai, anthropic, ...
+```
+
+Or via environment variable:
+```bash
+BAI_MODEL=fast bai
+```
+
+### Other commands
 
 ```bash
-bai chat list                          # List all chat sessions
-bai chat start "My chat"               # Start a new session
-bai chat history --id <id>             # View message history
-bai chat context --id <id>             # Show context window
-bai chat title --id <id> "New title"   # Rename a session
-bai chat stop --id <id>                # Stop a session
+bai update          # self-update (runs brew update first if installed via Homebrew)
+bai sessions        # list past chat and code sessions
+bai model list      # list available LLM models
+bai mcp list        # list MCP servers
+bai login           # sign in (OAuth2 device flow)
+bai logout          # sign out
+bai version         # print version
+bai doctor          # check connectivity and configuration
+bai completion      # generate shell completions (bash/zsh/fish/PowerShell)
 ```
 
 ## Configuration
 
-`bai` reads its configuration from `~/.bai/config.yaml`:
+`~/.bai/config.yaml`:
 
 ```yaml
-endpoint: grpc.bluefunda.com:443    # BFF gRPC address
-domain: your-tenant.bluefunda.com   # Tenant domain
+endpoint: grpc.bluefunda.com:443   # BFF gRPC address
+realm: bluefunda                   # Keycloak realm
 defaults:
-  output: table                      # Default output format
+  model: auto                      # default model alias
+  output: table                    # table | json | quiet
 ```
 
-### Environment Variables
+### Environment variables
 
 | Variable | Description |
 |----------|-------------|
-| `BAI_INSTALL_DIR` | Custom install directory for `install.sh` |
-| `BLUEFUNDA_TOKEN` | Bearer token (alternative to `bai login`) |
+| `BAI_MODEL` | Override default model (`auto`, `fast`, `think`, `openai`, …) |
+| `BAI_BASE_URL` | Override gateway base URL |
+
+### Project-level config — `.bai/settings.yaml`
+
+Place in your project root to override defaults per project:
+
+```yaml
+max_turns: 30
+mcp_servers:
+  - name: my-server
+    command: npx
+    args: ["-y", "@my/mcp-server"]
+```
+
+### Context injection — `.bai/context.md`
+
+Place a `context.md` in your project root and `bai code` will automatically inject it as the system prompt, giving the agent project-specific knowledge.
 
 ## Development
 
 ### Prerequisites
 
 - Go 1.25+
-- `protoc` + `protoc-gen-go` + `protoc-gen-go-grpc` (for proto regeneration)
-- [goreleaser](https://goreleaser.com/) (for releases)
+- `protoc` + `protoc-gen-go` + `protoc-gen-go-grpc` (for proto regeneration only)
 
 ### Build
 
 ```bash
-make build      # Build bai binary
-make test       # Run tests with race detector
-make vet        # Run go vet
-make fmt        # Format code
-make snapshot   # Build release snapshot with goreleaser
+make build       # build bai binary
+make test        # go test -race ./...
+make vet         # go vet ./...
+make fmt         # gofmt -w .
+make proto       # regenerate protobuf code
+make snapshot    # goreleaser snapshot build
 ```
 
-### Project Layout
+### Project layout
 
 ```
-bluefunda-ai/
-├── cmd/bai/          # Entry point
-├── internal/
-│   ├── auth/         # OAuth2 device flow (RFC 8628)
-│   ├── cmd/          # Cobra command definitions
-│   ├── config/       # Config loader (~/.bai/config.yaml)
-│   ├── grpc/         # gRPC connection + interceptors
-│   ├── tools/        # Agentic tool implementations
-│   └── ui/           # Output formatting + BubbleTea TUI
-├── api/proto/        # Protobuf definitions + generated code
-└── scripts/          # Build utilities
-```
-
-### Regenerate Protobuf
-
-```bash
-make proto
-```
-
-### Running Tests
-
-```bash
-make test           # All tests with race detector
-make test-cover     # Tests + coverage report
+cmd/bai/              # Entry point (delegates to internal/cmd)
+api/proto/            # Protobuf source + generated Go code
+internal/
+  cmd/                # Cobra commands: root, chat, code, login, …
+  config/             # Config loader (~/.bai/config.yaml)
+  grpc/               # gRPC connection + auth interceptors
+  ui/                 # Output formatting + BubbleTea TUI
+  tools/              # Local tool implementations (read, write, bash, …)
+  audit/              # Structured session audit logging
+  hooks/              # Pre/post-tool hook pipeline
+  session/            # Session persistence (~/.bai/sessions/)
+  mcp/                # Local MCP client (stdio transport)
 ```
 
 ## Releases
 
-Releases are automated via [Release Please](https://github.com/googleapis/release-please) and [GoReleaser](https://goreleaser.com/).
-
-- Merge a `feat:` or `fix:` commit to `main` to trigger a release PR
-- Merging the release PR publishes binaries to GitHub Releases, Homebrew tap, and package repositories
-
-See [CHANGELOG.md](CHANGELOG.md) for the full release history.
+Fully automated via [Release Please](https://github.com/googleapis/release-please) and [GoReleaser](https://goreleaser.com/). See [CHANGELOG.md](CHANGELOG.md).
 
 ## Contributing
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) for development workflow, code style, and how to submit pull requests.
+See [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## Security
 
-To report a security vulnerability, see [SECURITY.md](SECURITY.md).
+See [SECURITY.md](SECURITY.md).
 
 ## License
 
-Apache 2.0 — see [LICENSE](LICENSE).
-
-Copyright 2024 BlueFunda, Inc.
+Apache 2.0 — see [LICENSE](LICENSE).  
+Copyright 2024–2026 BlueFunda, Inc.

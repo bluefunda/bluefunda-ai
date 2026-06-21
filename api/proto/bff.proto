@@ -78,6 +78,10 @@ message ChatEvent {
   string content = 2;     // Text content for "content" events
   string data = 3;        // JSON data for tool calls etc.
   string error = 4;       // Error message for "error" events
+  // Token usage — populated on stream_end / done events; zero for all other event types.
+  int32 usage_prompt_tokens = 5;
+  int32 usage_completion_tokens = 6;
+  int32 usage_total_tokens = 7;
 }
 
 message StopChatRequest {

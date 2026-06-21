@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.15.0](https://github.com/bluefunda/bluefunda-ai/compare/v1.14.0...v1.15.0) (2026-06-21)
+
+
+### Features
+
+* **cmd:** context auto-compaction in bai code agentic loop ([#101](https://github.com/bluefunda/bluefunda-ai/issues/101)) ([b892d51](https://github.com/bluefunda/bluefunda-ai/commit/b892d51de7e59715056fa7850bcbeafcd7867cac))
+
 ## [1.14.0](https://github.com/bluefunda/bluefunda-ai/compare/v1.13.1...v1.14.0) (2026-06-21)
 
 

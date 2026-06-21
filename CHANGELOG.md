@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.13.1](https://github.com/bluefunda/bluefunda-ai/compare/v1.13.0...v1.13.1) (2026-06-21)
+
+
+### Bug Fixes
+
+* **cmd:** add version guard to cliCodePayload ([#84](https://github.com/bluefunda/bluefunda-ai/issues/84)) ([#97](https://github.com/bluefunda/bluefunda-ai/issues/97)) ([4f60a6f](https://github.com/bluefunda/bluefunda-ai/commit/4f60a6fd19af2195a97adeb43d001443fc222ea3))
+
 ## [1.13.0](https://github.com/bluefunda/bluefunda-ai/compare/v1.12.1...v1.13.0) (2026-06-21)
 
 

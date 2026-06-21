@@ -79,7 +79,11 @@ func pump(stream grpc.ServerStreamingClient[pb.ChatEvent], ch chan<- StreamEvent
 			if tail := tf.Flush(); tail != "" {
 				ch <- StreamEvent{Kind: "chunk", Chunk: tail}
 			}
-			ch <- StreamEvent{Kind: "done"}
+			ch <- StreamEvent{
+				Kind:                  "done",
+				UsagePromptTokens:     ev.GetUsagePromptTokens(),
+				UsageCompletionTokens: ev.GetUsageCompletionTokens(),
+			}
 			return
 
 		case "tool_call":

@@ -155,6 +155,9 @@ type StreamEvent struct {
 	// done / error
 	Err    error
 	ErrMsg string
+	// token usage — set on "done" events when the backend provides usage data
+	UsagePromptTokens     int32
+	UsageCompletionTokens int32
 }
 
 // SubmitFn opens a gRPC stream for the given input and pumps events into the
@@ -208,6 +211,10 @@ type Model struct {
 	showSlash    bool
 	slashMatches []SlashCommand
 	slashIdx     int
+
+	// Token usage (cumulative across turns, updated on each "done" event)
+	totalPromptTokens     int32
+	totalCompletionTokens int32
 
 	// Misc
 	quit              bool
@@ -1061,6 +1068,11 @@ func (m *Model) handleStreamEvent(ev StreamEvent) []tea.Cmd {
 			if m.messages[last].Role == RoleAssistant {
 				m.messages[last].finishStreaming()
 			}
+		}
+		// Accumulate token usage when backend provides it.
+		if ev.UsagePromptTokens > 0 || ev.UsageCompletionTokens > 0 {
+			m.totalPromptTokens += ev.UsagePromptTokens
+			m.totalCompletionTokens += ev.UsageCompletionTokens
 		}
 		m.refreshViewport()
 		m.scrollToLastMsgStart()

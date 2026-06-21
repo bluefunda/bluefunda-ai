@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.17.0](https://github.com/bluefunda/bluefunda-ai/compare/v1.16.0...v1.17.0) (2026-06-21)
+
+
+### Features
+
+* **cmd:** merge bai and bai code into a single bai command ([#108](https://github.com/bluefunda/bluefunda-ai/issues/108)) ([#109](https://github.com/bluefunda/bluefunda-ai/issues/109)) ([f3f3c9e](https://github.com/bluefunda/bluefunda-ai/commit/f3f3c9e8b4ba3a1f048f1ef45e87f264c7b23fe6))
+
 ## [1.16.0](https://github.com/bluefunda/bluefunda-ai/compare/v1.15.0...v1.16.0) (2026-06-21)
 
 

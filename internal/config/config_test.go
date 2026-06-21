@@ -48,8 +48,8 @@ func TestDefaultConfig(t *testing.T) {
 	if cfg.Domain != DefaultDomain {
 		t.Errorf("expected domain %s, got %s", DefaultDomain, cfg.Domain)
 	}
-	if cfg.Defaults.Model != "openai" {
-		t.Errorf("expected model openai, got %s", cfg.Defaults.Model)
+	if cfg.Defaults.Model != "auto" {
+		t.Errorf("expected model auto, got %s", cfg.Defaults.Model)
 	}
 	if cfg.Defaults.Output != "text" {
 		t.Errorf("expected output text, got %s", cfg.Defaults.Output)

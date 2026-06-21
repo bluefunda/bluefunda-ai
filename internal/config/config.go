@@ -211,7 +211,7 @@ func Load() (*Config, error) {
 		cfg.Realm = DefaultRealm
 	}
 	if cfg.Defaults.Model == "" {
-		cfg.Defaults.Model = "openai"
+		cfg.Defaults.Model = "auto"
 	}
 
 	// Persist the migrated config so old field names are not re-read next time.
@@ -237,7 +237,7 @@ func defaultConfig() *Config {
 		BFFURL:     DefaultBFFURL,
 		Domain:     DefaultDomain,
 		Realm:      DefaultRealm,
-		Defaults:   Defaults{Model: "openai", Output: "text"},
+		Defaults:   Defaults{Model: "auto", Output: "text"},
 	}
 }
 

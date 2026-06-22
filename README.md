@@ -7,6 +7,16 @@
 
 **`bai`** — A terminal-native AI assistant for SAP operations. Runs interactive TUI sessions, drives agentic coding loops, and integrates with the BlueFunda AI platform via gRPC.
 
+## Get started
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/bluefunda/bluefunda-ai/main/install.sh | sh
+bai login
+bai
+```
+
+That's it. The installer detects your OS and architecture, verifies the checksum, and drops `bai` into `/usr/local/bin` (or `~/.local/bin` if that isn't writable). After `bai login` completes the OAuth device flow, running `bai` opens the interactive TUI.
+
 ## Features
 
 - **Interactive TUI** — Full-screen chat interface powered by [Bubble Tea](https://github.com/charmbracelet/bubbletea)
@@ -20,17 +30,19 @@
 
 ## Installation
 
+### macOS and Linux (one-liner)
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/bluefunda/bluefunda-ai/main/install.sh | sh
+```
+
+Installs to `/usr/local/bin` or `~/.local/bin`. Verifies SHA256 checksum before installing.
+
 ### Homebrew (macOS)
 
 ```bash
 brew tap bluefunda/tap
-brew install --cask bai
-```
-
-### One-line installer (macOS and Linux)
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/bluefunda/bluefunda-ai/main/install.sh | sh
+brew install bai
 ```
 
 ### Debian / Ubuntu
@@ -159,7 +171,10 @@ defaults:
 | Variable | Description |
 |----------|-------------|
 | `BAI_INSTALL_DIR` | Custom install directory for `install.sh` |
-| `BLUEFUNDA_TOKEN` | Bearer token (alternative to `bai login`) |
+| `BAI_ACCESS_TOKEN` | Bearer token — skips `bai login` in CI/CD |
+| `BAI_GATEWAY` | Override the gateway URL |
+| `BAI_BFF` | Override the BFF gRPC address |
+| `BAI_MODEL` | Override the default model |
 
 ## Development
 

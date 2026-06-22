@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.19.0](https://github.com/bluefunda/bluefunda-ai/compare/v1.18.0...v1.19.0) (2026-06-22)
+
+
+### Features
+
+* **test:** add coverage increase plan under docs/ ([#112](https://github.com/bluefunda/bluefunda-ai/issues/112)) ([cec1f5e](https://github.com/bluefunda/bluefunda-ai/commit/cec1f5e561941960eca60368ebfa0bde4e6a35f7))
+
 ## [1.18.0](https://github.com/bluefunda/bluefunda-ai/compare/v1.17.0...v1.18.0) (2026-06-22)
 
 

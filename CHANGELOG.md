@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.29.1](https://github.com/bluefunda/bluefunda-ai/compare/v1.29.0...v1.29.1) (2026-06-22)
+
+
+### Bug Fixes
+
+* **dist:** drop version from deb/rpm filenames for stable download URLs ([#152](https://github.com/bluefunda/bluefunda-ai/issues/152)) ([72769ae](https://github.com/bluefunda/bluefunda-ai/commit/72769ae84c0bc7836b9fcc029c42befcdd5e6e4b))
+
 ## [1.29.0](https://github.com/bluefunda/bluefunda-ai/compare/v1.28.0...v1.29.0) (2026-06-22)
 
 

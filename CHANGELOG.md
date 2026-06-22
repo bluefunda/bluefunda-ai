@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.26.0](https://github.com/bluefunda/bluefunda-ai/compare/v1.25.0...v1.26.0) (2026-06-22)
+
+
+### Features
+
+* **tools:** plugin architecture — load external tools from manifest ([#139](https://github.com/bluefunda/bluefunda-ai/issues/139)) ([8b9cb23](https://github.com/bluefunda/bluefunda-ai/commit/8b9cb235bd0e6dc9ddcbabaf8080a8601702037f))
+
 ## [1.25.0](https://github.com/bluefunda/bluefunda-ai/compare/v1.24.0...v1.25.0) (2026-06-22)
 
 

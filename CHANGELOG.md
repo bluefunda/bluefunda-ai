@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.21.0](https://github.com/bluefunda/bluefunda-ai/compare/v1.20.2...v1.21.0) (2026-06-22)
+
+
+### Features
+
+* **config:** enforce permissions.allow/deny from .bai/settings.yaml ([#129](https://github.com/bluefunda/bluefunda-ai/issues/129)) ([63f1ba2](https://github.com/bluefunda/bluefunda-ai/commit/63f1ba28f83c08e68f993dc40db6223317d6ef31))
+
 ## [1.20.2](https://github.com/bluefunda/bluefunda-ai/compare/v1.20.1...v1.20.2) (2026-06-22)
 
 

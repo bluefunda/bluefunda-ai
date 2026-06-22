@@ -289,7 +289,7 @@ func (m Model) renderFooter() string {
 	th := m.theme
 	hint := "Enter send  ·  Shift+Enter newline  ·  /help commands  ·  Ctrl+C quit"
 	if m.streaming {
-		hint = "Ctrl+C to interrupt"
+		hint = "Ctrl+C to interrupt turn  ·  Ctrl+D to quit"
 	}
 	return "  " + th.Footer.Render(hint)
 }

@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.24.0](https://github.com/bluefunda/bluefunda-ai/compare/v1.23.0...v1.24.0) (2026-06-22)
+
+
+### Features
+
+* **agent:** worktree isolation — agent edits run in a temporary git worktree ([#135](https://github.com/bluefunda/bluefunda-ai/issues/135)) ([50c7a45](https://github.com/bluefunda/bluefunda-ai/commit/50c7a45c1971a5f3a6532a0c6bf6afe7b1394061))
+
 ## [1.23.0](https://github.com/bluefunda/bluefunda-ai/compare/v1.22.0...v1.23.0) (2026-06-22)
 
 

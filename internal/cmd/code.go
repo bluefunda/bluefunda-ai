@@ -147,6 +147,14 @@ func runAgenticSession(args []string) error {
 	// tools into the schema sent to the LLM on every agentic turn.
 	projCfg := config.FindProjectConfig(".")
 	mcpMgr := mcp.NewManager(context.Background(), projCfg)
+
+	// --- Permission policy (#123) ---
+	// Load allow/deny lists from the project config (empty = no restrictions).
+	var permAllow, permDeny []string
+	if projCfg != nil {
+		permAllow = projCfg.Permissions.Allow
+		permDeny = projCfg.Permissions.Deny
+	}
 	defer mcpMgr.Close()
 	if extra := mcpMgr.ToolSchemas(); len(extra) > 0 {
 		merged, mergeErr := tools.MergeSchemas(toolSchemas, extra)
@@ -207,7 +215,7 @@ func runAgenticSession(args []string) error {
 			return fmt.Errorf("prompt required in --print mode (pass as argument or pipe via stdin)")
 		}
 		return runCodePrint(conn, cfg, model, toolSchemas, initialPrompt, history,
-			codeMaxTurns, codeAutoApply, codeOutputFormat, sessPath, auditLog, hookRunner, mcpMgr, p)
+			codeMaxTurns, permAllow, permDeny, codeAutoApply, codeOutputFormat, sessPath, auditLog, hookRunner, mcpMgr, p)
 	}
 
 	// --- Interactive TUI mode ---
@@ -243,7 +251,7 @@ func runAgenticSession(args []string) error {
 			defer close(ch)
 			newHistory, loopErr := agenticLoopTUI(
 				conn, cfg, cid, mdl, currentSchemas,
-				history, isFirstTurn && isNew, currentAutoApply,
+				history, isFirstTurn && isNew, permAllow, permDeny, currentAutoApply,
 				maxTurnsState, auditLog, hookRunner, mcpMgr, p, ch,
 			)
 			history = newHistory
@@ -295,6 +303,7 @@ func runCodePrint(
 	model, toolSchemas, prompt string,
 	history []codeMessage,
 	maxTurns int,
+	allow, deny []string,
 	autoApply bool,
 	outputFormat string,
 	sessPath string,
@@ -314,7 +323,7 @@ func runCodePrint(
 		defer close(ch)
 		newHistory, loopErr := agenticLoopTUI(
 			conn, cfg, chatID, model, toolSchemas,
-			history, true, autoApply,
+			history, true, allow, deny, autoApply,
 			maxTurns, auditLog, hookRunner, mcpMgr, p, ch,
 		)
 		session.Save(sessPath, toSessionMsgs(newHistory)) //nolint:errcheck
@@ -416,6 +425,7 @@ func agenticLoopTUI(
 	chatID, model, toolSchemas string,
 	history []codeMessage,
 	isFirstTurn bool,
+	allow, deny []string,
 	autoApply bool,
 	maxTurns int,
 	auditLog *audit.Logger,
@@ -506,7 +516,7 @@ func agenticLoopTUI(
 
 		// Execute tools — run concurrently when all can be auto-approved,
 		// fall back to sequential when any requires a TUI approval prompt.
-		toolResults := executeTools(toolCalls, autoApply, auditLog, hookRunner, mcpMgr, p, ch)
+		toolResults := executeTools(toolCalls, allow, deny, autoApply, auditLog, hookRunner, mcpMgr, p, ch)
 		for i, tc := range toolCalls {
 			r := toolResults[i]
 			history = append(history, codeMessage{
@@ -738,6 +748,7 @@ type toolResult struct {
 // user prompt, to avoid multiple concurrent approval dialogs.
 func executeTools(
 	toolCalls []ui.ToolCallEvent,
+	allow, deny []string,
 	autoApply bool,
 	auditLog *audit.Logger,
 	hookRunner *hooks.Runner,
@@ -749,17 +760,22 @@ func executeTools(
 	if len(toolCalls) <= 1 {
 		results := make([]toolResult, len(toolCalls))
 		for i, tc := range toolCalls {
-			r, e := executeWithApprovalTUI(tc, autoApply, auditLog, hookRunner, mcpMgr, p, ch)
+			r, e := executeWithApprovalTUI(tc, allow, deny, autoApply, auditLog, hookRunner, mcpMgr, p, ch)
 			results[i] = toolResult{result: r, err: e}
 		}
 		return results
 	}
 
 	// Check whether all tools can run without interactive approval.
+	// Denied tools return immediately (no dialog); allow-matched tools skip the prompt.
 	allAutoApproved := autoApply
 	if !allAutoApproved {
 		allAutoApproved = true
 		for _, tc := range toolCalls {
+			action := tools.CheckPermissions(allow, deny, tc.Name, tc.Arguments)
+			if action == tools.PermitDeny || action == tools.PermitAuto {
+				continue
+			}
 			needsApproval := tools.NeedsApproval(tc.Name) || mcp.IsMCPTool(tc.Name)
 			if needsApproval && (tc.Name != "bash" || !tools.IsSafeBashCommand(tc.Arguments)) {
 				allAutoApproved = false
@@ -772,7 +788,7 @@ func executeTools(
 		// Sequential: approval dialogs must not overlap.
 		results := make([]toolResult, len(toolCalls))
 		for i, tc := range toolCalls {
-			r, e := executeWithApprovalTUI(tc, autoApply, auditLog, hookRunner, mcpMgr, p, ch)
+			r, e := executeWithApprovalTUI(tc, allow, deny, autoApply, auditLog, hookRunner, mcpMgr, p, ch)
 			results[i] = toolResult{result: r, err: e}
 		}
 		return results
@@ -785,7 +801,7 @@ func executeTools(
 		wg.Add(1)
 		go func(idx int, t ui.ToolCallEvent) {
 			defer wg.Done()
-			r, e := executeWithApprovalTUI(t, true, auditLog, hookRunner, mcpMgr, p, ch)
+			r, e := executeWithApprovalTUI(t, allow, deny, true, auditLog, hookRunner, mcpMgr, p, ch)
 			results[idx] = toolResult{result: r, err: e}
 		}(i, tc)
 	}
@@ -798,6 +814,7 @@ func executeTools(
 // through mcpMgr; all other tools go through the local tools.Execute.
 func executeWithApprovalTUI(
 	tc ui.ToolCallEvent,
+	allow, deny []string,
 	autoApply bool,
 	auditLog *audit.Logger,
 	hookRunner *hooks.Runner,
@@ -824,6 +841,20 @@ func executeWithApprovalTUI(
 		}
 	}
 
+	// --- Permission policy (#123) ---
+	// Evaluate project allow/deny lists before the TUI approval gate.
+	// Deny-first: a matching deny rule blocks execution immediately.
+	// Allow match: skip the NeedsApproval prompt for this call.
+	effectiveAutoApply := autoApply
+	switch tools.CheckPermissions(allow, deny, tc.Name, argsJSON) {
+	case tools.PermitDeny:
+		auditLog.LogToolCall(tc.Name, argsJSON, false, false)
+		auditLog.LogToolResult(tc.Name, 0, false)
+		return fmt.Sprintf("Tool call blocked by permissions policy: %s", tc.Name), nil
+	case tools.PermitAuto:
+		effectiveAutoApply = true
+	}
+
 	// --- Approval gate ---
 	// MCP tools always require approval (they can do anything).
 	needsApproval := tools.NeedsApproval(tc.Name) || mcp.IsMCPTool(tc.Name)
@@ -833,8 +864,8 @@ func executeWithApprovalTUI(
 		needsApproval = false
 		autoApproved = true
 	}
-	approved := !needsApproval || autoApply
-	if needsApproval && !autoApply {
+	approved := !needsApproval || effectiveAutoApply
+	if needsApproval && !effectiveAutoApply {
 		replyCh := make(chan bool, 1)
 		ch <- tui.StreamEvent{
 			Kind:     "approval",

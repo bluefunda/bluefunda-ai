@@ -60,16 +60,25 @@ func (m Model) renderHeader() string {
 	if m.cfg.RepoName != "" {
 		left += th.ToolDim.Render("  ·  " + m.cfg.RepoName)
 	}
-	if m.cfg.IsCode {
-		left += th.ToolDim.Render("  ·  code")
-	}
 
 	right := th.ToolDim.Render(m.cfg.ChatID[:8])
+	// Show cumulative prompt token count once we have data.
+	if m.totalPromptTokens > 0 {
+		right = th.ToolDim.Render(formatTokenCount(m.totalPromptTokens) + "  ·  ") + right
+	}
 
 	spacer := strings.Repeat(" ", max(0, m.width-lipgloss.Width(left)-lipgloss.Width(right)-2))
 	line := " " + left + spacer + right
 
 	return th.Header.Width(m.width).Render(line)
+}
+
+// formatTokenCount formats a token count as "1.2k", "45k", "150k", etc.
+func formatTokenCount(n int32) string {
+	if n < 1000 {
+		return fmt.Sprintf("%d", n)
+	}
+	return fmt.Sprintf("%.0fk", float64(n)/1000)
 }
 
 // ──────────────────────────────────────────────

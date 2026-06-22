@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/bluefunda/bluefunda-ai/internal/crypto"
+	"github.com/bluefunda/bluefunda-ai/internal/keychain"
 	"gopkg.in/yaml.v3"
 )
 
@@ -220,20 +221,40 @@ func Load() (*Config, error) {
 		_ = Save(&cfg)
 	}
 
-	// Decrypt tokens if they were stored encrypted.
-	if cfg.Auth.AccessToken != "" {
-		if dec, err := crypto.Decrypt(cfg.Auth.AccessToken); err == nil {
-			cfg.Auth.AccessToken = dec
+	// Load tokens: prefer OS keychain, fall back to file-based encryption.
+	if keychain.Available() {
+		if tok, err := keychain.Get("access_token"); err == nil {
+			cfg.Auth.AccessToken = tok
 		}
-	}
-	if cfg.Auth.RefreshToken != "" {
-		if dec, err := crypto.Decrypt(cfg.Auth.RefreshToken); err == nil {
-			cfg.Auth.RefreshToken = dec
+		if tok, err := keychain.Get("refresh_token"); err == nil {
+			cfg.Auth.RefreshToken = tok
 		}
-	}
-	// Migrate plaintext tokens to encrypted on first load.
-	if cfg.Auth.AccessToken != "" && !crypto.IsEncrypted(rawAccessToken(&data)) {
-		_ = Save(&cfg)
+		// Migrate enc: tokens from the YAML file into the keychain on first use.
+		if cfg.Auth.AccessToken == "" {
+			raw := rawAccessToken(&data)
+			if raw != "" {
+				if dec, err := crypto.Decrypt(raw); err == nil && dec != "" {
+					cfg.Auth.AccessToken = dec
+					_ = Save(&cfg) // re-save moves the token into the keychain
+				}
+			}
+		}
+	} else {
+		// File-based path: decrypt enc: prefixed values.
+		if cfg.Auth.AccessToken != "" {
+			if dec, err := crypto.Decrypt(cfg.Auth.AccessToken); err == nil {
+				cfg.Auth.AccessToken = dec
+			}
+		}
+		if cfg.Auth.RefreshToken != "" {
+			if dec, err := crypto.Decrypt(cfg.Auth.RefreshToken); err == nil {
+				cfg.Auth.RefreshToken = dec
+			}
+		}
+		// Migrate plaintext tokens to encrypted on first load.
+		if cfg.Auth.AccessToken != "" && !crypto.IsEncrypted(rawAccessToken(&data)) {
+			_ = Save(&cfg)
+		}
 	}
 
 	applyEnvOverrides(&cfg)
@@ -258,24 +279,41 @@ func defaultConfig() *Config {
 	}
 }
 
-// Save writes the config to ~/.bai/config.yaml, encrypting tokens at rest.
+// Save writes the config to ~/.bai/config.yaml.
+// When the OS keychain is available, tokens are stored there and omitted from
+// the YAML file. Otherwise, tokens are AES-256-GCM encrypted before writing.
 func Save(cfg *Config) error {
 	path, err := configPath()
 	if err != nil {
 		return err
 	}
-	// Encrypt tokens before writing.
+
 	toSave := *cfg
-	if toSave.Auth.AccessToken != "" {
-		if enc, err := crypto.Encrypt(toSave.Auth.AccessToken); err == nil {
-			toSave.Auth.AccessToken = enc
+
+	if keychain.Available() {
+		// Store tokens in the OS keychain; write empty strings to YAML.
+		if cfg.Auth.AccessToken != "" {
+			_ = keychain.Set("access_token", cfg.Auth.AccessToken)
+		}
+		if cfg.Auth.RefreshToken != "" {
+			_ = keychain.Set("refresh_token", cfg.Auth.RefreshToken)
+		}
+		toSave.Auth.AccessToken = ""
+		toSave.Auth.RefreshToken = ""
+	} else {
+		// File-based path: encrypt tokens before writing.
+		if toSave.Auth.AccessToken != "" {
+			if enc, err := crypto.Encrypt(toSave.Auth.AccessToken); err == nil {
+				toSave.Auth.AccessToken = enc
+			}
+		}
+		if toSave.Auth.RefreshToken != "" {
+			if enc, err := crypto.Encrypt(toSave.Auth.RefreshToken); err == nil {
+				toSave.Auth.RefreshToken = enc
+			}
 		}
 	}
-	if toSave.Auth.RefreshToken != "" {
-		if enc, err := crypto.Encrypt(toSave.Auth.RefreshToken); err == nil {
-			toSave.Auth.RefreshToken = enc
-		}
-	}
+
 	data, err := yaml.Marshal(&toSave)
 	if err != nil {
 		return fmt.Errorf("marshal config: %w", err)
@@ -303,4 +341,11 @@ func rawAccessToken(data *[]byte) string {
 // TokenValid returns true if the access token exists and has not expired.
 func (c *Config) TokenValid() bool {
 	return c.Auth.AccessToken != "" && time.Now().Before(c.Auth.TokenExpiry)
+}
+
+// ClearTokens zeroes all auth fields. Call Save after this to persist.
+func (c *Config) ClearTokens() {
+	c.Auth.AccessToken = ""
+	c.Auth.RefreshToken = ""
+	c.Auth.TokenExpiry = time.Time{}
 }

@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.28.0](https://github.com/bluefunda/bluefunda-ai/compare/v1.27.0...v1.28.0) (2026-06-22)
+
+
+### Features
+
+* **cmd:** improve bai doctor — 6 new environment checks ([#147](https://github.com/bluefunda/bluefunda-ai/issues/147)) ([7be0c28](https://github.com/bluefunda/bluefunda-ai/commit/7be0c2856334fbfb6a362f564c9ea2d1ee1598f6))
+
 ## [1.27.0](https://github.com/bluefunda/bluefunda-ai/compare/v1.26.0...v1.27.0) (2026-06-22)
 
 

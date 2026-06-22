@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.18.0](https://github.com/bluefunda/bluefunda-ai/compare/v1.17.0...v1.18.0) (2026-06-22)
+
+
+### Features
+
+* **tui:** show token count in header ([#111](https://github.com/bluefunda/bluefunda-ai/issues/111)) ([dd48c06](https://github.com/bluefunda/bluefunda-ai/commit/dd48c068da723fa9dc24caf49a1ce6918b930f00))
+
 ## [1.17.0](https://github.com/bluefunda/bluefunda-ai/compare/v1.16.0...v1.17.0) (2026-06-21)
 
 

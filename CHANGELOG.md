@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.27.0](https://github.com/bluefunda/bluefunda-ai/compare/v1.26.0...v1.27.0) (2026-06-22)
+
+
+### Features
+
+* **plugins:** add http executor type — REST endpoints as tools ([#146](https://github.com/bluefunda/bluefunda-ai/issues/146)) ([cd90816](https://github.com/bluefunda/bluefunda-ai/commit/cd9081658869fdf0e34e995609a1b5ce96be30e1))
+
 ## [1.26.0](https://github.com/bluefunda/bluefunda-ai/compare/v1.25.0...v1.26.0) (2026-06-22)
 
 

@@ -233,7 +233,7 @@ func Load() (*Config, error) {
 	}
 	// Migrate plaintext tokens to encrypted on first load.
 	if cfg.Auth.AccessToken != "" && !crypto.IsEncrypted(rawAccessToken(&data)) {
-		needsSave = true
+		_ = Save(&cfg)
 	}
 
 	applyEnvOverrides(&cfg)

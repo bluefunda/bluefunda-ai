@@ -13,7 +13,7 @@ func Example() {
 		AutoApprove: true,
 		MaxTurns:    5,
 	})
-	defer client.Stop()
+	defer func() { _ = client.Stop() }()
 
 	events, err := client.Send(context.Background(), "list files in current directory")
 	if err != nil {

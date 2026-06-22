@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.20.0](https://github.com/bluefunda/bluefunda-ai/compare/v1.19.1...v1.20.0) (2026-06-22)
+
+
+### Features
+
+* **crypto,sdk:** add token encryption at rest and Go SDK client ([#117](https://github.com/bluefunda/bluefunda-ai/issues/117)) ([6d5ffd3](https://github.com/bluefunda/bluefunda-ai/commit/6d5ffd339c01060fd61d6ce933b88165e6961f13))
+
 ## [1.19.1](https://github.com/bluefunda/bluefunda-ai/compare/v1.19.0...v1.19.1) (2026-06-22)
 
 

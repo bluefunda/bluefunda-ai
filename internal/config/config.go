@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/bluefunda/bluefunda-ai/internal/crypto"
 	"gopkg.in/yaml.v3"
 )
 
@@ -219,6 +220,22 @@ func Load() (*Config, error) {
 		_ = Save(&cfg)
 	}
 
+	// Decrypt tokens if they were stored encrypted.
+	if cfg.Auth.AccessToken != "" {
+		if dec, err := crypto.Decrypt(cfg.Auth.AccessToken); err == nil {
+			cfg.Auth.AccessToken = dec
+		}
+	}
+	if cfg.Auth.RefreshToken != "" {
+		if dec, err := crypto.Decrypt(cfg.Auth.RefreshToken); err == nil {
+			cfg.Auth.RefreshToken = dec
+		}
+	}
+	// Migrate plaintext tokens to encrypted on first load.
+	if cfg.Auth.AccessToken != "" && !crypto.IsEncrypted(rawAccessToken(&data)) {
+		_ = Save(&cfg)
+	}
+
 	applyEnvOverrides(&cfg)
 
 	// Project config: walk cwd upward and merge .bai/settings.yaml.
@@ -241,13 +258,25 @@ func defaultConfig() *Config {
 	}
 }
 
-// Save writes the config to ~/.bai/config.yaml.
+// Save writes the config to ~/.bai/config.yaml, encrypting tokens at rest.
 func Save(cfg *Config) error {
 	path, err := configPath()
 	if err != nil {
 		return err
 	}
-	data, err := yaml.Marshal(cfg)
+	// Encrypt tokens before writing.
+	toSave := *cfg
+	if toSave.Auth.AccessToken != "" {
+		if enc, err := crypto.Encrypt(toSave.Auth.AccessToken); err == nil {
+			toSave.Auth.AccessToken = enc
+		}
+	}
+	if toSave.Auth.RefreshToken != "" {
+		if enc, err := crypto.Encrypt(toSave.Auth.RefreshToken); err == nil {
+			toSave.Auth.RefreshToken = enc
+		}
+	}
+	data, err := yaml.Marshal(&toSave)
 	if err != nil {
 		return fmt.Errorf("marshal config: %w", err)
 	}
@@ -255,6 +284,20 @@ func Save(cfg *Config) error {
 		return fmt.Errorf("write config: %w", err)
 	}
 	return nil
+}
+
+// rawAccessToken extracts the raw access_token value from YAML bytes
+// without decryption, to detect whether migration is needed.
+func rawAccessToken(data *[]byte) string {
+	var raw struct {
+		Auth struct {
+			AccessToken string `yaml:"access_token"`
+		} `yaml:"auth"`
+	}
+	if yaml.Unmarshal(*data, &raw) == nil {
+		return raw.Auth.AccessToken
+	}
+	return ""
 }
 
 // TokenValid returns true if the access token exists and has not expired.

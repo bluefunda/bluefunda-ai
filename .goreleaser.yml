@@ -69,19 +69,19 @@ notarize:
         key_id: "{{ .Env.NOTARIZATION_KEY_ID }}"
         key: "{{ .Env.NOTARIZATION_KEY }}"
 
-homebrew_casks:
+brews:
   - name: bai
     ids:
       - bai
-    binaries:
-      - bai
     homepage: https://github.com/bluefunda/bluefunda-ai
     description: CLI for BlueFunda AI — context-aware AI agents for SAP operations
-    directory: Casks
+    directory: Formula
     repository:
       owner: bluefunda
       name: homebrew-tap
       token: "{{ .Env.HOMEBREW_TAP_TOKEN }}"
+    install: |
+      bin.install "bai"
 
 checksum:
   name_template: "checksums.txt"
@@ -113,7 +113,7 @@ release:
     **Homebrew (macOS):**
     ```bash
     brew tap bluefunda/tap
-    brew install --cask bai
+    brew install bai
     ```
 
     **One-line installer (macOS and Linux):**

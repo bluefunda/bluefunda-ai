@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.20.2](https://github.com/bluefunda/bluefunda-ai/compare/v1.20.1...v1.20.2) (2026-06-22)
+
+
+### Bug Fixes
+
+* **update:** bump go-update to v0.1.1, remove workaround ([#121](https://github.com/bluefunda/bluefunda-ai/issues/121)) ([f9286de](https://github.com/bluefunda/bluefunda-ai/commit/f9286de13762b2fa0073d4c3b18b9932e5e01ca2))
+
 ## [1.20.1](https://github.com/bluefunda/bluefunda-ai/compare/v1.20.0...v1.20.1) (2026-06-22)
 
 

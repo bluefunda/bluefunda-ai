@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.19.1](https://github.com/bluefunda/bluefunda-ai/compare/v1.19.0...v1.19.1) (2026-06-22)
+
+
+### Bug Fixes
+
+* **tui:** Ctrl+C cancels current turn instead of quitting ([#115](https://github.com/bluefunda/bluefunda-ai/issues/115)) ([ed31958](https://github.com/bluefunda/bluefunda-ai/commit/ed31958db028d42b2319663f24be4321fce45393))
+
 ## [1.19.0](https://github.com/bluefunda/bluefunda-ai/compare/v1.18.0...v1.19.0) (2026-06-22)
 
 

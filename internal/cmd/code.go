@@ -21,6 +21,7 @@ import (
 	caigrpc "github.com/bluefunda/bluefunda-ai/internal/grpc"
 	"github.com/bluefunda/bluefunda-ai/internal/hooks"
 	"github.com/bluefunda/bluefunda-ai/internal/mcp"
+	"github.com/bluefunda/bluefunda-ai/internal/plugins"
 	"github.com/bluefunda/bluefunda-ai/internal/session"
 	"github.com/bluefunda/bluefunda-ai/internal/tools"
 	"github.com/bluefunda/bluefunda-ai/internal/ui"
@@ -186,6 +187,19 @@ func runAgenticSession(args []string) error {
 		}
 	}
 
+	// --- Plugin tools (#128) ---
+	// Load .bai/plugins/*/plugin.yaml from user-level and project directories.
+	pluginMgr := plugins.NewManager(".")
+	if extra := pluginMgr.ToolSchemas(); len(extra) > 0 {
+		merged, mergeErr := tools.MergeSchemas(toolSchemas, extra)
+		if mergeErr == nil {
+			toolSchemas = merged
+		}
+		for _, p := range pluginMgr.All() {
+			fmt.Printf("[bai] plugin %s: loaded (%s)\n", p.Manifest.Name, p.SourcePath)
+		}
+	}
+
 	// --- Session persistence (#82) ---
 	// --continue/-c resumes the most recent session for this working directory.
 	sessionID := codeResume
@@ -255,7 +269,7 @@ func runAgenticSession(args []string) error {
 			return fmt.Errorf("prompt required in --print mode (pass as argument or pipe via stdin)")
 		}
 		return runCodePrint(conn, cfg, model, toolSchemas, initialPrompt, history,
-			codeMaxTurns, permAllow, permDeny, codeAutoApply, codeOutputFormat, sessPath, auditLog, hookRunner, mcpMgr, p)
+			codeMaxTurns, permAllow, permDeny, codeAutoApply, codeOutputFormat, sessPath, auditLog, hookRunner, mcpMgr, pluginMgr, p)
 	}
 
 	// --- Interactive TUI mode ---
@@ -292,7 +306,7 @@ func runAgenticSession(args []string) error {
 			newHistory, loopErr := agenticLoopTUI(
 				conn, cfg, cid, mdl, currentSchemas,
 				history, isFirstTurn && isNew, permAllow, permDeny, currentAutoApply,
-				maxTurnsState, auditLog, hookRunner, mcpMgr, p, ch,
+				maxTurnsState, auditLog, hookRunner, mcpMgr, pluginMgr, p, ch,
 			)
 			history = newHistory
 			turns++
@@ -394,6 +408,7 @@ func runCodePrint(
 	auditLog *audit.Logger,
 	hookRunner *hooks.Runner,
 	mcpMgr *mcp.Manager,
+	pluginMgr *plugins.Manager,
 	p *ui.Printer,
 ) error {
 	history = append(history, codeMessage{Role: "user", Content: prompt})
@@ -408,7 +423,7 @@ func runCodePrint(
 		newHistory, loopErr := agenticLoopTUI(
 			conn, cfg, chatID, model, toolSchemas,
 			history, true, allow, deny, autoApply,
-			maxTurns, auditLog, hookRunner, mcpMgr, p, ch,
+			maxTurns, auditLog, hookRunner, mcpMgr, pluginMgr, p, ch,
 		)
 		session.Save(sessPath, toSessionMsgs(newHistory)) //nolint:errcheck
 		if loopErr != nil {
@@ -515,6 +530,7 @@ func agenticLoopTUI(
 	auditLog *audit.Logger,
 	hookRunner *hooks.Runner,
 	mcpMgr *mcp.Manager,
+	pluginMgr *plugins.Manager,
 	p *ui.Printer,
 	ch chan<- tui.StreamEvent,
 ) ([]codeMessage, error) {
@@ -600,7 +616,7 @@ func agenticLoopTUI(
 
 		// Execute tools — run concurrently when all can be auto-approved,
 		// fall back to sequential when any requires a TUI approval prompt.
-		toolResults := executeTools(toolCalls, allow, deny, autoApply, auditLog, hookRunner, mcpMgr, p, ch)
+		toolResults := executeTools(toolCalls, allow, deny, autoApply, auditLog, hookRunner, mcpMgr, pluginMgr, p, ch)
 		for i, tc := range toolCalls {
 			r := toolResults[i]
 			history = append(history, codeMessage{
@@ -837,6 +853,7 @@ func executeTools(
 	auditLog *audit.Logger,
 	hookRunner *hooks.Runner,
 	mcpMgr *mcp.Manager,
+	pluginMgr *plugins.Manager,
 	p *ui.Printer,
 	ch chan<- tui.StreamEvent,
 ) []toolResult {
@@ -844,7 +861,7 @@ func executeTools(
 	if len(toolCalls) <= 1 {
 		results := make([]toolResult, len(toolCalls))
 		for i, tc := range toolCalls {
-			r, e := executeWithApprovalTUI(tc, allow, deny, autoApply, auditLog, hookRunner, mcpMgr, p, ch)
+			r, e := executeWithApprovalTUI(tc, allow, deny, autoApply, auditLog, hookRunner, mcpMgr, pluginMgr, p, ch)
 			results[i] = toolResult{result: r, err: e}
 		}
 		return results
@@ -860,7 +877,10 @@ func executeTools(
 			if action == tools.PermitDeny || action == tools.PermitAuto {
 				continue
 			}
-			needsApproval := tools.NeedsApproval(tc.Name) || mcp.IsMCPTool(tc.Name)
+			if plugins.IsPluginTool(tc.Name) && pluginMgr.ApprovalMode(tc.Name) == "never" {
+				continue
+			}
+			needsApproval := tools.NeedsApproval(tc.Name) || mcp.IsMCPTool(tc.Name) || plugins.IsPluginTool(tc.Name)
 			if needsApproval && (tc.Name != "bash" || !tools.IsSafeBashCommand(tc.Arguments)) {
 				allAutoApproved = false
 				break
@@ -872,7 +892,7 @@ func executeTools(
 		// Sequential: approval dialogs must not overlap.
 		results := make([]toolResult, len(toolCalls))
 		for i, tc := range toolCalls {
-			r, e := executeWithApprovalTUI(tc, allow, deny, autoApply, auditLog, hookRunner, mcpMgr, p, ch)
+			r, e := executeWithApprovalTUI(tc, allow, deny, autoApply, auditLog, hookRunner, mcpMgr, pluginMgr, p, ch)
 			results[i] = toolResult{result: r, err: e}
 		}
 		return results
@@ -885,7 +905,7 @@ func executeTools(
 		wg.Add(1)
 		go func(idx int, t ui.ToolCallEvent) {
 			defer wg.Done()
-			r, e := executeWithApprovalTUI(t, allow, deny, true, auditLog, hookRunner, mcpMgr, p, ch)
+			r, e := executeWithApprovalTUI(t, allow, deny, true, auditLog, hookRunner, mcpMgr, pluginMgr, p, ch)
 			results[idx] = toolResult{result: r, err: e}
 		}(i, tc)
 	}
@@ -903,6 +923,7 @@ func executeWithApprovalTUI(
 	auditLog *audit.Logger,
 	hookRunner *hooks.Runner,
 	mcpMgr *mcp.Manager,
+	pluginMgr *plugins.Manager,
 	p *ui.Printer,
 	ch chan<- tui.StreamEvent,
 ) (string, error) {
@@ -940,13 +961,24 @@ func executeWithApprovalTUI(
 	}
 
 	// --- Approval gate ---
-	// MCP tools always require approval (they can do anything).
-	needsApproval := tools.NeedsApproval(tc.Name) || mcp.IsMCPTool(tc.Name)
+	// MCP and plugin tools always require approval by default (they can do anything).
+	needsApproval := tools.NeedsApproval(tc.Name) || mcp.IsMCPTool(tc.Name) || plugins.IsPluginTool(tc.Name)
 	autoApproved := false
 	// Safe bash commands are auto-approved to reduce friction.
 	if needsApproval && tc.Name == "bash" && tools.IsSafeBashCommand(argsJSON) {
 		needsApproval = false
 		autoApproved = true
+	}
+	// Plugin-specific approval mode overrides the default and the --auto flag.
+	if plugins.IsPluginTool(tc.Name) {
+		switch pluginMgr.ApprovalMode(tc.Name) {
+		case "always":
+			needsApproval = true
+			effectiveAutoApply = false // force dialog even with --auto or allow rule
+		case "never":
+			needsApproval = false
+			autoApproved = true
+		}
 	}
 	approved := !needsApproval || effectiveAutoApply
 	if needsApproval && !effectiveAutoApply {
@@ -971,9 +1003,12 @@ func executeWithApprovalTUI(
 	start := time.Now()
 	var result string
 	var execErr error
-	if mcp.IsMCPTool(tc.Name) {
+	switch {
+	case mcp.IsMCPTool(tc.Name):
 		result, execErr = mcpMgr.Execute(context.Background(), tc.Name, argsJSON)
-	} else {
+	case plugins.IsPluginTool(tc.Name):
+		result, execErr = pluginMgr.Execute(context.Background(), tc.Name, argsJSON)
+	default:
 		result, execErr = tools.Execute(tc.Name, argsJSON)
 	}
 	elapsed := time.Since(start)

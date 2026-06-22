@@ -126,6 +126,7 @@ func init() {
 		loginCmd,
 		logoutCmd,
 		initCmd,
+		pluginsCmd,
 		codeCmd,
 		configCmd,
 		doctorCmd,

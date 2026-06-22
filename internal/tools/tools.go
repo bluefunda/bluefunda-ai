@@ -65,6 +65,34 @@ func LocalToolSchemas() (string, error) {
 		{
 			Type: "function",
 			Function: FunctionDef{
+				Name:        "patch_file",
+				Description: "Apply multiple old→new string replacements to a file in a single atomic operation. All edits are validated before any change is written — if any old_string is absent or non-unique the entire call fails with no modifications. Prefer this over multiple edit_file calls when making several changes to the same file. Returns a unified diff of the applied changes.",
+				Parameters: json.RawMessage(`{
+					"type": "object",
+					"properties": {
+						"path": {"type": "string", "description": "Absolute or relative file path"},
+						"edits": {
+							"type": "array",
+							"description": "Ordered list of replacements to apply",
+							"items": {
+								"type": "object",
+								"properties": {
+									"old_string":  {"type": "string", "description": "Exact string to replace (must appear exactly once unless replace_all is true)"},
+									"new_string":  {"type": "string", "description": "Replacement string"},
+									"replace_all": {"type": "boolean", "description": "Replace all occurrences instead of requiring uniqueness. Default: false."}
+								},
+								"required": ["old_string", "new_string"]
+							},
+							"minItems": 1
+						}
+					},
+					"required": ["path", "edits"]
+				}`),
+			},
+		},
+		{
+			Type: "function",
+			Function: FunctionDef{
 				Name:        "write_file",
 				Description: "Write content to a local file, creating it if it does not exist and overwriting it if it does. Prefer edit_file for modifying existing files.",
 				Parameters: json.RawMessage(`{

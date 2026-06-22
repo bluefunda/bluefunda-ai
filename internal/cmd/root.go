@@ -121,6 +121,7 @@ func init() {
 	rootCmd.AddCommand(
 		// Visible commands
 		loginCmd,
+		logoutCmd,
 		initCmd,
 		codeCmd,
 		configCmd,

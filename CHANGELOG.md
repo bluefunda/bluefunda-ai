@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.23.0](https://github.com/bluefunda/bluefunda-ai/compare/v1.22.0...v1.23.0) (2026-06-22)
+
+
+### Features
+
+* **crypto:** store tokens in OS keychain instead of encrypted config file ([#133](https://github.com/bluefunda/bluefunda-ai/issues/133)) ([c6cd36f](https://github.com/bluefunda/bluefunda-ai/commit/c6cd36f0c6acb44cca06b98b1bafedb92c10f839))
+
 ## [1.22.0](https://github.com/bluefunda/bluefunda-ai/compare/v1.21.0...v1.22.0) (2026-06-22)
 
 

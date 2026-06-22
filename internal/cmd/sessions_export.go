@@ -122,12 +122,12 @@ func resolveSession(cwd, prefix string) (session.Info, []session.Message, error)
 func renderMarkdown(info session.Info, msgs []session.Message) string {
 	var sb strings.Builder
 
-	sb.WriteString(fmt.Sprintf("# bai Session %s\n\n", info.ID[:min(8, len(info.ID))]))
-	sb.WriteString(fmt.Sprintf("**Date:** %s  **Turns:** %d  **Directory:** %s\n\n",
+	fmt.Fprintf(&sb, "# bai Session %s\n\n", info.ID[:min(8, len(info.ID))])
+	fmt.Fprintf(&sb, "**Date:** %s  **Turns:** %d  **Directory:** %s\n\n",
 		info.UpdatedAt.Format("2006-01-02 15:04"),
 		info.Turns,
 		info.CWD,
-	))
+	)
 
 	for _, m := range msgs {
 		if m.Role == "system" {
@@ -146,7 +146,7 @@ func renderMarkdown(info session.Info, msgs []session.Message) string {
 				sb.WriteString("\n\n")
 			}
 			for _, tc := range m.ToolCalls {
-				sb.WriteString(fmt.Sprintf("**Tool: %s**\n", tc.Function.Name))
+				fmt.Fprintf(&sb, "**Tool: %s**\n", tc.Function.Name)
 				if tc.Function.Arguments != "" {
 					sb.WriteString("```json\n")
 					// Pretty-print arguments if they're valid JSON.

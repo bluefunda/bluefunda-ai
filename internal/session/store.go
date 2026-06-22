@@ -122,6 +122,57 @@ func Load(path string) ([]Message, error) {
 	return msgs, scanner.Err()
 }
 
+// ListAll returns all persisted sessions across all working directories, newest first.
+func ListAll() ([]Info, error) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return nil, err
+	}
+	base := filepath.Join(home, ".bai", "sessions")
+	hashDirs, err := os.ReadDir(base)
+	if err != nil {
+		return nil, nil // no sessions dir yet
+	}
+	var all []Info
+	for _, e := range hashDirs {
+		if !e.IsDir() {
+			continue
+		}
+		entries, err := os.ReadDir(filepath.Join(base, e.Name()))
+		if err != nil {
+			continue
+		}
+		for _, f := range entries {
+			if f.IsDir() || filepath.Ext(f.Name()) != ".jsonl" {
+				continue
+			}
+			id := f.Name()[:len(f.Name())-6]
+			path := filepath.Join(base, e.Name(), f.Name())
+			fi, _ := f.Info()
+			msgs, _ := Load(path)
+			info := Info{ID: id, Path: path, Turns: len(msgs)}
+			if fi != nil {
+				info.UpdatedAt = fi.ModTime()
+			}
+			for i := len(msgs) - 1; i >= 0; i-- {
+				if msgs[i].Role != "system" && msgs[i].Content != "" {
+					c := msgs[i].Content
+					if len(c) > 60 {
+						c = c[:57] + "..."
+					}
+					info.LastMsg = c
+					break
+				}
+			}
+			all = append(all, info)
+		}
+	}
+	sort.Slice(all, func(i, j int) bool {
+		return all[i].UpdatedAt.After(all[j].UpdatedAt)
+	})
+	return all, nil
+}
+
 // List returns sessions for the given cwd directory, newest first.
 func List(cwd string) ([]Info, error) {
 	dir, err := Dir(cwd)

@@ -21,6 +21,13 @@ const webTimeout = 30 * time.Second
 
 const bashTimeout = 120 * time.Second
 
+// PatchEdit is one old→new replacement within a patch_file call.
+type PatchEdit struct {
+	OldString  string `json:"old_string"`
+	NewString  string `json:"new_string"`
+	ReplaceAll bool   `json:"replace_all"`
+}
+
 // Execute dispatches a tool call to the appropriate local implementation.
 // Arguments is the JSON string from the LLM tool call.
 func Execute(name, argumentsJSON string) (string, error) {
@@ -41,6 +48,15 @@ func Execute(name, argumentsJSON string) (string, error) {
 		newStr, _ := args["new_string"].(string)
 		replaceAll, _ := args["replace_all"].(bool)
 		return EditFile(path, oldStr, newStr, replaceAll)
+	case "patch_file":
+		var patchArgs struct {
+			Path  string      `json:"path"`
+			Edits []PatchEdit `json:"edits"`
+		}
+		if err := json.Unmarshal([]byte(argumentsJSON), &patchArgs); err != nil {
+			return "", fmt.Errorf("parse patch_file arguments: %w", err)
+		}
+		return PatchFile(patchArgs.Path, patchArgs.Edits)
 	case "write_file":
 		path, _ := args["path"].(string)
 		content, _ := args["content"].(string)
@@ -166,6 +182,114 @@ func EditFile(path, oldStr, newStr string, replaceAll bool) (string, error) {
 		n = count
 	}
 	return fmt.Sprintf("edited %d occurrence(s) in %s", n, path), nil
+}
+
+// PatchFile applies multiple old→new string replacements to a file atomically.
+// All edits are validated before any change is written: if any old_string is
+// absent or non-unique (and replace_all is false), the whole call fails.
+// Returns a summary line and a unified diff of the changes.
+func PatchFile(path string, edits []PatchEdit) (string, error) {
+	if path == "" {
+		return "", fmt.Errorf("path is required")
+	}
+	if len(edits) == 0 {
+		return "", fmt.Errorf("edits must contain at least one entry")
+	}
+
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return "", fmt.Errorf("read %s: %w", path, err)
+	}
+	original := string(b)
+
+	// Validate every edit before touching the file.
+	for i, e := range edits {
+		if e.OldString == "" {
+			return "", fmt.Errorf("edits[%d]: old_string is required", i)
+		}
+		count := strings.Count(original, e.OldString)
+		if count == 0 {
+			return "", fmt.Errorf("edits[%d]: old_string not found in %s", i, path)
+		}
+		if !e.ReplaceAll && count > 1 {
+			return "", fmt.Errorf("edits[%d]: old_string matches %d occurrences in %s; add surrounding context to make it unique, or set replace_all: true", i, count, path)
+		}
+	}
+
+	// Apply edits in order.
+	content := original
+	totalReplaced := 0
+	for _, e := range edits {
+		if e.ReplaceAll {
+			n := strings.Count(content, e.OldString)
+			content = strings.ReplaceAll(content, e.OldString, e.NewString)
+			totalReplaced += n
+		} else {
+			content = strings.Replace(content, e.OldString, e.NewString, 1)
+			totalReplaced++
+		}
+	}
+
+	if content == original {
+		return fmt.Sprintf("no changes made to %s (all replacements were no-ops)", path), nil
+	}
+
+	// Atomic write.
+	dir := filepath.Dir(path)
+	tmp, err := os.CreateTemp(dir, ".bai-patch-*")
+	if err != nil {
+		return "", fmt.Errorf("create temp file: %w", err)
+	}
+	tmpName := tmp.Name()
+	if _, err := tmp.WriteString(content); err != nil {
+		_ = tmp.Close()
+		_ = os.Remove(tmpName)
+		return "", fmt.Errorf("write temp file: %w", err)
+	}
+	if err := tmp.Close(); err != nil {
+		_ = os.Remove(tmpName)
+		return "", fmt.Errorf("close temp file: %w", err)
+	}
+	if err := os.Rename(tmpName, path); err != nil {
+		_ = os.Remove(tmpName)
+		return "", fmt.Errorf("rename to %s: %w", path, err)
+	}
+
+	diff := unifiedDiff(path, original, content)
+	return fmt.Sprintf("patched %s (%d replacement(s))\n\n%s", path, totalReplaced, diff), nil
+}
+
+// unifiedDiff returns a unified diff of original→updated content using the
+// system diff(1) command. Returns an empty string if diff is unavailable.
+func unifiedDiff(path, original, updated string) string {
+	origTmp, err := os.CreateTemp("", ".bai-orig-*")
+	if err != nil {
+		return ""
+	}
+	defer func() { _ = os.Remove(origTmp.Name()) }()
+	if _, err := origTmp.WriteString(original); err != nil || origTmp.Close() != nil {
+		return ""
+	}
+
+	newTmp, err := os.CreateTemp("", ".bai-new-*")
+	if err != nil {
+		return ""
+	}
+	defer func() { _ = os.Remove(newTmp.Name()) }()
+	if _, err := newTmp.WriteString(updated); err != nil || newTmp.Close() != nil {
+		return ""
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "diff", "-u",
+		"--label", "a/"+path,
+		"--label", "b/"+path,
+		origTmp.Name(), newTmp.Name())
+	var out bytes.Buffer
+	cmd.Stdout = &out
+	_ = cmd.Run() // diff exits 1 when there are differences — expected
+	return out.String()
 }
 
 // WriteFile writes content to a file, creating parent directories as needed.

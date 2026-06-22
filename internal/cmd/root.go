@@ -29,6 +29,7 @@ var (
 	rootPrint      bool
 	rootNoTools    bool
 	rootOutFormat  string
+	rootWorktree   bool
 )
 
 // Version is set at build time via -ldflags.
@@ -81,6 +82,7 @@ func runDefault(cmd *cobra.Command, args []string) error {
 	if rootNoTools {
 		codeNoTools = true
 	}
+	codeWorktree = rootWorktree
 	return runAgenticSession(args)
 }
 
@@ -110,6 +112,7 @@ func init() {
 	rootCmd.Flags().BoolVarP(&rootPrint, "print", "p", false, "Headless mode: print output to stdout")
 	rootCmd.Flags().StringVar(&rootOutFormat, "output-format", "text", "Output format for --print: text, json, stream-json")
 	rootCmd.Flags().BoolVar(&rootNoTools, "no-tools", false, "Disable local tools (pure chat mode)")
+	rootCmd.Flags().BoolVarP(&rootWorktree, "worktree", "w", false, "Run agent in an isolated git worktree; prompt to apply/discard on exit")
 	rootCmd.PersistentPreRunE = func(cmd *cobra.Command, args []string) error {
 		if v, _ := cmd.Flags().GetBool("version"); v {
 			fmt.Println("bai version " + Version)

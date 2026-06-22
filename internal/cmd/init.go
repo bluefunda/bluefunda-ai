@@ -68,6 +68,12 @@ func runInit(cmd *cobra.Command, args []string) error {
 	}
 	fmt.Printf("  created  .bai/hooks/pre-tool/   .bai/hooks/post-tool/\n")
 
+	// .gitignore: ensure the worktrees directory is ignored.
+	gitignorePath := filepath.Join(cwd, ".gitignore")
+	if added := ensureGitignoreEntry(gitignorePath, ".bai/worktrees/"); added {
+		fmt.Printf("  updated  .gitignore  (added .bai/worktrees/)\n")
+	}
+
 	// .gitignore hint
 	fmt.Println()
 	if created > 0 {
@@ -156,6 +162,26 @@ make lint     # run golangci-lint
 -->
 `)
 	return sb.String()
+}
+
+// ensureGitignoreEntry appends entry to the gitignore at path if not already
+// present. Returns true if the file was modified.
+func ensureGitignoreEntry(path, entry string) bool {
+	data, _ := os.ReadFile(path)
+	if strings.Contains(string(data), entry) {
+		return false
+	}
+	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	if err != nil {
+		return false
+	}
+	defer func() { _ = f.Close() }()
+	prefix := ""
+	if len(data) > 0 && !strings.HasSuffix(string(data), "\n") {
+		prefix = "\n"
+	}
+	_, _ = fmt.Fprintf(f, "%s%s\n", prefix, entry)
+	return true
 }
 
 func settingsTemplate() string {

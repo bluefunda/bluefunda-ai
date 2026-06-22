@@ -25,6 +25,7 @@ import (
 	"github.com/bluefunda/bluefunda-ai/internal/tools"
 	"github.com/bluefunda/bluefunda-ai/internal/ui"
 	"github.com/bluefunda/bluefunda-ai/internal/ui/tui"
+	"github.com/bluefunda/bluefunda-ai/internal/worktree"
 )
 
 var (
@@ -38,6 +39,7 @@ var (
 	codeResume       string
 	codeContinue     bool
 	codeNoTools      bool
+	codeWorktree     bool
 )
 
 // codeCmd is a deprecated alias for the root 'bai' command.
@@ -122,6 +124,27 @@ func runAgenticSession(args []string) error {
 		return fmt.Errorf("chdir to %s: %w", codeDir, err)
 	}
 
+	// --- Worktree isolation (#126) ---
+	// When --worktree is set, create a detached git worktree and switch the
+	// process cwd into it so all tool file/bash operations go there instead of
+	// the user's main working tree.
+	var (
+		worktreePath string
+		gitRootPath  string
+	)
+	if codeWorktree {
+		if codePrint {
+			return fmt.Errorf("--worktree is not supported in --print / headless mode")
+		}
+		var err error
+		gitRootPath, err = worktree.GitRoot()
+		if err != nil {
+			return fmt.Errorf("--worktree requires a git repository: %w", err)
+		}
+		// sessionID is determined later; use a placeholder UUID for the worktree path.
+		// We reassign sessionID below before using it for session persistence.
+	}
+
 	// Apply project-level max_turns override if the flag wasn't set explicitly.
 	if projCfgEarly := config.FindProjectConfig("."); projCfgEarly != nil {
 		if projCfgEarly.MaxTurns > 0 && codeMaxTurns == 20 {
@@ -174,6 +197,23 @@ func runAgenticSession(args []string) error {
 	if sessionID == "" {
 		sessionID = uuid.New().String()
 	}
+
+	// Create the worktree now that we have a stable sessionID.
+	if codeWorktree && gitRootPath != "" {
+		var err error
+		worktreePath, err = worktree.Create(gitRootPath, sessionID)
+		if err != nil {
+			return fmt.Errorf("create worktree: %w", err)
+		}
+		if err := os.Chdir(worktreePath); err != nil {
+			_ = worktree.Remove(gitRootPath, worktreePath, true)
+			return fmt.Errorf("chdir to worktree: %w", err)
+		}
+		// Recompute workDir — everything from here on uses the worktree path.
+		workDir, _ = os.Getwd()
+		p.Info(fmt.Sprintf("Isolated worktree: %s", worktreePath))
+	}
+
 	sessPath, _ := session.Path(workDir, sessionID)
 
 	// --- Audit logging (#81) ---
@@ -293,7 +333,51 @@ func runAgenticSession(args []string) error {
 	m := tui.New(tuiCfg, submitFn)
 	err = tui.Run(m)
 	auditLog.LogSessionEnd(turns, "end_turn")
+
+	// --- Worktree teardown (#126) ---
+	if worktreePath != "" {
+		if wtErr := handleWorktreeEnd(worktreePath, gitRootPath, p); wtErr != nil {
+			fmt.Fprintf(os.Stderr, "worktree cleanup: %v\n", wtErr)
+		}
+	}
+
 	return err
+}
+
+// handleWorktreeEnd shows changed files and prompts the user to apply, discard,
+// or keep the isolated worktree created by --worktree.
+func handleWorktreeEnd(worktreePath, gitRootPath string, p *ui.Printer) error {
+	changed, _ := worktree.ChangedFiles(worktreePath)
+
+	if len(changed) == 0 {
+		p.Info("No changes in worktree — cleaning up.")
+		return worktree.Remove(gitRootPath, worktreePath, true)
+	}
+
+	fmt.Printf("\n%d file(s) changed in worktree:\n", len(changed))
+	for _, f := range changed {
+		fmt.Printf("  %s\n", f)
+	}
+	fmt.Printf("\n[A]pply to main tree  [D]iscard worktree  [K]eep worktree\n> ")
+
+	var choice string
+	_, _ = fmt.Scanln(&choice)
+	choice = strings.ToLower(strings.TrimSpace(choice))
+
+	switch {
+	case strings.HasPrefix(choice, "a"):
+		if err := worktree.Apply(worktreePath, gitRootPath); err != nil {
+			return fmt.Errorf("apply changes: %w", err)
+		}
+		_ = worktree.Remove(gitRootPath, worktreePath, true)
+		p.Success("Changes applied to main tree.")
+	case strings.HasPrefix(choice, "k"):
+		p.Info(fmt.Sprintf("Worktree kept at: %s", worktreePath))
+	default:
+		_ = worktree.Remove(gitRootPath, worktreePath, true)
+		p.Info("Worktree discarded. Main tree unchanged.")
+	}
+	return nil
 }
 
 // runCodePrint runs the agentic loop in headless mode, writing output to stdout.

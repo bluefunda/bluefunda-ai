@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.20.1](https://github.com/bluefunda/bluefunda-ai/compare/v1.20.0...v1.20.1) (2026-06-22)
+
+
+### Bug Fixes
+
+* **update:** trust Homebrew tap + feat(docs): hero onboarding and env var fixes ([#119](https://github.com/bluefunda/bluefunda-ai/issues/119)) ([69058f9](https://github.com/bluefunda/bluefunda-ai/commit/69058f91a3fe79714ca1edad45dcb6f390fa0e2d))
+
 ## [1.20.0](https://github.com/bluefunda/bluefunda-ai/compare/v1.19.1...v1.20.0) (2026-06-22)
 
 

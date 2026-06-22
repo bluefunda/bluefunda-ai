@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.29.0](https://github.com/bluefunda/bluefunda-ai/compare/v1.28.0...v1.29.0) (2026-06-22)
+
+
+### Features
+
+* **sessions:** export session history as Markdown or JSON ([#148](https://github.com/bluefunda/bluefunda-ai/issues/148)) ([43d5f48](https://github.com/bluefunda/bluefunda-ai/commit/43d5f48f9723722315880114022bfb08faf04a9c))
+
 ## [1.28.0](https://github.com/bluefunda/bluefunda-ai/compare/v1.27.0...v1.28.0) (2026-06-22)
 
 

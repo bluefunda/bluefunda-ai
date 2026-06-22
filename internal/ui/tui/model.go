@@ -35,6 +35,9 @@ type StreamProgressMsg struct {
 }
 type StreamHeartbeatMsg struct{}
 type StreamDoneMsg struct{ Err error }
+
+// InterruptedMsg is sent when the user presses Ctrl+C during a streaming turn.
+type InterruptedMsg struct{}
 type StreamErrorMsg struct{ Msg string }
 type ApprovalRequestMsg struct {
 	ToolName string
@@ -202,6 +205,7 @@ type Model struct {
 	// Streaming
 	streaming  bool
 	streamCh   <-chan StreamEvent
+	streamStop chan struct{} // closed to interrupt the current turn without quitting
 	spinnerIdx int
 
 	// Approval prompt (tool confirmation)
@@ -317,6 +321,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case StreamEvent:
 		cmds = append(cmds, m.handleStreamEvent(msg)...)
+
+	case InterruptedMsg:
+		// Ctrl+C already handled in handleKey; nothing more to do here.
+		return m, nil
 
 	case StreamDoneMsg:
 		m.streaming = false
@@ -434,6 +442,17 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 
 	case "ctrl+c":
+		if m.streaming && m.streamStop != nil {
+			// Cancel current turn without quitting; drain remaining events in background.
+			close(m.streamStop)
+			m.streamStop = nil
+			m.streaming = false
+			m.messages = append(m.messages, newSystemMessage("Interrupted."))
+			go func(ch <-chan StreamEvent) { for range ch {} }(m.streamCh)
+			m.textarea.Focus()
+			m.refreshViewport()
+			return m, nil
+		}
 		m.quit = true
 		return m, tea.Quit
 
@@ -542,19 +561,21 @@ func (m Model) handleApprovalKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.messages = append(m.messages, newSystemMessage("  Applied."))
 		m.refreshViewport()
 		// Send approval answer (unblocks code goroutine) then resume stream pump.
+		stop := m.streamStop
 		return m, func() tea.Msg {
 			replyCh <- true
-			return waitForStreamEvent(ch)()
+			return waitForStreamEvent(ch, stop)()
 		}
 	case "n", "esc":
 		ch := m.streamCh
+		stop := m.streamStop
 		replyCh := m.pendingApproval.ReplyCh
 		m.pendingApproval = nil
 		m.messages = append(m.messages, newSystemMessage("  Skipped."))
 		m.refreshViewport()
 		return m, func() tea.Msg {
 			replyCh <- false
-			return waitForStreamEvent(ch)()
+			return waitForStreamEvent(ch, stop)()
 		}
 	case "ctrl+c":
 		m.quit = true
@@ -601,8 +622,9 @@ func (m Model) submitInput() (tea.Model, tea.Cmd) {
 	m.isNewChat = false
 
 	// Open the stream and start pumping events via cmd chaining.
+	m.streamStop = make(chan struct{})
 	m.streamCh = m.submitFn(m.cfg.ChatID, m.cfg.Model, input, isNew)
-	return m, waitForStreamEvent(m.streamCh)
+	return m, waitForStreamEvent(m.streamCh, m.streamStop)
 }
 
 func (m Model) handleSlashCommand(input string) (tea.Model, tea.Cmd) {
@@ -812,7 +834,7 @@ func (m Model) handleSlashCommand(input string) (tea.Model, tea.Cmd) {
 				isNew := m.isNewChat
 				m.isNewChat = false
 				m.streamCh = m.submitFn(m.cfg.ChatID, m.cfg.Model, c.Prompt, isNew)
-				return m, waitForStreamEvent(m.streamCh)
+				return m, waitForStreamEvent(m.streamCh, m.streamStop)
 			}
 		}
 		m.messages = append(m.messages, newSystemMessage("Unknown command: "+input))
@@ -892,7 +914,8 @@ func helpText() string {
 		"  Shift+Enter    New line",
 		"  Up/Down        Navigate input history",
 		"  Ctrl+L         Clear screen",
-		"  Ctrl+C / Ctrl+D  Quit",
+		"  Ctrl+C          Interrupt turn (or quit when idle)",
+	"  Ctrl+D          Quit",
 		"  PgUp/PgDn      Scroll conversation",
 		"",
 		"  Slash commands",
@@ -1006,7 +1029,7 @@ func (m *Model) handleStreamEvent(ev StreamEvent) []tea.Cmd {
 		if m.atBottom {
 			m.viewport.GotoBottom()
 		}
-		cmds = append(cmds, waitForStreamEvent(m.streamCh))
+		cmds = append(cmds, waitForStreamEvent(m.streamCh, m.streamStop))
 
 	case "tool_call":
 		m.ensureAssistantMsg()
@@ -1017,7 +1040,7 @@ func (m *Model) handleStreamEvent(ev StreamEvent) []tea.Cmd {
 			Args: ev.ToolArgs,
 		})
 		m.refreshViewport()
-		cmds = append(cmds, waitForStreamEvent(m.streamCh))
+		cmds = append(cmds, waitForStreamEvent(m.streamCh, m.streamStop))
 
 	case "tool_exec":
 		m.ensureAssistantMsg()
@@ -1030,7 +1053,7 @@ func (m *Model) handleStreamEvent(ev StreamEvent) []tea.Cmd {
 			Summary:    ev.Summary,
 		})
 		m.refreshViewport()
-		cmds = append(cmds, waitForStreamEvent(m.streamCh))
+		cmds = append(cmds, waitForStreamEvent(m.streamCh, m.streamStop))
 
 	case "progress":
 		m.ensureAssistantMsg()
@@ -1041,10 +1064,10 @@ func (m *Model) handleStreamEvent(ev StreamEvent) []tea.Cmd {
 			Tools:     ev.Tools,
 		})
 		m.refreshViewport()
-		cmds = append(cmds, waitForStreamEvent(m.streamCh))
+		cmds = append(cmds, waitForStreamEvent(m.streamCh, m.streamStop))
 
 	case "heartbeat":
-		cmds = append(cmds, waitForStreamEvent(m.streamCh))
+		cmds = append(cmds, waitForStreamEvent(m.streamCh, m.streamStop))
 
 	case "approval":
 		// The stream goroutine already created a reply channel; store it.
@@ -1122,14 +1145,17 @@ func (m *Model) scrollToLastMsgStart() {
 }
 
 // waitForStreamEvent returns a tea.Cmd that blocks until the next StreamEvent
-// arrives on ch, then returns it as a tea.Msg. The Update handler processes the
-// event and calls waitForStreamEvent again until the stream is done.
-func waitForStreamEvent(ch <-chan StreamEvent) tea.Cmd {
+// arrives on ch or the stop channel is closed (Ctrl+C interrupt).
+func waitForStreamEvent(ch <-chan StreamEvent, stop <-chan struct{}) tea.Cmd {
 	return func() tea.Msg {
-		ev, ok := <-ch
-		if !ok {
-			return StreamDoneMsg{}
+		select {
+		case ev, ok := <-ch:
+			if !ok {
+				return StreamDoneMsg{}
+			}
+			return ev
+		case <-stop:
+			return InterruptedMsg{}
 		}
-		return ev
 	}
 }

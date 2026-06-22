@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.25.0](https://github.com/bluefunda/bluefunda-ai/compare/v1.24.0...v1.25.0) (2026-06-22)
+
+
+### Features
+
+* **sdk:** embedded Go library — run bai agent loop in-process ([#137](https://github.com/bluefunda/bluefunda-ai/issues/137)) ([7e1d0ab](https://github.com/bluefunda/bluefunda-ai/commit/7e1d0abb394d4f4e13d32355c12f67f1aedc43a5))
+
 ## [1.24.0](https://github.com/bluefunda/bluefunda-ai/compare/v1.23.0...v1.24.0) (2026-06-22)
 
 

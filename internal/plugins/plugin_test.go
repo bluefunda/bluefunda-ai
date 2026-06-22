@@ -3,6 +3,8 @@ package plugins
 import (
 	"context"
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -61,15 +63,47 @@ executor:
 
 func TestLoadFile_UnsupportedType(t *testing.T) {
 	dir := t.TempDir()
-	writePlugin(t, dir, "http", `
-name: http
+	writePlugin(t, dir, "bad", `
+name: bad
 executor:
-  type: http
+  type: grpc
   command: []
 `)
-	_, err := loadFile(filepath.Join(dir, "http", "plugin.yaml"))
+	_, err := loadFile(filepath.Join(dir, "bad", "plugin.yaml"))
 	if err == nil {
 		t.Error("expected error for unsupported executor type")
+	}
+}
+
+func TestLoadFile_HTTPValid(t *testing.T) {
+	dir := t.TempDir()
+	writePlugin(t, dir, "httptest", `
+name: httptest
+description: call an api
+executor:
+  type: http
+  url: "https://api.example.com/run"
+  method: POST
+`)
+	p, err := loadFile(filepath.Join(dir, "httptest", "plugin.yaml"))
+	if err != nil {
+		t.Fatalf("loadFile: %v", err)
+	}
+	if p.Manifest.Executor.Type != "http" {
+		t.Errorf("executor type = %q, want http", p.Manifest.Executor.Type)
+	}
+}
+
+func TestLoadFile_HTTPMissingURL(t *testing.T) {
+	dir := t.TempDir()
+	writePlugin(t, dir, "nourl", `
+name: nourl
+executor:
+  type: http
+`)
+	_, err := loadFile(filepath.Join(dir, "nourl", "plugin.yaml"))
+	if err == nil {
+		t.Error("expected error for http type with no url")
 	}
 }
 
@@ -242,6 +276,130 @@ executor:
 	}
 	if !strings.Contains(out, "error output") {
 		t.Errorf("output = %q, expected 'error output'", out)
+	}
+}
+
+func TestExecutePlugin_HTTPPost(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "wrong method", http.StatusMethodNotAllowed)
+			return
+		}
+		if ct := r.Header.Get("Content-Type"); ct != "application/json" {
+			http.Error(w, "wrong content-type", http.StatusBadRequest)
+			return
+		}
+		w.Write([]byte(`{"result":"ok"}`)) //nolint:errcheck
+	}))
+	defer srv.Close()
+
+	dir := t.TempDir()
+	writePlugin(t, dir, "httppost", `
+name: httppost
+executor:
+  type: http
+  url: "`+srv.URL+`/run"
+  method: POST
+input_schema:
+  type: object
+  properties:
+    code: {type: string}
+  required: [code]
+`)
+	p, err := loadFile(filepath.Join(dir, "httppost", "plugin.yaml"))
+	if err != nil {
+		t.Fatalf("loadFile: %v", err)
+	}
+	args, _ := json.Marshal(map[string]string{"code": "print('hello')"})
+	out, err := executePlugin(context.Background(), p, string(args))
+	if err != nil {
+		t.Fatalf("executePlugin: %v", err)
+	}
+	if !strings.Contains(out, "ok") {
+		t.Errorf("output = %q, want json with ok", out)
+	}
+}
+
+func TestExecutePlugin_HTTPGet(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			http.Error(w, "wrong method", http.StatusMethodNotAllowed)
+			return
+		}
+		q := r.URL.Query().Get("q")
+		w.Write([]byte("got:" + q)) //nolint:errcheck
+	}))
+	defer srv.Close()
+
+	dir := t.TempDir()
+	writePlugin(t, dir, "httpget", `
+name: httpget
+executor:
+  type: http
+  url: "`+srv.URL+`/search"
+  method: GET
+`)
+	p, err := loadFile(filepath.Join(dir, "httpget", "plugin.yaml"))
+	if err != nil {
+		t.Fatalf("loadFile: %v", err)
+	}
+	args, _ := json.Marshal(map[string]string{"q": "abap"})
+	out, err := executePlugin(context.Background(), p, string(args))
+	if err != nil {
+		t.Fatalf("executePlugin: %v", err)
+	}
+	if !strings.Contains(out, "abap") {
+		t.Errorf("output = %q, expected query param echoed back", out)
+	}
+}
+
+func TestExecutePlugin_HTTPNon2xx(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "not found", http.StatusNotFound)
+	}))
+	defer srv.Close()
+
+	dir := t.TempDir()
+	writePlugin(t, dir, "http404", `
+name: http404
+executor:
+  type: http
+  url: "`+srv.URL+`/missing"
+`)
+	p, _ := loadFile(filepath.Join(dir, "http404", "plugin.yaml"))
+	out, err := executePlugin(context.Background(), p, `{}`)
+	if err != nil {
+		t.Fatalf("unexpected Go error (non-2xx should return content, not error): %v", err)
+	}
+	if !strings.Contains(out, "404") {
+		t.Errorf("output = %q, expected 404 status in output", out)
+	}
+}
+
+func TestExecutePlugin_HTTPHeaderTemplate(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		tok := r.Header.Get("X-Token")
+		w.Write([]byte("token:" + tok)) //nolint:errcheck
+	}))
+	defer srv.Close()
+
+	t.Setenv("MY_API_TOKEN", "secret123")
+	dir := t.TempDir()
+	writePlugin(t, dir, "httpheader", `
+name: httpheader
+executor:
+  type: http
+  url: "`+srv.URL+`/check"
+  headers:
+    X-Token: "{{.env.MY_API_TOKEN}}"
+`)
+	p, _ := loadFile(filepath.Join(dir, "httpheader", "plugin.yaml"))
+	out, err := executePlugin(context.Background(), p, `{}`)
+	if err != nil {
+		t.Fatalf("executePlugin: %v", err)
+	}
+	if !strings.Contains(out, "secret123") {
+		t.Errorf("output = %q, expected header value in response", out)
 	}
 }
 

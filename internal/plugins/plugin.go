@@ -1,4 +1,4 @@
-// Package plugins loads and executes CLI-based tool plugins defined in
+// Package plugins loads and executes CLI-based and HTTP tool plugins defined in
 // .bai/plugins/<name>/plugin.yaml (project-level) and
 // ~/.bai/plugins/<name>/plugin.yaml (user-level).
 //
@@ -10,6 +10,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
+	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -42,10 +45,14 @@ type Manifest struct {
 
 // ExecutorConfig describes how to run the plugin.
 type ExecutorConfig struct {
-	Type    string            `yaml:"type"`    // only "cli" is supported
-	Command []string          `yaml:"command"` // each element is a Go template string
+	Type    string            `yaml:"type"`    // "cli" or "http"
+	Command []string          `yaml:"command"` // cli: each element is a Go template string
 	Timeout string            `yaml:"timeout"` // e.g. "60s"; defaults to 60s
-	Env     map[string]string `yaml:"env"`     // extra env vars; values are Go template strings
+	Env     map[string]string `yaml:"env"`     // cli: extra env vars; values are Go template strings
+	// http executor fields
+	URL     string            `yaml:"url"`     // http: Go template for the endpoint URL
+	Method  string            `yaml:"method"`  // http: GET or POST (default POST)
+	Headers map[string]string `yaml:"headers"` // http: request headers; values are Go templates
 }
 
 // Plugin is a loaded, validated plugin ready for execution.
@@ -205,11 +212,17 @@ func loadFile(path string) (*Plugin, error) {
 	if my.Name == "" {
 		return nil, fmt.Errorf("name is required")
 	}
-	if my.Executor.Type != "cli" {
-		return nil, fmt.Errorf("executor.type %q not supported (only \"cli\")", my.Executor.Type)
-	}
-	if len(my.Executor.Command) == 0 {
-		return nil, fmt.Errorf("executor.command must have at least one element")
+	switch my.Executor.Type {
+	case "cli":
+		if len(my.Executor.Command) == 0 {
+			return nil, fmt.Errorf("executor.command must have at least one element for cli type")
+		}
+	case "http":
+		if my.Executor.URL == "" {
+			return nil, fmt.Errorf("executor.url is required for http type")
+		}
+	default:
+		return nil, fmt.Errorf("executor.type %q not supported (only \"cli\", \"http\")", my.Executor.Type)
 	}
 	// Convert input_schema from interface{} (YAML) to json.RawMessage.
 	var schemaJSON json.RawMessage
@@ -251,7 +264,6 @@ func deduplicate(all []*Plugin) []*Plugin {
 // ── Executor ──────────────────────────────────────────────────────────────────
 
 func executePlugin(ctx context.Context, p *Plugin, argumentsJSON string) (string, error) {
-	// Parse the LLM's JSON arguments into a map for template rendering.
 	var args map[string]any
 	if argumentsJSON != "" {
 		if err := json.Unmarshal([]byte(argumentsJSON), &args); err != nil {
@@ -261,14 +273,30 @@ func executePlugin(ctx context.Context, p *Plugin, argumentsJSON string) (string
 	if args == nil {
 		args = make(map[string]any)
 	}
-
-	// Validate required fields from the input schema.
 	if err := validateRequired(p.Manifest.InputSchema, args); err != nil {
 		return "", err
 	}
+	data := buildTemplateData(args)
 
-	// Build template data: all input fields + env accessor map.
-	data := map[string]any{}
+	timeout := defaultTimeout
+	if p.Manifest.Executor.Timeout != "" {
+		if d, err := time.ParseDuration(p.Manifest.Executor.Timeout); err == nil {
+			timeout = d
+		}
+	}
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+
+	switch p.Manifest.Executor.Type {
+	case "http":
+		return executeHTTPPlugin(ctx, p, data, argumentsJSON)
+	default: // "cli"
+		return executeCLIPlugin(ctx, p, data)
+	}
+}
+
+func buildTemplateData(args map[string]any) map[string]any {
+	data := make(map[string]any, len(args)+1)
 	for k, v := range args {
 		data[k] = v
 	}
@@ -280,8 +308,10 @@ func executePlugin(ctx context.Context, p *Plugin, argumentsJSON string) (string
 		}
 	}
 	data["env"] = envMap
+	return data
+}
 
-	// Render command args.
+func executeCLIPlugin(ctx context.Context, p *Plugin, data map[string]any) (string, error) {
 	rendered, err := renderTemplate(p.Manifest.Executor.Command, data)
 	if err != nil {
 		return "", fmt.Errorf("render command: %w", err)
@@ -289,35 +319,90 @@ func executePlugin(ctx context.Context, p *Plugin, argumentsJSON string) (string
 	if len(rendered) == 0 {
 		return "", fmt.Errorf("command is empty after rendering")
 	}
-
-	// Resolve timeout.
-	timeout := defaultTimeout
-	if p.Manifest.Executor.Timeout != "" {
-		if d, err := time.ParseDuration(p.Manifest.Executor.Timeout); err == nil {
-			timeout = d
-		}
-	}
-
-	ctx, cancel := context.WithTimeout(ctx, timeout)
-	defer cancel()
-
 	cmd := exec.CommandContext(ctx, rendered[0], rendered[1:]...)
-
-	// Build environment: inherit current env, then apply plugin overrides.
 	cmd.Env = os.Environ()
 	for k, vTemplate := range p.Manifest.Executor.Env {
-		rendered, err := renderString(vTemplate, data)
+		val, err := renderString(vTemplate, data)
 		if err != nil {
 			continue
 		}
-		cmd.Env = append(cmd.Env, k+"="+rendered)
+		cmd.Env = append(cmd.Env, k+"="+val)
 	}
-
 	var out bytes.Buffer
 	cmd.Stdout = &out
 	cmd.Stderr = &out
 	_ = cmd.Run() // non-zero exit is fine — return output to LLM
 	return out.String(), nil
+}
+
+func executeHTTPPlugin(ctx context.Context, p *Plugin, data map[string]any, argumentsJSON string) (string, error) {
+	rawURL, err := renderString(p.Manifest.Executor.URL, data)
+	if err != nil {
+		return "", fmt.Errorf("render url: %w", err)
+	}
+
+	method := strings.ToUpper(p.Manifest.Executor.Method)
+	if method == "" {
+		method = http.MethodPost
+	}
+
+	var body io.Reader
+	switch method {
+	case http.MethodGet:
+		// Append args as query parameters.
+		u, err := url.Parse(rawURL)
+		if err != nil {
+			return "", fmt.Errorf("parse url: %w", err)
+		}
+		var argMap map[string]any
+		if argumentsJSON != "" {
+			_ = json.Unmarshal([]byte(argumentsJSON), &argMap)
+		}
+		q := u.Query()
+		for k, v := range argMap {
+			q.Set(k, fmt.Sprintf("%v", v))
+		}
+		u.RawQuery = q.Encode()
+		rawURL = u.String()
+	default: // POST and others send the JSON body
+		if argumentsJSON != "" {
+			body = strings.NewReader(argumentsJSON)
+		} else {
+			body = strings.NewReader("{}")
+		}
+	}
+
+	req, err := http.NewRequestWithContext(ctx, method, rawURL, body)
+	if err != nil {
+		return "", fmt.Errorf("build request: %w", err)
+	}
+	if method != http.MethodGet {
+		req.Header.Set("Content-Type", "application/json")
+	}
+	for k, vTemplate := range p.Manifest.Executor.Headers {
+		val, err := renderString(vTemplate, data)
+		if err != nil {
+			continue
+		}
+		req.Header.Set(k, val)
+	}
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("http request: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", fmt.Errorf("read response: %w", err)
+	}
+
+	// Return status + body for non-2xx so the LLM can report the error.
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return fmt.Sprintf("HTTP %d %s\n%s", resp.StatusCode, resp.Status, string(respBody)), nil
+	}
+	return string(respBody), nil
 }
 
 // renderTemplate renders each element of tmplStrs through Go's text/template.

@@ -47,15 +47,30 @@ brew install bai
 
 ### Debian / Ubuntu
 
+**x86_64:**
 ```bash
 curl -sL https://github.com/bluefunda/bluefunda-ai/releases/latest/download/bai_linux_amd64.deb -o bai.deb
 sudo dpkg -i bai.deb
 ```
 
+**ARM64:**
+```bash
+curl -sL https://github.com/bluefunda/bluefunda-ai/releases/latest/download/bai_linux_arm64.deb -o bai.deb
+sudo dpkg -i bai.deb
+```
+
 ### RHEL / Fedora / Rocky
 
+**x86_64:**
 ```bash
-sudo dnf install https://github.com/bluefunda/bluefunda-ai/releases/latest/download/bai_linux_amd64.rpm
+curl -sL https://github.com/bluefunda/bluefunda-ai/releases/latest/download/bai_linux_amd64.rpm -o bai.rpm
+sudo rpm -i bai.rpm
+```
+
+**ARM64:**
+```bash
+curl -sL https://github.com/bluefunda/bluefunda-ai/releases/latest/download/bai_linux_arm64.rpm -o bai.rpm
+sudo rpm -i bai.rpm
 ```
 
 ### From source

@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.22.0](https://github.com/bluefunda/bluefunda-ai/compare/v1.21.0...v1.22.0) (2026-06-22)
+
+
+### Features
+
+* **tools:** add patch_file tool for atomic multi-edit ([#131](https://github.com/bluefunda/bluefunda-ai/issues/131)) ([94123bd](https://github.com/bluefunda/bluefunda-ai/commit/94123bd4e01700555e6a7680e2c94fb1af0eb8b5))
+
 ## [1.21.0](https://github.com/bluefunda/bluefunda-ai/compare/v1.20.2...v1.21.0) (2026-06-22)
 
 

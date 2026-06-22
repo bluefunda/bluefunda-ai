@@ -68,6 +68,20 @@ func runInit(cmd *cobra.Command, args []string) error {
 	}
 	fmt.Printf("  created  .bai/hooks/pre-tool/   .bai/hooks/post-tool/\n")
 
+	// example plugin scaffold
+	exPluginDir := filepath.Join(baiDir, "plugins", "example")
+	exPluginPath := filepath.Join(exPluginDir, "plugin.yaml")
+	if _, err := os.Stat(exPluginPath); os.IsNotExist(err) {
+		if err := os.MkdirAll(exPluginDir, 0755); err == nil {
+			if err := os.WriteFile(exPluginPath, []byte(pluginTemplate()), 0644); err == nil {
+				fmt.Printf("  created  .bai/plugins/example/plugin.yaml\n")
+				created++
+			}
+		}
+	} else {
+		fmt.Printf("  exists   .bai/plugins/example/plugin.yaml  (skipped)\n")
+	}
+
 	// .gitignore: ensure the worktrees directory is ignored.
 	gitignorePath := filepath.Join(cwd, ".gitignore")
 	if added := ensureGitignoreEntry(gitignorePath, ".bai/worktrees/"); added {
@@ -182,6 +196,34 @@ func ensureGitignoreEntry(path, entry string) bool {
 	}
 	_, _ = fmt.Fprintf(f, "%s%s\n", prefix, entry)
 	return true
+}
+
+func pluginTemplate() string {
+	return `# .bai/plugins/example/plugin.yaml
+# Rename this directory and edit the manifest to create your own plugin.
+# Plugin tools are namespaced as plugin__<name> in the LLM tool schema.
+# See: https://github.com/bluefunda/bluefunda-ai/blob/main/docs/plugins.md
+
+# name: example
+# description: Run an example command
+#
+# input_schema:
+#   type: object
+#   properties:
+#     message:
+#       type: string
+#       description: Message to print
+#   required: [message]
+#
+# executor:
+#   type: cli
+#   command: ["echo", "{{.message}}"]
+#   timeout: 30s
+#   env:
+#     MY_VAR: "{{.env.MY_ENV_VAR}}"   # expand from current environment
+#
+# approval: auto   # always | never | auto (default)
+`
 }
 
 func settingsTemplate() string {

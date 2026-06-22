@@ -39,6 +39,7 @@ archives:
 nfpms:
   - id: bai
     package_name: bai
+    file_name_template: "{{ .ProjectName }}_{{ .Os }}_{{ .Arch }}"
     ids:
       - bai
     vendor: BlueFunda
@@ -123,24 +124,24 @@ release:
 
     **Debian/Ubuntu (x86_64):**
     ```bash
-    curl -sL https://github.com/bluefunda/bluefunda-ai/releases/download/v{{ .Version }}/bai_{{ .Version }}_linux_amd64.deb -o bai.deb
+    curl -sL https://github.com/bluefunda/bluefunda-ai/releases/latest/download/bai_linux_amd64.deb -o bai.deb
     sudo dpkg -i bai.deb
     ```
 
     **Debian/Ubuntu (ARM64):**
     ```bash
-    curl -sL https://github.com/bluefunda/bluefunda-ai/releases/download/v{{ .Version }}/bai_{{ .Version }}_linux_arm64.deb -o bai.deb
+    curl -sL https://github.com/bluefunda/bluefunda-ai/releases/latest/download/bai_linux_arm64.deb -o bai.deb
     sudo dpkg -i bai.deb
     ```
 
     **RHEL / Fedora / Rocky (x86_64):**
     ```bash
-    sudo rpm -i https://github.com/bluefunda/bluefunda-ai/releases/download/v{{ .Version }}/bai_{{ .Version }}_linux_amd64.rpm
+    sudo rpm -i https://github.com/bluefunda/bluefunda-ai/releases/latest/download/bai_linux_amd64.rpm
     ```
 
     **RHEL / Fedora / Rocky (ARM64):**
     ```bash
-    sudo rpm -i https://github.com/bluefunda/bluefunda-ai/releases/download/v{{ .Version }}/bai_{{ .Version }}_linux_arm64.rpm
+    sudo rpm -i https://github.com/bluefunda/bluefunda-ai/releases/latest/download/bai_linux_arm64.rpm
     ```
 
     **macOS (manual):**

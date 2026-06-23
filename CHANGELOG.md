@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.30.0](https://github.com/bluefunda/bluefunda-ai/compare/v1.29.1...v1.30.0) (2026-06-23)
+
+
+### Features
+
+* **agent:** configurable context auto-compaction — estimateTokens, hard fallback, doctor check ([#156](https://github.com/bluefunda/bluefunda-ai/issues/156)) ([9cba556](https://github.com/bluefunda/bluefunda-ai/commit/9cba55688110ac916f090d33f4074e62c1ee1368))
+
 ## [1.29.1](https://github.com/bluefunda/bluefunda-ai/compare/v1.29.0...v1.29.1) (2026-06-22)
 
 

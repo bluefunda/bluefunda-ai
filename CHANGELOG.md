@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.32.3](https://github.com/bluefunda/bluefunda-ai/compare/v1.32.2...v1.32.3) (2026-06-23)
+
+
+### Bug Fixes
+
+* **auth:** pre-flight token check before TUI launch ([#189](https://github.com/bluefunda/bluefunda-ai/issues/189)) ([8db9901](https://github.com/bluefunda/bluefunda-ai/commit/8db99016d30dbfe6c592221f9677e873710f39cf))
+
 ## [1.32.2](https://github.com/bluefunda/bluefunda-ai/compare/v1.32.1...v1.32.2) (2026-06-23)
 
 

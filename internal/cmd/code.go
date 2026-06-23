@@ -642,6 +642,16 @@ func agenticLoopTUI(
 					continue
 				}
 			}
+			// Request entity too large (413) — history is still too big even after
+			// compaction. Drop aggressively to half the threshold and retry once.
+			if strings.Contains(err.Error(), "413") {
+				ch <- tui.StreamEvent{Kind: "chunk", Chunk: "\n⚠ Request too large — dropping older messages and retrying...\n"}
+				history = dropOldestTurns(history, maxContextTokens/2)
+				lastPromptTokens = 0
+				session.Save(sessPath, toSessionMsgs(history)) //nolint:errcheck
+				iteration--
+				continue
+			}
 			return history, err
 		}
 		rateLimitRetries = 0
@@ -896,6 +906,12 @@ func estimateIterationCost(model string, usage iterationUsage, historyTokens int
 	return float64(pt)/1_000_000*p.inputPerMToken + float64(ct)/1_000_000*p.outputPerMToken
 }
 
+// compactionSafeTokens is the maximum estimated tokens sent to the LLM for
+// the summarisation request. Capping the compaction input prevents the
+// compaction request itself from triggering a 413 on the server when the
+// history has grown very large.
+const compactionSafeTokens = 50_000
+
 // compactHistory sends the full history to the LLM with a summarisation prompt
 // (no tools, single turn) and returns a trimmed history containing only system
 // messages, the summary, and the last four messages (two exchanges).
@@ -909,7 +925,14 @@ func compactHistory(
 		"tool results that matter, and any open questions. Be concise but complete enough that " +
 		"the session can continue without the original messages."
 
-	summaryHistory := append(append([]codeMessage(nil), history...),
+	// Pre-truncate so the compaction request itself stays below server size limits.
+	// We keep the most recent messages (most context-relevant) and system messages.
+	safeHistory := history
+	if estimateTokens(history) > compactionSafeTokens {
+		safeHistory = dropOldestTurns(history, compactionSafeTokens)
+	}
+
+	summaryHistory := append(append([]codeMessage(nil), safeHistory...),
 		codeMessage{Role: "user", Content: summaryPrompt},
 	)
 
@@ -928,6 +951,9 @@ func compactHistory(
 	for {
 		ev, recvErr := stream.Recv()
 		if recvErr != nil {
+			if recvErr != io.EOF {
+				return nil, fmt.Errorf("compaction recv: %w", recvErr)
+			}
 			break
 		}
 		switch ev.GetType() {

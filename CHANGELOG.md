@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.31.0](https://github.com/bluefunda/bluefunda-ai/compare/v1.30.0...v1.31.0) (2026-06-23)
+
+
+### Features
+
+* **agent:** budget controls — --max-budget-usd flag and BAI_MAX_BUDGET_USD env var ([#159](https://github.com/bluefunda/bluefunda-ai/issues/159)) ([6936c94](https://github.com/bluefunda/bluefunda-ai/commit/6936c94abfe3d158378a4341ad5abb9286e07804))
+
 ## [1.30.0](https://github.com/bluefunda/bluefunda-ai/compare/v1.29.1...v1.30.0) (2026-06-23)
 
 

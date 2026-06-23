@@ -82,6 +82,12 @@ func Execute(name, argumentsJSON string) (string, error) {
 	case "bash":
 		command, _ := args["command"].(string)
 		return Bash(command)
+	case "task":
+		prompt, _ := args["prompt"].(string)
+		workDir, _ := args["working_directory"].(string)
+		maxTurnsF, _ := args["max_turns"].(float64)
+		useWorktree, _ := args["use_worktree"].(bool)
+		return RunTask(context.Background(), prompt, workDir, int(maxTurnsF), useWorktree)
 	default:
 		return "", fmt.Errorf("unknown tool: %s", name)
 	}

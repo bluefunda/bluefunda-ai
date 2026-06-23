@@ -192,6 +192,23 @@ func LocalToolSchemas() (string, error) {
 				}`),
 			},
 		},
+		{
+			Type: "function",
+			Function: FunctionDef{
+				Name:        "task",
+				Description: "Spawn a headless bai subagent to handle a self-contained subtask and return its output. Use to fan out independent work in parallel or to delegate a well-scoped chunk of work. The child runs fully autonomously (--auto) and its output is returned as the result. Budget controls are NOT forwarded to children to avoid double-counting.",
+				Parameters: json.RawMessage(`{
+					"type": "object",
+					"properties": {
+						"prompt":            {"type": "string", "description": "Full task description for the subagent — be specific about what to do and what to return."},
+						"working_directory": {"type": "string", "description": "Working directory for the subagent (absolute path). Defaults to the current directory."},
+						"max_turns":         {"type": "integer", "description": "Maximum agentic iterations for the child. Default: no limit."},
+						"use_worktree":      {"type": "boolean", "description": "Give the subagent an isolated git worktree (--worktree). Useful for experimental changes. Default: false."}
+					},
+					"required": ["prompt"]
+				}`),
+			},
+		},
 	}
 
 	b, err := json.Marshal(schemas)
@@ -219,7 +236,7 @@ func MergeSchemas(base string, extra []ToolSchema) (string, error) {
 // NeedsApproval returns true for tools that modify state and require user confirmation.
 func NeedsApproval(toolName string) bool {
 	switch toolName {
-	case "write_file", "bash":
+	case "write_file", "bash", "task":
 		return true
 	}
 	return false

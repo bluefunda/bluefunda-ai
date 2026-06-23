@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.32.1](https://github.com/bluefunda/bluefunda-ai/compare/v1.32.0...v1.32.1) (2026-06-23)
+
+
+### Bug Fixes
+
+* **agent:** recover from 413 Request Entity Too Large during compaction ([#180](https://github.com/bluefunda/bluefunda-ai/issues/180)) ([dfe07f6](https://github.com/bluefunda/bluefunda-ai/commit/dfe07f64546828cb1e9fe2e205136f902371b5dd))
+
 ## [1.32.0](https://github.com/bluefunda/bluefunda-ai/compare/v1.31.1...v1.32.0) (2026-06-23)
 
 

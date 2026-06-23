@@ -194,6 +194,19 @@ func runAgenticSession(args []string) error {
 	workDir, _ := os.Getwd()
 	p := printer(cfg)
 
+	// --- Pre-flight token check (#186) ---
+	// Refresh the token before any UI launches so that expired credentials are
+	// handled on a clean terminal rather than mid-session inside the TUI.
+	// NearExpiry(5m) catches already-expired tokens and tokens about to expire,
+	// avoiding a mid-session interruption for short sessions too.
+	if conn.TS.NearExpiry(5 * time.Minute) {
+		if err := conn.TS.EnsureValidToken(); err != nil {
+			if authErr := reAuthenticate(cfg, p); authErr != nil {
+				return authErr
+			}
+		}
+	}
+
 	// --- Local MCP servers (#85) ---
 	// Start servers defined in .bai/settings.yaml mcp_servers and merge their
 	// tools into the schema sent to the LLM on every agentic turn.

@@ -24,6 +24,7 @@ var (
 	rootAutoApply        bool
 	rootMaxTurns         int
 	rootMaxContextTokens int
+	rootMaxBudgetUSD     float64
 	rootDir              string
 	rootContinue         bool
 	rootResume           string
@@ -70,6 +71,9 @@ func runDefault(cmd *cobra.Command, args []string) error {
 	if rootMaxContextTokens > 0 {
 		codeMaxContextTokens = rootMaxContextTokens
 	}
+	if rootMaxBudgetUSD > 0 {
+		codeMaxBudgetUSD = rootMaxBudgetUSD
+	}
 	if rootDir != "" {
 		codeDir = rootDir
 	}
@@ -111,6 +115,7 @@ func init() {
 	rootCmd.Flags().BoolVar(&rootAutoApply, "auto-apply", false, "Same as --auto")
 	rootCmd.Flags().IntVar(&rootMaxTurns, "max-turns", 20, "Max agentic loop iterations")
 	rootCmd.Flags().IntVar(&rootMaxContextTokens, "max-context-tokens", 0, "Max context tokens before auto-compaction (default 100000; env BAI_MAX_CONTEXT_TOKENS)")
+	rootCmd.Flags().Float64Var(&rootMaxBudgetUSD, "max-budget-usd", 0, "Stop session when estimated cost exceeds this USD amount (0 = no limit; env BAI_MAX_BUDGET_USD)")
 	rootCmd.Flags().StringVar(&rootDir, "dir", ".", "Working directory for file operations")
 	rootCmd.Flags().BoolVarP(&rootContinue, "continue", "c", false, "Resume most recent session")
 	rootCmd.Flags().StringVar(&rootResume, "resume", "", "Resume a specific session ID")

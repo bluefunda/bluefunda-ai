@@ -36,7 +36,8 @@ var (
 	codeAutoApply        bool
 	codeAuto             bool
 	codeMaxTurns         int
-	codeMaxContextTokens int // 0 = use defaultCompactionThreshold
+	codeMaxContextTokens int     // 0 = use defaultCompactionThreshold
+	codeMaxBudgetUSD     float64 // 0 = no limit
 	codePrint            bool
 	codeOutputFormat     string
 	codeResume           string
@@ -66,6 +67,7 @@ func init() {
 	codeCmd.Flags().BoolVar(&codeAuto, "auto", false, "Same as --auto-apply")
 	codeCmd.Flags().IntVar(&codeMaxTurns, "max-turns", 20, "Maximum agentic loop iterations before stopping")
 	codeCmd.Flags().IntVar(&codeMaxContextTokens, "max-context-tokens", 0, "Max context tokens before auto-compaction (default 100000; env BAI_MAX_CONTEXT_TOKENS)")
+	codeCmd.Flags().Float64Var(&codeMaxBudgetUSD, "max-budget-usd", 0, "Stop session when estimated cost exceeds this USD amount (0 = no limit; env BAI_MAX_BUDGET_USD)")
 	codeCmd.Flags().BoolVarP(&codePrint, "print", "p", false, "Non-interactive mode: print output to stdout")
 	codeCmd.Flags().StringVar(&codeOutputFormat, "output-format", "text", "Output format for --print: text, json, stream-json")
 	codeCmd.Flags().StringVar(&codeResume, "resume", "", "Resume a previous session by ID")
@@ -168,6 +170,16 @@ func runAgenticSession(args []string) error {
 	}
 	if maxContextTokens == 0 {
 		maxContextTokens = defaultCompactionThreshold
+	}
+
+	// Resolve effective budget limit: CLI flag > BAI_MAX_BUDGET_USD > 0 (no limit).
+	maxBudgetUSD := codeMaxBudgetUSD
+	if maxBudgetUSD == 0 {
+		if v := os.Getenv("BAI_MAX_BUDGET_USD"); v != "" {
+			if f, err := strconv.ParseFloat(v, 64); err == nil && f > 0 {
+				maxBudgetUSD = f
+			}
+		}
 	}
 
 	var toolSchemas string
@@ -285,7 +297,7 @@ func runAgenticSession(args []string) error {
 			return fmt.Errorf("prompt required in --print mode (pass as argument or pipe via stdin)")
 		}
 		return runCodePrint(conn, cfg, model, toolSchemas, initialPrompt, history,
-			codeMaxTurns, maxContextTokens, permAllow, permDeny, codeAutoApply, codeOutputFormat, sessPath, auditLog, hookRunner, mcpMgr, pluginMgr, p)
+			codeMaxTurns, maxContextTokens, maxBudgetUSD, permAllow, permDeny, codeAutoApply, codeOutputFormat, sessPath, auditLog, hookRunner, mcpMgr, pluginMgr, p)
 	}
 
 	// --- Interactive TUI mode ---
@@ -322,7 +334,7 @@ func runAgenticSession(args []string) error {
 			newHistory, loopErr := agenticLoopTUI(
 				conn, cfg, cid, mdl, currentSchemas,
 				history, isFirstTurn && isNew, permAllow, permDeny, currentAutoApply,
-				maxTurnsState, maxContextTokens, sessPath, auditLog, hookRunner, mcpMgr, pluginMgr, p, ch,
+				maxTurnsState, maxContextTokens, maxBudgetUSD, sessPath, auditLog, hookRunner, mcpMgr, pluginMgr, p, ch,
 			)
 			history = newHistory
 			turns++
@@ -418,6 +430,7 @@ func runCodePrint(
 	history []codeMessage,
 	maxTurns int,
 	maxContextTokens int,
+	maxBudgetUSD float64,
 	allow, deny []string,
 	autoApply bool,
 	outputFormat string,
@@ -440,7 +453,7 @@ func runCodePrint(
 		newHistory, loopErr := agenticLoopTUI(
 			conn, cfg, chatID, model, toolSchemas,
 			history, true, allow, deny, autoApply,
-			maxTurns, maxContextTokens, sessPath, auditLog, hookRunner, mcpMgr, pluginMgr, p, ch,
+			maxTurns, maxContextTokens, maxBudgetUSD, sessPath, auditLog, hookRunner, mcpMgr, pluginMgr, p, ch,
 		)
 		session.Save(sessPath, toSessionMsgs(newHistory)) //nolint:errcheck
 		if loopErr != nil {
@@ -545,6 +558,7 @@ func agenticLoopTUI(
 	autoApply bool,
 	maxTurns int,
 	maxContextTokens int,
+	maxBudgetUSD float64,
 	sessPath string,
 	auditLog *audit.Logger,
 	hookRunner *hooks.Runner,
@@ -562,6 +576,7 @@ func agenticLoopTUI(
 
 	rateLimitRetries := 0
 	var lastPromptTokens int32 // prompt token count from the most recent iteration
+	var estimatedCostUSD float64 // cumulative estimated cost for this session turn
 
 	for iteration := 0; iteration < maxTurns; iteration++ {
 		// Compact context when the client-side estimate or server-reported token count
@@ -630,6 +645,18 @@ func agenticLoopTUI(
 			return history, err
 		}
 		rateLimitRetries = 0
+
+		// Budget check: accumulate estimated cost and stop before the next iteration.
+		if maxBudgetUSD > 0 {
+			estimatedCostUSD += estimateIterationCost(model, usage, estimateTokens(history))
+			if estimatedCostUSD >= maxBudgetUSD {
+				ch <- tui.StreamEvent{Kind: "chunk", Chunk: fmt.Sprintf(
+					"\n💰 Session budget limit $%.2f reached (est. $%.4f used). Stopping.\n",
+					maxBudgetUSD, estimatedCostUSD,
+				)}
+				return history, fmt.Errorf("budget limit $%.2f reached (est. $%.4f used)", maxBudgetUSD, estimatedCostUSD)
+			}
+		}
 
 		if len(toolCalls) == 0 {
 			return history, nil
@@ -823,6 +850,50 @@ func dropOldestTurns(history []codeMessage, targetTokens int) []codeMessage {
 		convo = convo[1:]
 	}
 	return append(sysMsgs, convo...)
+}
+
+// modelPrice holds approximate per-million-token pricing for one model.
+type modelPrice struct {
+	inputPerMToken  float64 // USD per 1M prompt tokens
+	outputPerMToken float64 // USD per 1M completion tokens
+}
+
+// modelPricing returns approximate pricing for a model name or alias.
+// Prices are estimates as of mid-2026 and may drift — they are used only
+// for session-level budget enforcement, not billing.
+func modelPricing(model string) modelPrice {
+	m := strings.ToLower(model)
+	switch {
+	case strings.Contains(m, "opus"):
+		return modelPrice{15.00, 75.00}
+	case strings.Contains(m, "haiku"):
+		return modelPrice{0.25, 1.25}
+	case strings.Contains(m, "gpt-4o"):
+		return modelPrice{2.50, 10.00}
+	case strings.Contains(m, "gpt-4.1") || strings.Contains(m, "gpt-4"):
+		return modelPrice{2.00, 8.00}
+	case m == "fast": // Groq llama-class
+		return modelPrice{0.06, 0.18}
+	default: // claude-sonnet, auto, think, unknown — conservative estimate
+		return modelPrice{3.00, 15.00}
+	}
+}
+
+// estimateIterationCost computes the approximate USD cost of one agentic iteration.
+// When the backend provides usage counts they are used directly; otherwise prompt
+// tokens are estimated from the current history size and completion tokens are
+// estimated at 15% of prompt (conservative for code tasks).
+func estimateIterationCost(model string, usage iterationUsage, historyTokens int) float64 {
+	pt := int(usage.PromptTokens)
+	ct := int(usage.CompletionTokens)
+	if pt == 0 {
+		pt = historyTokens
+	}
+	if ct == 0 {
+		ct = pt * 15 / 100
+	}
+	p := modelPricing(model)
+	return float64(pt)/1_000_000*p.inputPerMToken + float64(ct)/1_000_000*p.outputPerMToken
 }
 
 // compactHistory sends the full history to the LLM with a summarisation prompt

@@ -123,7 +123,16 @@ func runDoctor(cmd *cobra.Command, args []string) error {
 	checks = append(checks, checkResult{"Context limit", "info",
 		fmt.Sprintf("%s tokens (%s)", formatInt(contextLimit), limitSource)})
 
-	// 9. git available
+	// 9. Budget limit
+	budgetDetail := "no limit (--max-budget-usd / BAI_MAX_BUDGET_USD)"
+	if v := os.Getenv("BAI_MAX_BUDGET_USD"); v != "" {
+		if f, err := strconv.ParseFloat(v, 64); err == nil && f > 0 {
+			budgetDetail = fmt.Sprintf("$%.2f per session (BAI_MAX_BUDGET_USD)", f)
+		}
+	}
+	checks = append(checks, checkResult{"Budget limit", "info", budgetDetail})
+
+	// 10. git available
 	if _, err := exec.LookPath("git"); err != nil {
 		checks = append(checks, checkResult{"git", "warn", "not found — worktree isolation and git tools unavailable"})
 		warnings++
@@ -131,7 +140,7 @@ func runDoctor(cmd *cobra.Command, args []string) error {
 		checks = append(checks, checkResult{"git", "ok", "available"})
 	}
 
-	// 10. Project context files
+	// 11. Project context files
 	cwd, _ := os.Getwd()
 	hasContext := false
 	for _, name := range []string{".bai/context.md", "AGENTS.md", "CLAUDE.md"} {
@@ -145,7 +154,7 @@ func runDoctor(cmd *cobra.Command, args []string) error {
 		checks = append(checks, checkResult{"Project context", "info", "no .bai/context.md or AGENTS.md found — create one to give the agent project context"})
 	}
 
-	// 11. Hooks
+	// 12. Hooks
 	hooksDir := filepath.Join(cwd, ".bai", "hooks")
 	hookEntries, _ := os.ReadDir(hooksDir)
 	var hookCount int
@@ -160,7 +169,7 @@ func runDoctor(cmd *cobra.Command, args []string) error {
 		checks = append(checks, checkResult{"Hooks", "ok", fmt.Sprintf("%d hook script(s) in .bai/hooks/", hookCount)})
 	}
 
-	// 12. Plugins loaded
+	// 13. Plugins loaded
 	pm := plugins.NewManager(cwd)
 	pluginList := pm.All()
 	if len(pluginList) == 0 {
@@ -173,7 +182,7 @@ func runDoctor(cmd *cobra.Command, args []string) error {
 		checks = append(checks, checkResult{"Plugins", "ok", fmt.Sprintf("%d plugin(s): %s", len(names), joinStrings(names, ", "))})
 	}
 
-	// 13. Local sessions
+	// 14. Local sessions
 	codeSessions, _ := session.List(cwd)
 	if len(codeSessions) == 0 {
 		checks = append(checks, checkResult{"Local sessions", "info", "none for this directory"})
@@ -181,7 +190,7 @@ func runDoctor(cmd *cobra.Command, args []string) error {
 		checks = append(checks, checkResult{"Local sessions", "ok", fmt.Sprintf("%d session(s) — run `bai sessions` to list", len(codeSessions))})
 	}
 
-	// 14. bai version / update check
+	// 15. bai version / update check
 	if latest, err := fetchLatestTag("bluefunda", "bluefunda-ai"); err != nil {
 		// Offline or rate-limited — just show installed version.
 		checks = append(checks, checkResult{"bai version", "ok", Version})

@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.32.0](https://github.com/bluefunda/bluefunda-ai/compare/v1.31.1...v1.32.0) (2026-06-23)
+
+
+### Features
+
+* **agent:** multi-agent fan-out — Task tool spawning subagent processes ([#178](https://github.com/bluefunda/bluefunda-ai/issues/178)) ([93d392f](https://github.com/bluefunda/bluefunda-ai/commit/93d392f2ebe91c27970e4586891959d5757faa93))
+
 ## [1.31.1](https://github.com/bluefunda/bluefunda-ai/compare/v1.31.0...v1.31.1) (2026-06-23)
 
 

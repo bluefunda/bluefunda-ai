@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.32.2](https://github.com/bluefunda/bluefunda-ai/compare/v1.32.1...v1.32.2) (2026-06-23)
+
+
+### Bug Fixes
+
+* **agent:** stable chatID per session and auto-generate chat title ([#185](https://github.com/bluefunda/bluefunda-ai/issues/185)) ([f38eb97](https://github.com/bluefunda/bluefunda-ai/commit/f38eb9746127ac63d04e5373fab112a545579c05))
+
 ## [1.32.1](https://github.com/bluefunda/bluefunda-ai/compare/v1.32.0...v1.32.1) (2026-06-23)
 
 

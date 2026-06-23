@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.31.1](https://github.com/bluefunda/bluefunda-ai/compare/v1.31.0...v1.31.1) (2026-06-23)
+
+
+### Bug Fixes
+
+* **tui:** auto-expand input box and show char/line count ([#162](https://github.com/bluefunda/bluefunda-ai/issues/162)) ([61323a8](https://github.com/bluefunda/bluefunda-ai/commit/61323a874bc4565ae6ff323962bbf7ecde0498be))
+
 ## [1.31.0](https://github.com/bluefunda/bluefunda-ai/compare/v1.30.0...v1.31.0) (2026-06-23)
 
 

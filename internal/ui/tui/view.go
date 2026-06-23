@@ -210,6 +210,13 @@ func (m Model) renderInput() string {
 		inner += lines
 	} else {
 		inner = m.textarea.View()
+		if m.showInputCount() {
+			val := m.textarea.Value()
+			lineCount := strings.Count(val, "\n") + 1
+			charCount := len([]rune(val))
+			countStr := fmt.Sprintf("%d lines · %d chars", lineCount, charCount)
+			inner += "\n" + th.ToolDim.Render(countStr)
+		}
 	}
 
 	return th.InputBorder.

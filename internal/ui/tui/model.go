@@ -173,9 +173,11 @@ type SubmitFn func(chatID, model, input string, isNew bool) <-chan StreamEvent
 // ──────────────────────────────────────────────
 
 const (
-	headerHeight  = 2
-	footerHeight  = 1
-	inputMinLines = 1
+	headerHeight   = 2
+	footerHeight   = 1
+	inputMinLines  = 1
+	inputMaxLines  = 5  // max textarea rows before internal scroll
+	countThreshold = 80 // show char/line count when input exceeds this many runes
 )
 
 type Model struct {
@@ -421,9 +423,18 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	// Route all remaining events to textarea and viewport
 	if !m.streaming {
+		prevRows := m.effectiveInputRows()
+		prevCount := m.showInputCount()
+
 		var taCmd tea.Cmd
 		m.textarea, taCmd = m.textarea.Update(msg)
 		cmds = append(cmds, taCmd)
+
+		// Relayout when the textarea grows/shrinks or the count indicator
+		// appears/disappears, so the viewport adjusts correctly.
+		if m.effectiveInputRows() != prevRows || m.showInputCount() != prevCount {
+			m = m.handleResize()
+		}
 
 		// Update slash menu whenever text changes
 		m.updateSlashMenu()
@@ -876,11 +887,48 @@ func (m *Model) ensureAssistantMsg() {
 	}
 }
 
+// effectiveInputRows computes the visual row count for the current textarea
+// value, accounting for both explicit newlines and word-wrap at the current
+// terminal width. The result is clamped to [inputMinLines, inputMaxLines].
+func (m Model) effectiveInputRows() int {
+	w := m.width - 4 // textarea inner width (border + padding)
+	if w <= 0 {
+		w = 80
+	}
+	total := 0
+	for _, line := range strings.Split(m.textarea.Value(), "\n") {
+		runeLen := len([]rune(line))
+		if runeLen == 0 {
+			total++
+		} else {
+			total += (runeLen + w - 1) / w // ceiling division
+		}
+	}
+	if total < inputMinLines {
+		return inputMinLines
+	}
+	if total > inputMaxLines {
+		return inputMaxLines
+	}
+	return total
+}
+
+// showInputCount returns true when the char/line indicator should be shown.
+func (m Model) showInputCount() bool {
+	val := m.textarea.Value()
+	return len([]rune(val)) > countThreshold || strings.ContainsRune(val, '\n')
+}
+
 func (m Model) handleResize() Model {
 	m.width = max(m.width, 40)
 	m.height = max(m.height, 10)
 
-	inputH := inputMinLines + 2 // border
+	rows := m.effectiveInputRows()
+	countH := 0
+	if m.showInputCount() {
+		countH = 1
+	}
+	inputH := rows + 2 + countH // content rows + top/bottom border + optional count
 	vpH := m.height - headerHeight - footerHeight - inputH - 2
 	if vpH < 4 {
 		vpH = 4
@@ -889,6 +937,7 @@ func (m Model) handleResize() Model {
 	m.viewport.Width = m.width
 	m.viewport.Height = vpH
 	m.textarea.SetWidth(m.width - 4)
+	m.textarea.SetHeight(rows)
 
 	m.vpReady = true
 	m.refreshViewport()

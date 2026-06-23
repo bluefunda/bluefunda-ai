@@ -296,12 +296,15 @@ func runAgenticSession(args []string) error {
 		if initialPrompt == "" {
 			return fmt.Errorf("prompt required in --print mode (pass as argument or pipe via stdin)")
 		}
-		return runCodePrint(conn, cfg, model, toolSchemas, initialPrompt, history,
+		return runCodePrint(conn, cfg, sessionID, model, toolSchemas, initialPrompt, history,
 			codeMaxTurns, maxContextTokens, maxBudgetUSD, permAllow, permDeny, codeAutoApply, codeOutputFormat, sessPath, auditLog, hookRunner, mcpMgr, pluginMgr, p)
 	}
 
 	// --- Interactive TUI mode ---
-	chatID := uuid.New().String()
+	// Use sessionID as the chatID so all turns of the same session share one
+	// identifier on the server. Previously a new UUID was generated per turn,
+	// making server-side grouping impossible (#183).
+	chatID := sessionID
 
 	// autoApplyState and toolSchemasState are shared between the TUI (/auto,
 	// /chat, /code toggles) and the submit closure, so changes take effect on
@@ -426,7 +429,7 @@ func handleWorktreeEnd(worktreePath, gitRootPath string, p *ui.Printer) error {
 func runCodePrint(
 	conn *caigrpc.Conn,
 	cfg *config.Config,
-	model, toolSchemas, prompt string,
+	chatID, model, toolSchemas, prompt string,
 	history []codeMessage,
 	maxTurns int,
 	maxContextTokens int,
@@ -442,7 +445,6 @@ func runCodePrint(
 	p *ui.Printer,
 ) error {
 	history = append(history, codeMessage{Role: "user", Content: prompt})
-	chatID := uuid.New().String()
 
 	ch := make(chan tui.StreamEvent, 128)
 
@@ -572,6 +574,25 @@ func agenticLoopTUI(
 	}
 	if maxContextTokens <= 0 {
 		maxContextTokens = defaultCompactionThreshold
+	}
+
+	// Generate a chat title from the first user prompt on new sessions (#182).
+	// Fire-and-forget: title generation failure is silently ignored.
+	if isFirstTurn {
+		for _, m := range history {
+			if m.Role == "user" && m.Content != "" {
+				prompt := m.Content
+				if len(prompt) > 200 {
+					prompt = prompt[:200]
+				}
+				go func(p string) {
+					tCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+					defer cancel()
+					_, _ = conn.Client.GenerateTitle(tCtx, &pb.GenerateTitleRequest{ChatId: chatID, Prompt: p})
+				}(prompt)
+				break
+			}
+		}
 	}
 
 	rateLimitRetries := 0

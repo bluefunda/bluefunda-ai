@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -110,7 +111,19 @@ func runDoctor(cmd *cobra.Command, args []string) error {
 	// 7. MCP servers (informational)
 	checks = append(checks, checkResult{"MCP servers", "info", "run `bai mcp list` to view available integrations"})
 
-	// 8. git available
+	// 8. Context limit (auto-compaction threshold)
+	contextLimit := defaultCompactionThreshold
+	limitSource := "default"
+	if v := os.Getenv("BAI_MAX_CONTEXT_TOKENS"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			contextLimit = n
+			limitSource = "BAI_MAX_CONTEXT_TOKENS"
+		}
+	}
+	checks = append(checks, checkResult{"Context limit", "info",
+		fmt.Sprintf("%s tokens (%s)", formatInt(contextLimit), limitSource)})
+
+	// 9. git available
 	if _, err := exec.LookPath("git"); err != nil {
 		checks = append(checks, checkResult{"git", "warn", "not found — worktree isolation and git tools unavailable"})
 		warnings++
@@ -118,7 +131,7 @@ func runDoctor(cmd *cobra.Command, args []string) error {
 		checks = append(checks, checkResult{"git", "ok", "available"})
 	}
 
-	// 9. Project context files
+	// 10. Project context files
 	cwd, _ := os.Getwd()
 	hasContext := false
 	for _, name := range []string{".bai/context.md", "AGENTS.md", "CLAUDE.md"} {
@@ -132,7 +145,7 @@ func runDoctor(cmd *cobra.Command, args []string) error {
 		checks = append(checks, checkResult{"Project context", "info", "no .bai/context.md or AGENTS.md found — create one to give the agent project context"})
 	}
 
-	// 10. Hooks
+	// 11. Hooks
 	hooksDir := filepath.Join(cwd, ".bai", "hooks")
 	hookEntries, _ := os.ReadDir(hooksDir)
 	var hookCount int
@@ -147,7 +160,7 @@ func runDoctor(cmd *cobra.Command, args []string) error {
 		checks = append(checks, checkResult{"Hooks", "ok", fmt.Sprintf("%d hook script(s) in .bai/hooks/", hookCount)})
 	}
 
-	// 11. Plugins loaded
+	// 12. Plugins loaded
 	pm := plugins.NewManager(cwd)
 	pluginList := pm.All()
 	if len(pluginList) == 0 {
@@ -160,7 +173,7 @@ func runDoctor(cmd *cobra.Command, args []string) error {
 		checks = append(checks, checkResult{"Plugins", "ok", fmt.Sprintf("%d plugin(s): %s", len(names), joinStrings(names, ", "))})
 	}
 
-	// 12. Local sessions
+	// 13. Local sessions
 	codeSessions, _ := session.List(cwd)
 	if len(codeSessions) == 0 {
 		checks = append(checks, checkResult{"Local sessions", "info", "none for this directory"})
@@ -168,7 +181,7 @@ func runDoctor(cmd *cobra.Command, args []string) error {
 		checks = append(checks, checkResult{"Local sessions", "ok", fmt.Sprintf("%d session(s) — run `bai sessions` to list", len(codeSessions))})
 	}
 
-	// 13. bai version / update check
+	// 14. bai version / update check
 	if latest, err := fetchLatestTag("bluefunda", "bluefunda-ai"); err != nil {
 		// Offline or rate-limited — just show installed version.
 		checks = append(checks, checkResult{"bai version", "ok", Version})
@@ -186,6 +199,20 @@ func runDoctor(cmd *cobra.Command, args []string) error {
 
 func joinStrings(ss []string, sep string) string {
 	return strings.Join(ss, sep)
+}
+
+// formatInt formats n with comma thousands separators (e.g. 100000 → "100,000").
+func formatInt(n int) string {
+	s := strconv.Itoa(n)
+	// Insert commas from the right.
+	out := make([]byte, 0, len(s)+len(s)/3)
+	for i, ch := range s {
+		if i > 0 && (len(s)-i)%3 == 0 {
+			out = append(out, ',')
+		}
+		out = append(out, byte(ch))
+	}
+	return string(out)
 }
 
 // fetchLatestTag returns the latest GitHub release tag for the given repo.

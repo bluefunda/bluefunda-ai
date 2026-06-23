@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -30,17 +31,18 @@ import (
 )
 
 var (
-	codeModel        string
-	codeDir          string
-	codeAutoApply    bool
-	codeAuto         bool
-	codeMaxTurns     int
-	codePrint        bool
-	codeOutputFormat string
-	codeResume       string
-	codeContinue     bool
-	codeNoTools      bool
-	codeWorktree     bool
+	codeModel            string
+	codeDir              string
+	codeAutoApply        bool
+	codeAuto             bool
+	codeMaxTurns         int
+	codeMaxContextTokens int // 0 = use defaultCompactionThreshold
+	codePrint            bool
+	codeOutputFormat     string
+	codeResume           string
+	codeContinue         bool
+	codeNoTools          bool
+	codeWorktree         bool
 )
 
 // codeCmd is a deprecated alias for the root 'bai' command.
@@ -63,6 +65,7 @@ func init() {
 	codeCmd.Flags().BoolVar(&codeAutoApply, "auto-apply", false, "Execute write/bash tools without prompting")
 	codeCmd.Flags().BoolVar(&codeAuto, "auto", false, "Same as --auto-apply")
 	codeCmd.Flags().IntVar(&codeMaxTurns, "max-turns", 20, "Maximum agentic loop iterations before stopping")
+	codeCmd.Flags().IntVar(&codeMaxContextTokens, "max-context-tokens", 0, "Max context tokens before auto-compaction (default 100000; env BAI_MAX_CONTEXT_TOKENS)")
 	codeCmd.Flags().BoolVarP(&codePrint, "print", "p", false, "Non-interactive mode: print output to stdout")
 	codeCmd.Flags().StringVar(&codeOutputFormat, "output-format", "text", "Output format for --print: text, json, stream-json")
 	codeCmd.Flags().StringVar(&codeResume, "resume", "", "Resume a previous session by ID")
@@ -152,6 +155,19 @@ func runAgenticSession(args []string) error {
 			// project config wins when the user hasn't explicitly set --max-turns
 			codeMaxTurns = projCfgEarly.MaxTurns
 		}
+	}
+
+	// Resolve effective context token limit: CLI flag > BAI_MAX_CONTEXT_TOKENS > default.
+	maxContextTokens := codeMaxContextTokens
+	if maxContextTokens == 0 {
+		if v := os.Getenv("BAI_MAX_CONTEXT_TOKENS"); v != "" {
+			if n, err := strconv.Atoi(v); err == nil && n > 0 {
+				maxContextTokens = n
+			}
+		}
+	}
+	if maxContextTokens == 0 {
+		maxContextTokens = defaultCompactionThreshold
 	}
 
 	var toolSchemas string
@@ -269,7 +285,7 @@ func runAgenticSession(args []string) error {
 			return fmt.Errorf("prompt required in --print mode (pass as argument or pipe via stdin)")
 		}
 		return runCodePrint(conn, cfg, model, toolSchemas, initialPrompt, history,
-			codeMaxTurns, permAllow, permDeny, codeAutoApply, codeOutputFormat, sessPath, auditLog, hookRunner, mcpMgr, pluginMgr, p)
+			codeMaxTurns, maxContextTokens, permAllow, permDeny, codeAutoApply, codeOutputFormat, sessPath, auditLog, hookRunner, mcpMgr, pluginMgr, p)
 	}
 
 	// --- Interactive TUI mode ---
@@ -306,7 +322,7 @@ func runAgenticSession(args []string) error {
 			newHistory, loopErr := agenticLoopTUI(
 				conn, cfg, cid, mdl, currentSchemas,
 				history, isFirstTurn && isNew, permAllow, permDeny, currentAutoApply,
-				maxTurnsState, auditLog, hookRunner, mcpMgr, pluginMgr, p, ch,
+				maxTurnsState, maxContextTokens, sessPath, auditLog, hookRunner, mcpMgr, pluginMgr, p, ch,
 			)
 			history = newHistory
 			turns++
@@ -401,6 +417,7 @@ func runCodePrint(
 	model, toolSchemas, prompt string,
 	history []codeMessage,
 	maxTurns int,
+	maxContextTokens int,
 	allow, deny []string,
 	autoApply bool,
 	outputFormat string,
@@ -423,7 +440,7 @@ func runCodePrint(
 		newHistory, loopErr := agenticLoopTUI(
 			conn, cfg, chatID, model, toolSchemas,
 			history, true, allow, deny, autoApply,
-			maxTurns, auditLog, hookRunner, mcpMgr, pluginMgr, p, ch,
+			maxTurns, maxContextTokens, sessPath, auditLog, hookRunner, mcpMgr, pluginMgr, p, ch,
 		)
 		session.Save(sessPath, toSessionMsgs(newHistory)) //nolint:errcheck
 		if loopErr != nil {
@@ -527,6 +544,8 @@ func agenticLoopTUI(
 	allow, deny []string,
 	autoApply bool,
 	maxTurns int,
+	maxContextTokens int,
+	sessPath string,
 	auditLog *audit.Logger,
 	hookRunner *hooks.Runner,
 	mcpMgr *mcp.Manager,
@@ -537,22 +556,35 @@ func agenticLoopTUI(
 	if maxTurns <= 0 {
 		maxTurns = 20
 	}
+	if maxContextTokens <= 0 {
+		maxContextTokens = defaultCompactionThreshold
+	}
 
 	rateLimitRetries := 0
 	var lastPromptTokens int32 // prompt token count from the most recent iteration
 
 	for iteration := 0; iteration < maxTurns; iteration++ {
-		// Compact context before starting a new iteration if we're approaching the
-		// context window limit. Skip the very first iteration (no usage yet).
-		if iteration > 0 && lastPromptTokens > compactionThreshold {
+		// Compact context when the client-side estimate or server-reported token count
+		// exceeds the configured limit. Client-side estimate fires even on iteration 0
+		// (e.g. resumed history already large). Server count is a secondary signal.
+		estTokens := estimateTokens(history)
+		if estTokens >= maxContextTokens || (iteration > 0 && lastPromptTokens > int32(maxContextTokens)) {
+			fmt.Fprintf(os.Stderr, "[bai] compacting context (est. ~%dk tokens → summary)…\n", estTokens/1000)
 			ch <- tui.StreamEvent{Kind: "chunk", Chunk: fmt.Sprintf(
 				"\n⚡ Context at ~%dk tokens — compacting history...\n",
-				lastPromptTokens/1000,
+				estTokens/1000,
 			)}
 			if compacted, compactErr := compactHistory(conn, chatID, model, history); compactErr == nil {
 				history = compacted
 				lastPromptTokens = 0
+				session.Save(sessPath, toSessionMsgs(history)) //nolint:errcheck
 				ch <- tui.StreamEvent{Kind: "chunk", Chunk: "✅ History compacted. Continuing...\n\n"}
+			} else {
+				fmt.Fprintf(os.Stderr, "[bai] context compaction failed, dropping oldest turns\n")
+				ch <- tui.StreamEvent{Kind: "chunk", Chunk: "\n⚠ Compaction failed — dropping oldest turns...\n"}
+				history = dropOldestTurns(history, maxContextTokens*4/5)
+				lastPromptTokens = 0
+				session.Save(sessPath, toSessionMsgs(history)) //nolint:errcheck
 			}
 		}
 
@@ -758,11 +790,40 @@ func pumpCodeStream(
 	}
 }
 
-// compactionThreshold is the prompt-token count above which bai code compacts
-// the conversation history before the next agentic iteration. 100k is safely
-// below the 128k floor across all supported models (claude-sonnet 200k,
-// gpt-4.1 128k) leaving room for the compaction summary itself.
-const compactionThreshold int32 = 100_000
+// defaultCompactionThreshold is the default max context tokens before compaction.
+// 100k is safely below the 128k floor across all supported models (claude-sonnet
+// 200k, gpt-4.1 128k), leaving headroom for the compaction summary itself.
+const defaultCompactionThreshold = 100_000
+
+// estimateTokens counts characters in all message content and tool-call
+// arguments and divides by 4 (standard chars-per-token approximation).
+func estimateTokens(history []codeMessage) int {
+	chars := 0
+	for _, m := range history {
+		chars += len(m.Content)
+		for _, tc := range m.ToolCalls {
+			chars += len(tc.Function.Arguments)
+		}
+	}
+	return chars / 4
+}
+
+// dropOldestTurns removes non-system messages from the front of history until
+// estimateTokens is below targetTokens. System messages are always preserved.
+func dropOldestTurns(history []codeMessage, targetTokens int) []codeMessage {
+	var sysMsgs, convo []codeMessage
+	for _, m := range history {
+		if m.Role == "system" {
+			sysMsgs = append(sysMsgs, m)
+		} else {
+			convo = append(convo, m)
+		}
+	}
+	for len(convo) > 0 && estimateTokens(append(sysMsgs, convo...)) > targetTokens {
+		convo = convo[1:]
+	}
+	return append(sysMsgs, convo...)
+}
 
 // compactHistory sends the full history to the LLM with a summarisation prompt
 // (no tools, single turn) and returns a trimmed history containing only system

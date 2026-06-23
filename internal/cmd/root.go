@@ -17,19 +17,20 @@ var (
 	cfgOutput  string
 	rootNew    bool
 	// Agentic session flags — shared with the deprecated 'bai code' alias.
-	rootModel      string
-	rootFast       bool
-	rootThink      bool
-	rootAuto       bool
-	rootAutoApply  bool
-	rootMaxTurns   int
-	rootDir        string
-	rootContinue   bool
-	rootResume     string
-	rootPrint      bool
-	rootNoTools    bool
-	rootOutFormat  string
-	rootWorktree   bool
+	rootModel            string
+	rootFast             bool
+	rootThink            bool
+	rootAuto             bool
+	rootAutoApply        bool
+	rootMaxTurns         int
+	rootMaxContextTokens int
+	rootDir              string
+	rootContinue         bool
+	rootResume           string
+	rootPrint            bool
+	rootNoTools          bool
+	rootOutFormat        string
+	rootWorktree         bool
 )
 
 // Version is set at build time via -ldflags.
@@ -65,6 +66,9 @@ func runDefault(cmd *cobra.Command, args []string) error {
 	codeAutoApply = rootAutoApply
 	if rootMaxTurns > 0 {
 		codeMaxTurns = rootMaxTurns
+	}
+	if rootMaxContextTokens > 0 {
+		codeMaxContextTokens = rootMaxContextTokens
 	}
 	if rootDir != "" {
 		codeDir = rootDir
@@ -106,6 +110,7 @@ func init() {
 	rootCmd.Flags().BoolVar(&rootAuto, "auto", false, "Auto-approve all tool calls")
 	rootCmd.Flags().BoolVar(&rootAutoApply, "auto-apply", false, "Same as --auto")
 	rootCmd.Flags().IntVar(&rootMaxTurns, "max-turns", 20, "Max agentic loop iterations")
+	rootCmd.Flags().IntVar(&rootMaxContextTokens, "max-context-tokens", 0, "Max context tokens before auto-compaction (default 100000; env BAI_MAX_CONTEXT_TOKENS)")
 	rootCmd.Flags().StringVar(&rootDir, "dir", ".", "Working directory for file operations")
 	rootCmd.Flags().BoolVarP(&rootContinue, "continue", "c", false, "Resume most recent session")
 	rootCmd.Flags().StringVar(&rootResume, "resume", "", "Resume a specific session ID")

@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.33.0](https://github.com/bluefunda/bluefunda-ai/compare/v1.32.5...v1.33.0) (2026-06-24)
+
+
+### Features
+
+* **tui:** inline rendering — scroll-back, flicker-free, copy-paste, bracketed paste ([#194](https://github.com/bluefunda/bluefunda-ai/issues/194)) ([12ab236](https://github.com/bluefunda/bluefunda-ai/commit/12ab2364eb932ff8cc53cd502ece3f24817a448d))
+
 ## [1.32.5](https://github.com/bluefunda/bluefunda-ai/compare/v1.32.4...v1.32.5) (2026-06-24)
 
 

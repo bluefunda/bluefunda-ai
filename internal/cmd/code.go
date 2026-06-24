@@ -564,17 +564,28 @@ const (
 // isContextWindowError reports whether err is a context-length / token-limit
 // rejection arriving as a stream error event (not a gRPC status code).
 // Different providers use different phrasing, so we match on loose keywords.
+// Routing failures are explicitly excluded: a wrong model name won't improve
+// with a smaller history, so we must not retry those.
 func isContextWindowError(err error) bool {
 	if err == nil {
 		return false
 	}
 	msg := strings.ToLower(err.Error())
+	if strings.Contains(msg, "routing failed") {
+		return false
+	}
 	if strings.Contains(msg, "413") {
 		return true
 	}
-	return (strings.Contains(msg, "context") || strings.Contains(msg, "token")) &&
+	// Explicit context/token keywords used by OpenAI, Anthropic, etc.
+	if (strings.Contains(msg, "context") || strings.Contains(msg, "token")) &&
 		(strings.Contains(msg, "length") || strings.Contains(msg, "window") ||
-			strings.Contains(msg, "limit") || strings.Contains(msg, "exceed"))
+			strings.Contains(msg, "limit") || strings.Contains(msg, "exceed")) {
+		return true
+	}
+	// Bare "LLM error" is the generic phrase Groq (and some other providers)
+	// emit when the upstream model rejects a request due to context overflow.
+	return msg == "llm error"
 }
 
 // agenticLoopTUI runs the agentic loop for one user turn, sending tool events
@@ -726,7 +737,14 @@ func agenticLoopTUI(
 					)
 				}
 				ch <- tui.StreamEvent{Kind: "chunk", Chunk: "\n⚠ Context too large — dropping older messages and retrying...\n"}
-				history = dropOldestTurns(history, maxContextTokens/2)
+				// Drop to half of the CURRENT history size, not the compaction
+				// threshold, so each retry actually reduces content even when
+				// the history is small (e.g. a single large web_fetch result).
+				dropTarget := estimateTokens(history) / 2
+				if dropTarget < 500 {
+					dropTarget = 500
+				}
+				history = dropOldestTurns(history, dropTarget)
 				lastPromptTokens = 0
 				session.Save(sessPath, toSessionMsgs(history)) //nolint:errcheck
 				contextRetries++

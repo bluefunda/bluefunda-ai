@@ -5,258 +5,199 @@
 [![Release](https://img.shields.io/github/v/release/bluefunda/bluefunda-ai)](https://github.com/bluefunda/bluefunda-ai/releases)
 [![CI](https://github.com/bluefunda/bluefunda-ai/actions/workflows/ci.yml/badge.svg)](https://github.com/bluefunda/bluefunda-ai/actions/workflows/ci.yml)
 
-**`bai`** — A terminal-native AI assistant for SAP operations. Runs interactive TUI sessions, drives agentic coding loops, and integrates with the BlueFunda AI platform via gRPC.
+**`bai` is an AI pair programmer that lives in your terminal.**
 
-## Get started
+Ask it to fix a test, refactor a package, or explain a codebase — it reads and writes your files, runs shell commands, and works the problem turn by turn until it's done. No browser, no copy-paste, no leaving the terminal.
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/bluefunda/bluefunda-ai/main/install.sh | sh
 bai login
-bai
+bai "add table-driven tests for the parser package"
 ```
 
-That's it. The installer detects your OS and architecture, verifies the checksum, and drops `bai` into `/usr/local/bin` (or `~/.local/bin` if that isn't writable). After `bai login` completes the OAuth device flow, running `bai` opens the interactive TUI.
+That's the whole setup. The installer picks the right binary for your OS, verifies the checksum, and drops `bai` on your `PATH`. After `bai login`, you're working.
 
-## Features
+---
 
-- **Interactive TUI** — Full-screen chat interface powered by [Bubble Tea](https://github.com/charmbracelet/bubbletea)
-- **Agentic coding** — `bai ask` launches an autonomous loop that reads/writes files and runs tools
-- **Streaming output** — Token-by-token rendering with syntax-highlighted code blocks
-- **Model selection** — Switch between available LLM models on the fly
-- **MCP integration** — Model Context Protocol tool support for external integrations
-- **Multi-format output** — Table, JSON, and quiet modes for scripting
-- **Shell completions** — bash, zsh, fish, PowerShell
-- **macOS + Linux** — Native binaries for amd64 and arm64
+## Why bai
 
-## Installation
+- **It does the work, not just the talking.** bai edits files and runs commands in your project. You review and approve; it executes.
+- **Stays in your flow.** It's a terminal tool. It fits next to git, your editor, and your shell — and into CI.
+- **You stay in control.** Every tool call is yours to approve. Use `--auto` when you trust the task, `--worktree` to keep changes isolated, `--print` for a dry run.
+- **Tuned for real work.** `--fast` for quick answers, `--think` for hard problems, and automatic context compaction so long sessions don't fall over.
+- **Extensible.** Connect tools via MCP (Model Context Protocol) — including SAP operations through [ABAPer](https://github.com/bluefunda/abaper).
+- **Embeddable.** Drop the agentic loop straight into your own Go programs with the [SDK](#embed-it-go-sdk).
 
-### macOS and Linux (one-liner)
+---
+
+## Everyday use
+
+```bash
+bai                                   # open an interactive session
+bai "why is the build failing?"       # start with a prompt
+bai --fast "rename this variable"     # quick, low-latency model
+bai --think "design a retry strategy" # extended reasoning for hard problems
+bai --auto "add godoc to all exports" # auto-approve tool calls
+bai --worktree "try a risky refactor" # run in an isolated git worktree
+bai -c                                # resume your most recent session
+```
+
+Inside a session, type `/` for slash commands — `/model` to switch models, `/clear` to reset, `/help` for the rest. `Enter` sends, `Ctrl+C` quits.
+
+Scaffold project-level config and conventions once:
+
+```bash
+bai init        # creates .bai/ for the current project
+```
+
+---
+
+## What's in the box
+
+| Command | What it does |
+|---------|--------------|
+| `bai [prompt]` | Interactive agentic session with file + shell access |
+| `bai login` / `logout` | Sign in / out via browser (OAuth device flow) |
+| `bai doctor` | Check configuration and connectivity |
+| `bai init` | Scaffold `.bai/` config for a project |
+| `bai sessions` | List past sessions; resume with `-c` or `--resume` |
+| `bai chat` | Manage named chat sessions (list, start, history, title, stop) |
+| `bai model list` | List available LLM models |
+| `bai mcp` | Connect and manage MCP tool integrations |
+| `bai plugins` | Manage plugins |
+| `bai billing` | View subscription and plans |
+| `bai update` | Update bai to the latest release |
+| `bai completion` | Generate shell completions (bash, zsh, fish, PowerShell) |
+
+Useful flags: `--model`, `--fast`, `--think`, `--auto`, `--auto-apply`, `--max-turns`, `--max-budget-usd`, `--dir`, `--worktree`, `-c`/`--continue`, `--resume`, `--print`, `--no-tools`, `-o/--output {table,json,quiet}`.
+
+---
+
+## Embed it (Go SDK)
+
+Run the full bai agentic loop in-process — no `bai` binary, no subprocess. Bring your own tools.
+
+```go
+import "github.com/bluefunda/bluefunda-ai/sdk/agent"
+
+runner := agent.New(agent.Options{
+    Model:    "auto",
+    MaxTurns: 5,
+    OnEvent: func(ev agent.Event) {
+        switch ev.Type {
+        case "text":     fmt.Print(ev.Text)
+        case "tool_use": fmt.Printf("[tool: %s]\n", ev.ToolName)
+        case "result":   fmt.Printf("\n--- done (%s) ---\n", ev.StopReason)
+        }
+    },
+})
+defer runner.Close()
+
+runner.WithSystemPrompt("You are a concise Go assistant.")
+err := runner.Run(ctx, "summarize this repository")
+```
+
+Register your own tools via `OnToolCall`, and fall back to `agent.DefaultExecute` for the built-in file and shell ops. The SDK reads credentials from `~/.bai/config.yaml` (written by `bai login`). For cross-language use, the subprocess-based `sdk.Client` is also available.
+
+---
+
+## Install
+
+**macOS / Linux (one-liner)** — installs to `/usr/local/bin` or `~/.local/bin`, verifies SHA256:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/bluefunda/bluefunda-ai/main/install.sh | sh
 ```
 
-Installs to `/usr/local/bin` or `~/.local/bin`. Verifies SHA256 checksum before installing.
-
-### Homebrew (macOS)
+**Homebrew (macOS)**
 
 ```bash
-brew tap bluefunda/tap
-brew install bai
+brew tap bluefunda/tap && brew install bai
 ```
 
-### Debian / Ubuntu
+**Debian / Ubuntu** — replace `amd64` with `arm64` as needed:
 
-**x86_64:**
 ```bash
 curl -sL https://github.com/bluefunda/bluefunda-ai/releases/latest/download/bai_linux_amd64.deb -o bai.deb
 sudo dpkg -i bai.deb
 ```
 
-**ARM64:**
-```bash
-curl -sL https://github.com/bluefunda/bluefunda-ai/releases/latest/download/bai_linux_arm64.deb -o bai.deb
-sudo dpkg -i bai.deb
-```
+**RHEL / Fedora / Rocky**
 
-### RHEL / Fedora / Rocky
-
-**x86_64:**
 ```bash
 curl -sL https://github.com/bluefunda/bluefunda-ai/releases/latest/download/bai_linux_amd64.rpm -o bai.rpm
 sudo rpm -i bai.rpm
 ```
 
-**ARM64:**
-```bash
-curl -sL https://github.com/bluefunda/bluefunda-ai/releases/latest/download/bai_linux_arm64.rpm -o bai.rpm
-sudo rpm -i bai.rpm
-```
-
-### From source
+**From source** (Go 1.26+)
 
 ```bash
 go install github.com/bluefunda/bluefunda-ai/cmd/bai@latest
 ```
 
-### Manual download
+Or grab a binary from [Releases](https://github.com/bluefunda/bluefunda-ai/releases).
 
-Download the latest binary for your platform from the [Releases](https://github.com/bluefunda/bluefunda-ai/releases) page.
-
-## Quick Start
-
-```bash
-# Authenticate with BlueFunda AI
-bai login
-
-# Open the interactive TUI
-bai
-
-# Ask a question directly
-bai ask "How do I create a transport request in SAP?"
-
-# Start a named chat session
-bai chat start "SAP BASIS help"
-
-# List available AI models
-bai model list
-
-# Check connection health
-bai health
-```
-
-## TUI Usage
-
-Launch the TUI by running `bai` with no arguments:
-
-```
-bai
-```
-
-**Key bindings:**
-
-| Key | Action |
-|-----|--------|
-| `Enter` | Send message |
-| `Ctrl+C` | Quit |
-| `/help` | Show slash commands |
-| `/clear` | Clear current session |
-| `/model` | Switch model |
-
-**Slash commands** are available inside the TUI by typing `/` followed by the command name.
-
-## CLI Reference
-
-```
-bai [command] [flags]
-
-Commands:
-  login       Authenticate via OAuth device flow
-  ask         Start an agentic session (non-interactive)
-  chat        Manage chat sessions (list, start, history, context, title, stop)
-  model       List available AI models
-  mcp         Manage MCP tool integrations
-  user        Show current user account info
-  billing     View billing and usage
-  ratelimit   Show current rate limit status
-  health      Check gRPC connection health
-  version     Print version information
-  completion  Generate shell completions
-
-Global Flags:
-  --bff string      BFF gRPC address (overrides config)
-  --domain string   Domain override
-  -o, --output      Output format: table, json, quiet
-```
-
-### Agentic Mode
-
-```bash
-# Run a coding task autonomously
-bai ask "Refactor all ABAP function modules in ./src to use structured exceptions"
-
-# Ask with a specific model
-bai ask --model gpt-4o "Explain this ABAP program"
-```
-
-### Chat Management
-
-```bash
-bai chat list                          # List all chat sessions
-bai chat start "My chat"               # Start a new session
-bai chat history --id <id>             # View message history
-bai chat context --id <id>             # Show context window
-bai chat title --id <id> "New title"   # Rename a session
-bai chat stop --id <id>                # Stop a session
-```
+---
 
 ## Configuration
 
-`bai` reads its configuration from `~/.bai/config.yaml`:
+`bai` reads `~/.bai/config.yaml`:
 
 ```yaml
+gateway: api.bluefunda.com          # API gateway
 endpoint: grpc.bluefunda.com:443    # BFF gRPC address
-domain: your-tenant.bluefunda.com   # Tenant domain
+domain: your-tenant.bluefunda.com   # tenant domain
 defaults:
-  output: table                      # Default output format
+  model: auto                       # default model
+  output: table                     # default output format
 ```
 
-### Environment Variables
-
-| Variable | Description |
-|----------|-------------|
-| `BAI_INSTALL_DIR` | Custom install directory for `install.sh` |
+| Environment variable | Description |
+|----------------------|-------------|
 | `BAI_ACCESS_TOKEN` | Bearer token — skips `bai login` in CI/CD |
 | `BAI_GATEWAY` | Override the gateway URL |
 | `BAI_BFF` | Override the BFF gRPC address |
 | `BAI_MODEL` | Override the default model |
+| `BAI_INSTALL_DIR` | Custom install directory for `install.sh` |
+
+---
 
 ## Development
 
-### Prerequisites
-
-- Go 1.25+
-- `protoc` + `protoc-gen-go` + `protoc-gen-go-grpc` (for proto regeneration)
-- [goreleaser](https://goreleaser.com/) (for releases)
-
-### Build
+**Prerequisites:** Go 1.26+, `protoc` (+ `protoc-gen-go`, `protoc-gen-go-grpc`) for proto regen, [goreleaser](https://goreleaser.com/) for releases.
 
 ```bash
-make build      # Build bai binary
-make test       # Run tests with race detector
-make vet        # Run go vet
-make fmt        # Format code
-make snapshot   # Build release snapshot with goreleaser
+make build      # build the bai binary
+make test       # tests with race detector
+make vet        # go vet
+make fmt        # format
+make proto      # regenerate protobuf
+make snapshot   # release snapshot via goreleaser
 ```
 
-### Project Layout
-
 ```
-bluefunda-ai/
-├── cmd/bai/          # Entry point
-├── internal/
-│   ├── auth/         # OAuth2 device flow (RFC 8628)
-│   ├── cmd/          # Cobra command definitions
-│   ├── config/       # Config loader (~/.bai/config.yaml)
-│   ├── grpc/         # gRPC connection + interceptors
-│   ├── tools/        # Agentic tool implementations
-│   └── ui/           # Output formatting + BubbleTea TUI
-├── api/proto/        # Protobuf definitions + generated code
-└── scripts/          # Build utilities
+cmd/bai/          Entry point
+internal/
+  auth/           OAuth2 device flow (RFC 8628)
+  cmd/            Cobra command definitions
+  config/         Config loader (~/.bai/config.yaml)
+  grpc/           gRPC connection + interceptors
+  tools/          Agentic tool implementations
+  ui/             Output formatting + Bubble Tea TUI
+sdk/agent/        Embeddable in-process agent SDK
+api/proto/        Protobuf definitions + generated code
 ```
 
-### Regenerate Protobuf
+Releases are automated via [Release Please](https://github.com/googleapis/release-please) and [GoReleaser](https://goreleaser.com/): merge a `feat:` or `fix:` commit to `main`, then merge the release PR to publish. See [CHANGELOG.md](CHANGELOG.md).
 
-```bash
-make proto
-```
+---
 
-### Running Tests
+## More
 
-```bash
-make test           # All tests with race detector
-make test-cover     # Tests + coverage report
-```
-
-## Releases
-
-Releases are automated via [Release Please](https://github.com/googleapis/release-please) and [GoReleaser](https://goreleaser.com/).
-
-- Merge a `feat:` or `fix:` commit to `main` to trigger a release PR
-- Merging the release PR publishes binaries to GitHub Releases, Homebrew tap, and package repositories
-
-See [CHANGELOG.md](CHANGELOG.md) for the full release history.
-
-## Contributing
-
-See [CONTRIBUTING.md](CONTRIBUTING.md) for development workflow, code style, and how to submit pull requests.
-
-## Security
-
-To report a security vulnerability, see [SECURITY.md](SECURITY.md).
+- **Contributing:** [CONTRIBUTING.md](CONTRIBUTING.md)
+- **Security:** report vulnerabilities via [SECURITY.md](SECURITY.md)
+- **SAP / ABAP developers:** see [ABAPer](https://github.com/bluefunda/abaper) — the same agent, specialized for ABAP
 
 ## License
 
-Apache 2.0 — see [LICENSE](LICENSE).
-
-Copyright 2024 BlueFunda, Inc.
+Apache 2.0 — see [LICENSE](LICENSE). Copyright © BlueFunda, Inc.

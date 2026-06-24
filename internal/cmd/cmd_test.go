@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"net"
 	"strings"
 	"testing"
@@ -415,6 +416,36 @@ func TestCompactHistory_SummaryIsSystemRole(t *testing.T) {
 		}
 		if !seenUser && m.Role == "assistant" {
 			t.Errorf("orphaned assistant message before first user turn: content=%q", truncate(m.Content, 60))
+		}
+	}
+}
+
+// --- isContextWindowError Tests ---
+
+func TestIsContextWindowError(t *testing.T) {
+	cases := []struct {
+		msg  string
+		want bool
+	}{
+		{"413 request too large", true},
+		{"context length exceeded", true},
+		{"context window exceeded", true},
+		{"token limit exceeded", true},
+		{"token length exceeded", true},
+		{"max tokens exceeded", true},
+		{"LLM error for a prompt", false},
+		{"rate limit exceeded", false},
+		{"internal server error", false},
+		{"", false},
+	}
+	for _, tc := range cases {
+		var err error
+		if tc.msg != "" {
+			err = fmt.Errorf("%s", tc.msg)
+		}
+		got := isContextWindowError(err)
+		if got != tc.want {
+			t.Errorf("isContextWindowError(%q) = %v, want %v", tc.msg, got, tc.want)
 		}
 	}
 }

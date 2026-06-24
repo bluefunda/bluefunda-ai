@@ -22,9 +22,24 @@ func (m Model) View() string {
 	b.WriteString(m.renderHeader())
 	b.WriteByte('\n')
 
-	// Conversation viewport
-	b.WriteString(m.viewport.View())
-	b.WriteByte('\n')
+	// Active content: messages not yet committed to the terminal scroll buffer.
+	// Committed messages are flushed above via tea.Println(); this block only
+	// contains the in-flight streaming turn, and is empty (not rendered) when idle.
+	activeContent := m.renderActiveMessages()
+	if activeContent != "" {
+		// Clamp to the allocated viewport height so a long response doesn't
+		// overflow the terminal and cause the inline block to grow unboundedly.
+		maxLines := m.viewport.Height
+		if maxLines < 4 {
+			maxLines = 4
+		}
+		lines := strings.Split(activeContent, "\n")
+		if len(lines) > maxLines {
+			lines = lines[len(lines)-maxLines:]
+		}
+		b.WriteString(strings.Join(lines, "\n"))
+		b.WriteByte('\n')
+	}
 
 	// Slash menu (shown above input when active)
 	if m.showSlash && len(m.slashMatches) > 0 {

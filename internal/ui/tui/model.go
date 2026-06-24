@@ -1200,40 +1200,6 @@ func (m *Model) handleStreamEvent(ev StreamEvent) []tea.Cmd {
 // scrollToLastMsgStart positions the viewport so the user sees the beginning
 // of the last message. For short messages that fit in the viewport it falls
 // back to GotoBottom so the full message is visible without dead space above.
-func (m *Model) scrollToLastMsgStart() {
-	if len(m.messages) == 0 {
-		m.viewport.GotoBottom()
-		return
-	}
-
-	last := len(m.messages) - 1
-	innerWidth := m.width - 4
-	if innerWidth < 20 {
-		innerWidth = 20
-	}
-
-	lastRendered := m.renderMessageAt(last, innerWidth)
-	lastMsgLines := strings.Count(lastRendered, "\n") + 1
-	if lastMsgLines <= m.viewport.Height {
-		m.viewport.GotoBottom()
-		return
-	}
-
-	// Count lines rendered before the last message to find its start offset.
-	var sb strings.Builder
-	for i := 0; i < last; i++ {
-		if i > 0 {
-			sb.WriteByte('\n')
-		}
-		sb.WriteString(m.renderMessageAt(i, innerWidth))
-	}
-	if last > 0 {
-		sb.WriteByte('\n') // separator before the last message
-	}
-	linesBefore := strings.Count(sb.String(), "\n")
-	m.viewport.YOffset = linesBefore
-	m.atBottom = false
-}
 
 // waitForStreamEvent returns a tea.Cmd that blocks until the next StreamEvent
 // arrives on ch or the stop channel is closed (Ctrl+C interrupt).

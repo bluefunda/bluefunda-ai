@@ -85,26 +85,6 @@ func formatTokenCount(n int32) string {
 //  Messages
 // ──────────────────────────────────────────────
 
-func (m *Model) renderMessages() string {
-	if len(m.messages) == 0 {
-		return ""
-	}
-
-	var sb strings.Builder
-	innerWidth := m.width - 4
-	if innerWidth < 20 {
-		innerWidth = 20
-	}
-
-	for i := range m.messages {
-		if i > 0 {
-			sb.WriteByte('\n')
-		}
-		sb.WriteString(m.renderMessageAt(i, innerWidth))
-	}
-
-	return sb.String()
-}
 
 func (m *Model) renderMessageAt(idx, width int) string {
 	msg := m.messages[idx]

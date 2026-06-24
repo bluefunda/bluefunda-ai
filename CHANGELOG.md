@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.33.1](https://github.com/bluefunda/bluefunda-ai/compare/v1.33.0...v1.33.1) (2026-06-24)
+
+
+### Bug Fixes
+
+* **tui:** collapse inline block to input-only when idle ([#197](https://github.com/bluefunda/bluefunda-ai/issues/197)) ([ce49803](https://github.com/bluefunda/bluefunda-ai/commit/ce498038e1023f51f88dbee1afba3ebc1f5d8a09))
+
 ## [1.33.0](https://github.com/bluefunda/bluefunda-ai/compare/v1.32.5...v1.33.0) (2026-06-24)
 
 

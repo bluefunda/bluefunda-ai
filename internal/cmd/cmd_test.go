@@ -427,12 +427,20 @@ func TestIsContextWindowError(t *testing.T) {
 		msg  string
 		want bool
 	}{
+		// HTTP 413
 		{"413 request too large", true},
+		// Explicit context/token keywords (OpenAI, Anthropic, etc.)
 		{"context length exceeded", true},
 		{"context window exceeded", true},
 		{"token limit exceeded", true},
 		{"token length exceeded", true},
 		{"max tokens exceeded", true},
+		// Bare "LLM error" from Groq (context overflow wrapped in generic phrase)
+		{"LLM error", true},
+		{"llm error", true},
+		// Routing failures must NOT be retried (wrong model name)
+		{"LLM routing failed", false},
+		// Other errors that should not trigger context retry
 		{"LLM error for a prompt", false},
 		{"rate limit exceeded", false},
 		{"internal server error", false},

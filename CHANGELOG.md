@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.32.4](https://github.com/bluefunda/bluefunda-ai/compare/v1.32.3...v1.32.4) (2026-06-24)
+
+
+### Bug Fixes
+
+* **agent:** compact history summary as system role to prevent LLM error ([#191](https://github.com/bluefunda/bluefunda-ai/issues/191)) ([091f4ce](https://github.com/bluefunda/bluefunda-ai/commit/091f4cebe260fc09eb9b2096c480128c80052e45))
+
 ## [1.32.3](https://github.com/bluefunda/bluefunda-ai/compare/v1.32.2...v1.32.3) (2026-06-23)
 
 

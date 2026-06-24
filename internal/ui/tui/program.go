@@ -7,8 +7,19 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 )
 
+// ANSI escape sequences for cursor shape (DECSCUSR).
+// \x1b[5 q = blinking bar (|), \x1b[0 q = terminal default (usually block).
+const (
+	cursorBar     = "\x1b[5 q"
+	cursorDefault = "\x1b[0 q"
+)
+
 // Run starts the BubbleTea program and blocks until the user exits.
 func Run(m Model) error {
+	// Switch to a blinking bar cursor for the session; restore on exit.
+	fmt.Fprint(os.Stdout, cursorBar)
+	defer fmt.Fprint(os.Stdout, cursorDefault)
+
 	p := tea.NewProgram(m)
 
 	finalModel, err := p.Run()

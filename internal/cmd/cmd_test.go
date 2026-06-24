@@ -4,11 +4,13 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"net"
 	"strings"
 	"testing"
 
 	pb "github.com/bluefunda/bluefunda-ai/api/proto/bff"
+	caigrpc "github.com/bluefunda/bluefunda-ai/internal/grpc"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/test/bufconn"
@@ -64,6 +66,12 @@ func (t *testBFF) StopChat(_ context.Context, req *pb.StopChatRequest) (*pb.Stop
 
 func (t *testBFF) GenerateTitle(_ context.Context, req *pb.GenerateTitleRequest) (*pb.GenerateTitleResponse, error) {
 	return &pb.GenerateTitleResponse{GeneratedTitle: "Generated Title"}, nil
+}
+
+func (t *testBFF) Chat(_ *pb.ChatRequest, stream grpc.ServerStreamingServer[pb.ChatEvent]) error {
+	_ = stream.Send(&pb.ChatEvent{Type: "content", Content: "Summary of the conversation so far."})
+	_ = stream.Send(&pb.ChatEvent{Type: "done"})
+	return nil
 }
 
 func (t *testBFF) QueryRateLimit(_ context.Context, _ *pb.QueryRateLimitRequest) (*pb.QueryRateLimitResponse, error) {
@@ -359,6 +367,86 @@ func TestBillingPlans(t *testing.T) {
 	}
 	if resp.GetPlans()[1].GetPriceCents() != 2000 {
 		t.Errorf("expected 2000 cents, got %d", resp.GetPlans()[1].GetPriceCents())
+	}
+}
+
+// --- Compact History Tests ---
+
+// TestCompactHistory_SummaryIsSystemRole verifies that the summary injected by
+// compactHistory uses role "system", not "assistant". An assistant turn with no
+// preceding user turn violates the alternating-turn structure that most LLM
+// providers enforce, causing "LLM error for a prompt" (#191).
+func TestCompactHistory_SummaryIsSystemRole(t *testing.T) {
+	client := startTestServer(t)
+	conn := &caigrpc.Conn{Client: client}
+
+	history := []codeMessage{
+		{Role: "system", Content: "You are a helpful assistant."},
+		{Role: "user", Content: "Hello"},
+		{Role: "assistant", Content: "Hi!"},
+		{Role: "user", Content: "Do something"},
+		{Role: "assistant", Content: "Done"},
+		{Role: "user", Content: "Latest prompt"},
+	}
+
+	result, err := compactHistory(conn, "test-chat", "", history)
+	if err != nil {
+		t.Fatalf("compactHistory: %v", err)
+	}
+
+	var summaryRole string
+	for _, m := range result {
+		if strings.Contains(m.Content, "[Conversation summary]") {
+			summaryRole = m.Role
+			break
+		}
+	}
+	if summaryRole == "" {
+		t.Fatal("no summary message found in compacted history")
+	}
+	if summaryRole != "system" {
+		t.Errorf("summary message role = %q, want \"system\" (orphaned assistant turn triggers LLM error)", summaryRole)
+	}
+
+	// No assistant turn should appear before the first user turn.
+	seenUser := false
+	for _, m := range result {
+		if m.Role == "user" {
+			seenUser = true
+		}
+		if !seenUser && m.Role == "assistant" {
+			t.Errorf("orphaned assistant message before first user turn: content=%q", truncate(m.Content, 60))
+		}
+	}
+}
+
+// --- isContextWindowError Tests ---
+
+func TestIsContextWindowError(t *testing.T) {
+	cases := []struct {
+		msg  string
+		want bool
+	}{
+		{"413 request too large", true},
+		{"context length exceeded", true},
+		{"context window exceeded", true},
+		{"token limit exceeded", true},
+		{"token length exceeded", true},
+		{"max tokens exceeded", true},
+		{"LLM error for a prompt", false},
+		{"rate limit exceeded", false},
+		{"internal server error", false},
+		{"", false},
+	}
+	for _, tc := range cases {
+		var err error
+		if tc.msg != "" {
+			err = fmt.Errorf("%s", tc.msg)
+		}
+		got := isContextWindowError(err)
+		if got != tc.want {
+			t.Errorf("isContextWindowError(%q) = %v, want %v", tc.msg, got, tc.want)
+		}
 	}
 }
 

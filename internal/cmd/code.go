@@ -558,7 +558,24 @@ const (
 	rateLimitInitialDelay = 10 * time.Second
 	rateLimitMaxDelay     = 5 * time.Minute
 	rateLimitMaxRetries   = 3
+	maxContextRetries     = 2 // max drop-and-retry attempts for context-window errors
 )
+
+// isContextWindowError reports whether err is a context-length / token-limit
+// rejection arriving as a stream error event (not a gRPC status code).
+// Different providers use different phrasing, so we match on loose keywords.
+func isContextWindowError(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := strings.ToLower(err.Error())
+	if strings.Contains(msg, "413") {
+		return true
+	}
+	return (strings.Contains(msg, "context") || strings.Contains(msg, "token")) &&
+		(strings.Contains(msg, "length") || strings.Contains(msg, "window") ||
+			strings.Contains(msg, "limit") || strings.Contains(msg, "exceed"))
+}
 
 // agenticLoopTUI runs the agentic loop for one user turn, sending tool events
 // and content chunks to ch for TUI rendering. It handles approval prompts by
@@ -609,7 +626,8 @@ func agenticLoopTUI(
 	}
 
 	rateLimitRetries := 0
-	var lastPromptTokens int32 // prompt token count from the most recent iteration
+	contextRetries := 0          // drop-and-retry count for context-window errors
+	var lastPromptTokens int32   // prompt token count from the most recent iteration
 	var estimatedCostUSD float64 // cumulative estimated cost for this session turn
 
 	for iteration := 0; iteration < maxTurns; iteration++ {
@@ -634,6 +652,20 @@ func agenticLoopTUI(
 				history = dropOldestTurns(history, maxContextTokens*4/5)
 				lastPromptTokens = 0
 				session.Save(sessPath, toSessionMsgs(history)) //nolint:errcheck
+				// If dropping still leaves us over the limit (e.g. large tool results
+				// from GitHub issues exceed the model's context window), bail now with
+				// a clear message rather than looping on every subsequent iteration.
+				if estimateTokens(history) >= maxContextTokens {
+					mdl := model
+					if mdl == "" {
+						mdl = "the current model"
+					}
+					return history, fmt.Errorf(
+						"context too large for %s (est. %dk tokens) — "+
+							"try a model with a larger context window or use --max-context-tokens",
+						mdl, estimateTokens(history)/1000,
+					)
+				}
 			}
 		}
 
@@ -676,19 +708,35 @@ func agenticLoopTUI(
 					continue
 				}
 			}
-			// Request entity too large (413) — history is still too big even after
-			// compaction. Drop aggressively to half the threshold and retry once.
-			if strings.Contains(err.Error(), "413") {
-				ch <- tui.StreamEvent{Kind: "chunk", Chunk: "\n⚠ Request too large — dropping older messages and retrying...\n"}
+			// Context-window / token-limit errors (HTTP 413, stream error events
+			// containing "context length", "token limit", etc.). Different models
+			// and providers phrase these differently, so we match on loose keywords.
+			// Cap retries so a model with a very small window (e.g. gpt-oss-120b)
+			// cannot loop indefinitely when dropping never helps.
+			if isContextWindowError(err) {
+				if contextRetries >= maxContextRetries {
+					mdl := model
+					if mdl == "" {
+						mdl = "the current model"
+					}
+					return history, fmt.Errorf(
+						"context window limit hit %d times for %s (est. %dk tokens) — "+
+							"try a model with a larger context window or use --max-context-tokens",
+						maxContextRetries, mdl, estimateTokens(history)/1000,
+					)
+				}
+				ch <- tui.StreamEvent{Kind: "chunk", Chunk: "\n⚠ Context too large — dropping older messages and retrying...\n"}
 				history = dropOldestTurns(history, maxContextTokens/2)
 				lastPromptTokens = 0
 				session.Save(sessPath, toSessionMsgs(history)) //nolint:errcheck
+				contextRetries++
 				iteration--
 				continue
 			}
 			return history, err
 		}
 		rateLimitRetries = 0
+		contextRetries = 0
 
 		// Budget check: accumulate estimated cost and stop before the next iteration.
 		if maxBudgetUSD > 0 {
@@ -1013,15 +1061,22 @@ summarised:
 		}
 	}
 
-	// Add the summary as an assistant message, then keep the last 4 messages
-	// (the two most recent exchanges) for continuity.
+	// Add the summary as a system message (not assistant) so there is no
+	// orphaned assistant turn before the first user message in the tail.
+	// An assistant message with no preceding user turn violates the
+	// alternating structure many LLM APIs enforce, causing "LLM error for a prompt".
 	compact = append(compact, codeMessage{
-		Role:    "assistant",
+		Role:    "system",
 		Content: "[Conversation summary]\n" + summary,
 	})
 	tail := history
 	if len(tail) > 4 {
 		tail = tail[len(tail)-4:]
+	}
+	// Drop leading non-user messages from the tail so the first turn after
+	// the summary is always a user turn, preserving proper alternation.
+	for len(tail) > 0 && tail[0].Role != "user" {
+		tail = tail[1:]
 	}
 	compact = append(compact, tail...)
 	return compact, nil

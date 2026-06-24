@@ -9,11 +9,7 @@ import (
 
 // Run starts the BubbleTea program and blocks until the user exits.
 func Run(m Model) error {
-	p := tea.NewProgram(
-		m,
-		tea.WithAltScreen(),
-		tea.WithMouseCellMotion(),
-	)
+	p := tea.NewProgram(m)
 
 	finalModel, err := p.Run()
 	if err != nil {

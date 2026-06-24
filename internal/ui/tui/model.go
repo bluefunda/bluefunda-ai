@@ -284,6 +284,7 @@ func (m Model) Init() tea.Cmd {
 	return tea.Batch(
 		textarea.Blink,
 		tickCmd(),
+		tea.EnableBracketedPaste,
 	)
 }
 
@@ -332,15 +333,25 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.streaming = false
 		if len(m.messages) > 0 {
 			last := len(m.messages) - 1
-			if m.messages[last].Role == RoleAssistant {
+			if m.messages[last].Role == RoleAssistant && !m.messages[last].printed {
 				m.messages[last].finishStreaming()
+				// Commit completed assistant message to scroll buffer.
+				innerWidth := m.width - 4
+				if innerWidth < 20 {
+					innerWidth = 20
+				}
+				rendered := m.renderMessageAt(last, innerWidth)
+				m.messages[last].printed = true
+				cmds = append(cmds, tea.Println(rendered))
 			}
 		}
 		if msg.Err != nil {
-			m.messages = append(m.messages, newSystemMessage("Error: "+msg.Err.Error()))
+			errMsg := newSystemMessage("Error: " + msg.Err.Error())
+			errMsg.printed = true
+			m.messages = append(m.messages, errMsg)
+			cmds = append(cmds, tea.Println("\n  "+m.theme.SystemMsg.Render("Error: "+msg.Err.Error())))
 		}
 		m.refreshViewport()
-		m.scrollToLastMsgStart()
 		m.textarea.Focus()
 		cmds = append(cmds, textarea.Blink)
 
@@ -622,8 +633,10 @@ func (m Model) submitInput() (tea.Model, tea.Cmd) {
 		}
 	}
 
-	// Append user message
+	// Append user message and immediately commit to scroll buffer.
 	m.messages = append(m.messages, newUserMessage(input))
+	userLine := "\n  " + m.theme.UserLabel.Render("You") + "\n  " + m.theme.UserContent.Render(input)
+	m.messages[len(m.messages)-1].printed = true
 	m.streaming = true
 	m.textarea.Blur()
 	m.refreshViewport()
@@ -635,7 +648,7 @@ func (m Model) submitInput() (tea.Model, tea.Cmd) {
 	// Open the stream and start pumping events via cmd chaining.
 	m.streamStop = make(chan struct{})
 	m.streamCh = m.submitFn(m.cfg.ChatID, m.cfg.Model, input, isNew)
-	return m, waitForStreamEvent(m.streamCh, m.streamStop)
+	return m, tea.Batch(tea.Println(userLine), waitForStreamEvent(m.streamCh, m.streamStop))
 }
 
 func (m Model) handleSlashCommand(input string) (tea.Model, tea.Cmd) {
@@ -951,7 +964,26 @@ func (m *Model) refreshViewport() {
 	if !m.vpReady {
 		return
 	}
-	m.viewport.SetContent(m.renderMessages())
+	m.viewport.SetContent(m.renderActiveMessages())
+}
+
+// renderActiveMessages renders only messages not yet committed to the scroll buffer.
+func (m *Model) renderActiveMessages() string {
+	innerWidth := m.width - 4
+	if innerWidth < 20 {
+		innerWidth = 20
+	}
+	var sb strings.Builder
+	for i := range m.messages {
+		if m.messages[i].printed {
+			continue
+		}
+		if sb.Len() > 0 {
+			sb.WriteByte('\n')
+		}
+		sb.WriteString(m.renderMessageAt(i, innerWidth))
+	}
+	return sb.String()
 }
 
 func helpText() string {
@@ -1128,7 +1160,10 @@ func (m *Model) handleStreamEvent(ev StreamEvent) []tea.Cmd {
 
 	case "error":
 		m.streaming = false
-		m.messages = append(m.messages, newSystemMessage("Error: "+ev.ErrMsg))
+		errMsg := newSystemMessage("Error: " + ev.ErrMsg)
+		errMsg.printed = true
+		m.messages = append(m.messages, errMsg)
+		cmds = append(cmds, tea.Println("\n  "+m.theme.SystemMsg.Render("Error: "+ev.ErrMsg)))
 		m.refreshViewport()
 		m.textarea.Focus()
 
@@ -1139,6 +1174,14 @@ func (m *Model) handleStreamEvent(ev StreamEvent) []tea.Cmd {
 			last := len(m.messages) - 1
 			if m.messages[last].Role == RoleAssistant {
 				m.messages[last].finishStreaming()
+				// Commit completed assistant message to scroll buffer.
+				innerWidth := m.width - 4
+				if innerWidth < 20 {
+					innerWidth = 20
+				}
+				rendered := m.renderMessageAt(last, innerWidth)
+				m.messages[last].printed = true
+				cmds = append(cmds, tea.Println(rendered))
 			}
 		}
 		// Accumulate token usage when backend provides it.
@@ -1147,7 +1190,6 @@ func (m *Model) handleStreamEvent(ev StreamEvent) []tea.Cmd {
 			m.totalCompletionTokens += ev.UsageCompletionTokens
 		}
 		m.refreshViewport()
-		m.scrollToLastMsgStart()
 		m.textarea.Focus()
 		cmds = append(cmds, textarea.Blink)
 	}

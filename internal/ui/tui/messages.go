@@ -42,6 +42,8 @@ type ChatMessage struct {
 	ToolEvents []ToolEvent
 	Streaming  bool
 	Timestamp  time.Time
+	// printed is true once the message has been committed to the scroll buffer via tea.Println
+	printed bool
 	// rendered is the cached glamour-rendered form of Content (assistant only)
 	rendered string
 	// renderWidth is the width used when rendering was last produced

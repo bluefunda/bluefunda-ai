@@ -1013,15 +1013,22 @@ summarised:
 		}
 	}
 
-	// Add the summary as an assistant message, then keep the last 4 messages
-	// (the two most recent exchanges) for continuity.
+	// Add the summary as a system message (not assistant) so there is no
+	// orphaned assistant turn before the first user message in the tail.
+	// An assistant message with no preceding user turn violates the
+	// alternating structure many LLM APIs enforce, causing "LLM error for a prompt".
 	compact = append(compact, codeMessage{
-		Role:    "assistant",
+		Role:    "system",
 		Content: "[Conversation summary]\n" + summary,
 	})
 	tail := history
 	if len(tail) > 4 {
 		tail = tail[len(tail)-4:]
+	}
+	// Drop leading non-user messages from the tail so the first turn after
+	// the summary is always a user turn, preserving proper alternation.
+	for len(tail) > 0 && tail[0].Role != "user" {
+		tail = tail[1:]
 	}
 	compact = append(compact, tail...)
 	return compact, nil

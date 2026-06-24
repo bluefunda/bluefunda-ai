@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.32.5](https://github.com/bluefunda/bluefunda-ai/compare/v1.32.4...v1.32.5) (2026-06-24)
+
+
+### Bug Fixes
+
+* **agent:** catch Groq generic LLM error as context overflow; fix drop target ([#193](https://github.com/bluefunda/bluefunda-ai/issues/193)) ([456241c](https://github.com/bluefunda/bluefunda-ai/commit/456241c9a8572be7f493b083d1a307233405e238))
+
 ## [1.32.4](https://github.com/bluefunda/bluefunda-ai/compare/v1.32.3...v1.32.4) (2026-06-24)
 
 

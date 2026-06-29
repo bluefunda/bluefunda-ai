@@ -54,11 +54,21 @@ func (m Model) View() string {
 
 func (m Model) renderHeader() string {
 	th := m.theme
-	left := th.AssistantLabel.Render("BlueFunda AI") +
-		th.ToolDim.Render("  ·  ") +
-		th.ToolDim.Render(m.cfg.Model)
-	if m.cfg.RepoName != "" {
-		left += th.ToolDim.Render("  ·  " + m.cfg.RepoName)
+	left := th.AssistantLabel.Render("BlueFunda AI")
+	if m.cfg.Version != "" {
+		left += th.ToolDim.Render("  " + m.cfg.Version)
+	}
+	left += th.ToolDim.Render("  ·  ") + th.ToolDim.Render(m.cfg.Model)
+
+	// Show working folder: prefer WorkDir (shortened), fall back to RepoName.
+	folder := ""
+	if m.cfg.WorkDir != "" {
+		folder = shortPath(m.cfg.WorkDir)
+	} else if m.cfg.RepoName != "" {
+		folder = m.cfg.RepoName
+	}
+	if folder != "" {
+		left += th.ToolDim.Render("  ·  " + folder)
 	}
 
 	right := th.ToolDim.Render(m.cfg.ChatID[:8])
@@ -71,6 +81,24 @@ func (m Model) renderHeader() string {
 	line := " " + left + spacer + right
 
 	return th.Header.Width(m.width).Render(line)
+}
+
+// shortPath returns the last 2 path segments for compact display.
+func shortPath(p string) string {
+	p = strings.TrimRight(p, "/")
+	if p == "" {
+		return ""
+	}
+	i := strings.LastIndex(p, "/")
+	if i < 0 {
+		return p
+	}
+	base := p[i+1:]
+	j := strings.LastIndex(p[:i], "/")
+	if j < 0 {
+		return p[:]
+	}
+	return p[j+1 : i] + "/" + base
 }
 
 // formatTokenCount formats a token count as "1.2k", "45k", "150k", etc.
@@ -181,22 +209,13 @@ func renderMixed(content string, width int, th Theme) string {
 func (m Model) renderInput() string {
 	th := m.theme
 
-	var inner string
-	if m.streaming {
-		frame := spinnerFrames[m.spinnerIdx%len(spinnerFrames)]
-		inner = "  " + th.Spinner.Render(frame) + "  " +
-			th.ToolDim.Render("Generating...")
-		lines := strings.Repeat("\n", inputMinLines-1)
-		inner += lines
-	} else {
-		inner = m.textarea.View()
-		if m.showInputCount() {
-			val := m.textarea.Value()
-			lineCount := strings.Count(val, "\n") + 1
-			charCount := len([]rune(val))
-			countStr := fmt.Sprintf("%d lines · %d chars", lineCount, charCount)
-			inner += "\n" + th.ToolDim.Render(countStr)
-		}
+	inner := m.textarea.View()
+	if m.showInputCount() && !m.streaming {
+		val := m.textarea.Value()
+		lineCount := strings.Count(val, "\n") + 1
+		charCount := len([]rune(val))
+		countStr := fmt.Sprintf("%d lines · %d chars", lineCount, charCount)
+		inner += "\n" + th.ToolDim.Render(countStr)
 	}
 
 	return th.InputBorder.

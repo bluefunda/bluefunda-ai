@@ -87,7 +87,8 @@ type SessionConfig struct {
 	ChatID         string
 	Model          string
 	IsCode         bool   // code session (has local tools)
-	WorkDir        string // for code sessions
+	WorkDir        string // working directory shown in header
+	Version        string // bai version shown in header
 	AutoApply      bool
 	InitialPrompt  string                        // auto-submitted as the first message
 	RepoName       string                        // git repo name shown in header
@@ -335,23 +336,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			last := len(m.messages) - 1
 			if m.messages[last].Role == RoleAssistant && !m.messages[last].printed {
 				m.messages[last].finishStreaming()
-				// Commit completed assistant message to scroll buffer.
-				innerWidth := m.width - 4
-				if innerWidth < 20 {
-					innerWidth = 20
-				}
-				rendered := m.renderMessageAt(last, innerWidth)
-				m.messages[last].printed = true
-				cmds = append(cmds, tea.Println(rendered))
 			}
 		}
 		if msg.Err != nil {
-			errMsg := newSystemMessage("Error: " + msg.Err.Error())
-			errMsg.printed = true
-			m.messages = append(m.messages, errMsg)
-			cmds = append(cmds, tea.Println("\n  "+m.theme.SystemMsg.Render("Error: "+msg.Err.Error())))
+			m.messages = append(m.messages, newSystemMessage("Error: "+msg.Err.Error()))
 		}
 		m.refreshViewport()
+		m.viewport.GotoBottom()
 		m.textarea.Focus()
 		cmds = append(cmds, textarea.Blink)
 
@@ -432,8 +423,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.handleKey(msg)
 	}
 
-	// Route all remaining events to textarea and viewport
-	if !m.streaming {
+	// Route all remaining events to textarea and viewport.
+	// Textarea stays active even while streaming so the user can type ahead.
+	{
 		prevRows := m.effectiveInputRows()
 		prevCount := m.showInputCount()
 
@@ -633,12 +625,10 @@ func (m Model) submitInput() (tea.Model, tea.Cmd) {
 		}
 	}
 
-	// Append user message and immediately commit to scroll buffer.
+	// Append user message to viewport — stays visible in conversation history.
 	m.messages = append(m.messages, newUserMessage(input))
-	userLine := "\n  " + m.theme.UserLabel.Render("You") + "\n  " + m.theme.UserContent.Render(input)
-	m.messages[len(m.messages)-1].printed = true
 	m.streaming = true
-	m.textarea.Blur()
+	m.atBottom = true
 	m.refreshViewport()
 	m.viewport.GotoBottom()
 
@@ -648,7 +638,7 @@ func (m Model) submitInput() (tea.Model, tea.Cmd) {
 	// Open the stream and start pumping events via cmd chaining.
 	m.streamStop = make(chan struct{})
 	m.streamCh = m.submitFn(m.cfg.ChatID, m.cfg.Model, input, isNew)
-	return m, tea.Batch(tea.Println(userLine), waitForStreamEvent(m.streamCh, m.streamStop))
+	return m, waitForStreamEvent(m.streamCh, m.streamStop)
 }
 
 func (m Model) handleSlashCommand(input string) (tea.Model, tea.Cmd) {
@@ -852,7 +842,7 @@ func (m Model) handleSlashCommand(input string) (tea.Model, tea.Cmd) {
 			if c.Name == cmdName && c.Prompt != "" {
 				m.messages = append(m.messages, newUserMessage(c.Prompt))
 				m.streaming = true
-				m.textarea.Blur()
+				m.atBottom = true
 				m.refreshViewport()
 				m.viewport.GotoBottom()
 				isNew := m.isNewChat
@@ -1160,28 +1150,17 @@ func (m *Model) handleStreamEvent(ev StreamEvent) []tea.Cmd {
 
 	case "error":
 		m.streaming = false
-		errMsg := newSystemMessage("Error: " + ev.ErrMsg)
-		errMsg.printed = true
-		m.messages = append(m.messages, errMsg)
-		cmds = append(cmds, tea.Println("\n  "+m.theme.SystemMsg.Render("Error: "+ev.ErrMsg)))
+		m.messages = append(m.messages, newSystemMessage("Error: "+ev.ErrMsg))
 		m.refreshViewport()
+		m.viewport.GotoBottom()
 		m.textarea.Focus()
 
 	case "done":
-		// handled as StreamDoneMsg — but also handle inline
 		m.streaming = false
 		if len(m.messages) > 0 {
 			last := len(m.messages) - 1
 			if m.messages[last].Role == RoleAssistant {
 				m.messages[last].finishStreaming()
-				// Commit completed assistant message to scroll buffer.
-				innerWidth := m.width - 4
-				if innerWidth < 20 {
-					innerWidth = 20
-				}
-				rendered := m.renderMessageAt(last, innerWidth)
-				m.messages[last].printed = true
-				cmds = append(cmds, tea.Println(rendered))
 			}
 		}
 		// Accumulate token usage when backend provides it.
@@ -1190,6 +1169,7 @@ func (m *Model) handleStreamEvent(ev StreamEvent) []tea.Cmd {
 			m.totalCompletionTokens += ev.UsageCompletionTokens
 		}
 		m.refreshViewport()
+		m.viewport.GotoBottom()
 		m.textarea.Focus()
 		cmds = append(cmds, textarea.Blink)
 	}

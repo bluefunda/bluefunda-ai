@@ -258,11 +258,14 @@ func runChatSession(chatID, initialPrompt, model, mcpServer string) error {
 		return tui.PumpGRPCStream(stream, cancel)
 	}
 
+	workDir, _ := os.Getwd()
 	cfg2 := tui.SessionConfig{
 		ChatID:         chatID,
 		Model:          model,
 		InitialPrompt:  initialPrompt,
 		RepoName:       gitRepoName(),
+		WorkDir:        workDir,
+		Version:        formatVersion(Version),
 		ResumeTitle:    resumeTitle,
 		IsResume:       isResume,
 		CustomCommands: loadCustomSlashCommands("."),

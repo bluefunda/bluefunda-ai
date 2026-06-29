@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.34.0](https://github.com/bluefunda/bluefunda-ai/compare/v1.33.1...v1.34.0) (2026-06-29)
+
+
+### Features
+
+* **tui:** persistent viewport conversation, header version/folder, live input ([#201](https://github.com/bluefunda/bluefunda-ai/issues/201)) ([14f3fe1](https://github.com/bluefunda/bluefunda-ai/commit/14f3fe19f39432dc052923cdfc8cde2af0c5a14e))
+
 ## [1.33.1](https://github.com/bluefunda/bluefunda-ai/compare/v1.33.0...v1.33.1) (2026-06-24)
 
 

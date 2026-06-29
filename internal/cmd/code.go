@@ -373,6 +373,7 @@ func runAgenticSession(args []string) error {
 		Model:          model,
 		IsCode:         true,
 		WorkDir:        workDir,
+		Version:        formatVersion(Version),
 		AutoApply:      codeAutoApply,
 		InitialPrompt:  initialPrompt,
 		RepoName:       gitRepoName(),

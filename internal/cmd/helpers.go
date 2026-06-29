@@ -114,6 +114,14 @@ func bffConn() (*caigrpc.Conn, *config.Config, error) {
 	return conn, cfg, nil
 }
 
+// formatVersion returns "v<ver>" for release builds, or the raw string (e.g. "dev") otherwise.
+func formatVersion(ver string) string {
+	if ver == "" || ver == "dev" {
+		return ver
+	}
+	return "v" + ver
+}
+
 // gitRepoName returns the basename of the git repository root, or "" if not in a git repo.
 func gitRepoName() string {
 	out, err := exec.Command("git", "rev-parse", "--show-toplevel").Output()

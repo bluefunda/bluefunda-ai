@@ -3,8 +3,10 @@
 _Date: 2026-07-04 · repo: `bluefunda-ai` (also references `cai-bff`, `cai-llm-router`)_
 
 Two separate threads in this session:
-1. **DONE + committed to working tree** — TUI scrollback fix.
-2. **DIAGNOSED, issues drafted (not filed)** — local file tools / agentic loop broken; root cause is in `cai-llm-router`.
+1. **DONE + pushed as PR** — TUI scrollback fix → PR https://github.com/bluefunda/bluefunda-ai/pull/204 (branch `feat/tui-native-scrollback`, not merged).
+2. **DIAGNOSED + issues filed** — local file tools / agentic loop broken; root cause in `cai-llm-router`:
+   - https://github.com/bluefunda/cai-llm-router/issues/127 — silent degradation to tool-less agent
+   - https://github.com/bluefunda/cai-llm-router/issues/128 — don't silently drop local_tools on parse failure
 
 ---
 

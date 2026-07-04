@@ -311,9 +311,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if newM.cfg.InitialPrompt != "" && !newM.initialPromptSent {
 			newM.initialPromptSent = true
 			newM.textarea.SetValue(newM.cfg.InitialPrompt)
-			return newM.submitInput()
+			res, cmd := newM.submitInput()
+			if rm, ok := res.(Model); ok {
+				return rm.withCommit(cmd)
+			}
+			return res, cmd
 		}
-		return newM, nil
+		// Commit the welcome/system messages to scrollback on first layout.
+		return newM.withCommit(nil)
 
 	case tickMsg:
 		if m.streaming {
@@ -417,10 +422,17 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	// ── Keyboard ──────────────────────────────
 
 	case tea.KeyMsg:
+		var res tea.Model
+		var cmd tea.Cmd
 		if m.pendingApproval != nil {
-			return m.handleApprovalKey(msg)
+			res, cmd = m.handleApprovalKey(msg)
+		} else {
+			res, cmd = m.handleKey(msg)
 		}
-		return m.handleKey(msg)
+		if rm, ok := res.(Model); ok {
+			return rm.withCommit(cmd)
+		}
+		return res, cmd
 	}
 
 	// Route all remaining events to textarea and viewport.
@@ -446,6 +458,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var vpCmd tea.Cmd
 	m.viewport, vpCmd = m.viewport.Update(msg)
 	cmds = append(cmds, vpCmd)
+
+	// Commit finished turns (e.g. a completed assistant response or async
+	// system output) to the terminal's native scrollback.
+	if commit := (&m).commitScrollback(); commit != nil {
+		cmds = append(cmds, commit)
+	}
 
 	return m, tea.Batch(cmds...)
 }
@@ -546,16 +564,6 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if m.showSlash && len(m.slashMatches) > 0 {
 			return m.acceptSlashCommand()
 		}
-
-	case "pgup":
-		m.viewport.PageUp()
-		m.atBottom = false
-		return m, nil
-
-	case "pgdown":
-		m.viewport.PageDown()
-		m.atBottom = m.viewport.AtBottom()
-		return m, nil
 	}
 
 	var taCmd tea.Cmd
@@ -957,6 +965,59 @@ func (m *Model) refreshViewport() {
 	m.viewport.SetContent(m.renderActiveMessages())
 }
 
+// commitScrollback prints any finished (non-live) unprinted messages to the
+// terminal's native scroll buffer via tea.Println and marks them printed. Once
+// committed, a message leaves the inline block and lives in the terminal's own
+// scrollback, so it is never lost and can be scrolled back to with the mouse or
+// trackpad. The in-flight streaming assistant turn is left inline until it
+// finishes, at which point the next cycle commits it in full.
+//
+// All pending messages are joined into a single tea.Println call so their order
+// is preserved (batched Printlns can interleave); order across Update cycles is
+// preserved because the message loop processes them sequentially.
+func (m *Model) commitScrollback() tea.Cmd {
+	if !m.vpReady || m.width == 0 {
+		return nil
+	}
+	innerWidth := m.width - 4
+	if innerWidth < 20 {
+		innerWidth = 20
+	}
+	var parts []string
+	for i := range m.messages {
+		if m.messages[i].printed {
+			continue
+		}
+		// Leave the in-flight streaming turn inline; commit it once it's done.
+		if m.messages[i].Role == RoleAssistant && m.messages[i].Streaming {
+			continue
+		}
+		m.messages[i].printed = true
+		rendered := strings.TrimRight(m.renderMessageAt(i, innerWidth), "\n")
+		if strings.TrimSpace(rendered) != "" {
+			parts = append(parts, rendered)
+		}
+	}
+	if len(parts) == 0 {
+		return nil
+	}
+	return tea.Println(strings.Join(parts, "\n"))
+}
+
+// withCommit commits any finished messages to scrollback and merges the commit
+// with the caller's follow-on cmd. Used at the exit points of Update.
+func (m Model) withCommit(cmd tea.Cmd) (tea.Model, tea.Cmd) {
+	commit := m.commitScrollback()
+	switch {
+	case commit == nil:
+		return m, cmd
+	case cmd == nil:
+		return m, commit
+	default:
+		return m, tea.Batch(cmd, commit)
+	}
+}
+
 // renderActiveMessages renders only messages not yet committed to the scroll buffer.
 func (m *Model) renderActiveMessages() string {
 	innerWidth := m.width - 4
@@ -987,7 +1048,7 @@ func helpText() string {
 		"  Ctrl+L         Clear screen",
 		"  Ctrl+C          Interrupt turn (or quit when idle)",
 	"  Ctrl+D          Quit",
-		"  PgUp/PgDn      Scroll conversation",
+		"  Scroll         Use your terminal's scrollback (mouse / trackpad)",
 		"",
 		"  Slash commands",
 		"  ─────────────────────────────────",

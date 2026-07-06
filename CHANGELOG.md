@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.34.1](https://github.com/bluefunda/bluefunda-ai/compare/v1.34.0...v1.34.1) (2026-07-06)
+
+
+### Bug Fixes
+
+* change default realm from trm to individual" ([#205](https://github.com/bluefunda/bluefunda-ai/issues/205)) ([252d055](https://github.com/bluefunda/bluefunda-ai/commit/252d055e90f14a8047726c55710b5f728de4f162))
+
 ## [1.34.0](https://github.com/bluefunda/bluefunda-ai/compare/v1.33.1...v1.34.0) (2026-06-29)
 
 

@@ -63,7 +63,7 @@ func TestDefaultConfig(t *testing.T) {
 
 func TestAuthURL_DefaultRealm(t *testing.T) {
 	url := AuthURL("example.com", "")
-	expected := "https://auth.example.com/realms/trm/protocol/openid-connect"
+	expected := "https://auth.example.com/realms/individual/protocol/openid-connect"
 	if url != expected {
 		t.Errorf("expected %s, got %s", expected, url)
 	}

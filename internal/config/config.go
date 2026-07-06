@@ -16,7 +16,7 @@ const (
 	DefaultGatewayURL = "https://ai.bluefunda.com"
 	DefaultBFFURL     = "cli.bluefunda.com:443"
 	DefaultDomain     = "bluefunda.com"
-	DefaultRealm      = "trm"
+	DefaultRealm      = "individual"
 	DefaultClientID   = "bai"
 )
 

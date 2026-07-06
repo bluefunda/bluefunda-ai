@@ -118,8 +118,8 @@ func TestAttachToken(t *testing.T) {
 	}
 
 	realmValues := md.Get("x-realm")
-	if len(realmValues) == 0 || realmValues[0] != "trm" {
-		t.Fatalf("expected x-realm 'trm', got %q", realmValues)
+	if len(realmValues) == 0 || realmValues[0] != "individual" {
+		t.Fatalf("expected x-realm 'individual', got %q", realmValues)
 	}
 
 	userIDValues := md.Get("x-user-id")

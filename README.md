@@ -42,7 +42,9 @@ bai --worktree "try a risky refactor" # run in an isolated git worktree
 bai -c                                # resume your most recent session
 ```
 
-Inside a session, type `/` for slash commands — `/model` to switch models, `/clear` to reset, `/help` for the rest. `Enter` sends, `Ctrl+C` quits.
+Inside a session, type `/` for slash commands — `/model` to switch models, `/clear` to reset, `/help` for the rest. `Enter` sends, `Ctrl+C` interrupts the current turn (or quits when idle), `Ctrl+D` quits.
+
+**Scrolling and copying:** scroll the conversation with the mouse wheel, `PgUp`/`PgDn`, or arrow keys. To copy text, hold **Shift** while clicking and dragging — this hands selection back to the terminal when mouse-scroll mode is active.
 
 Scaffold project-level config and conventions once:
 

@@ -10,7 +10,7 @@
 Ask it to fix a test, refactor a package, or explain a codebase — it reads and writes your files, runs shell commands, and works the problem turn by turn until it's done. No browser, no copy-paste, no leaving the terminal.
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/bluefunda/bluefunda-ai/main/install.sh | sh
+curl -fsSL https://bluefunda.com/ai/install.sh | sh
 bai login
 bai "add table-driven tests for the parser package"
 ```
@@ -106,7 +106,7 @@ Register your own tools via `OnToolCall`, and fall back to `agent.DefaultExecute
 **macOS / Linux (one-liner)** — installs to `/usr/local/bin` or `~/.local/bin`, verifies SHA256:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/bluefunda/bluefunda-ai/main/install.sh | sh
+curl -fsSL https://bluefunda.com/ai/install.sh | sh
 ```
 
 **Homebrew (macOS)**

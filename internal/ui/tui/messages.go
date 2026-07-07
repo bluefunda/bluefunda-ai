@@ -37,17 +37,13 @@ const (
 
 // ChatMessage is one logical message in the conversation.
 type ChatMessage struct {
-	Role       MsgRole
-	Content    string
-	ToolEvents []ToolEvent
-	Streaming  bool
-	Timestamp  time.Time
-	// printed is true once the message has been committed to the scroll buffer via tea.Println
-	printed bool
-	// rendered is the cached glamour-rendered form of Content (assistant only)
-	rendered string
-	// renderWidth is the width used when rendering was last produced
-	renderWidth int
+	Role        MsgRole
+	Content     string
+	ToolEvents  []ToolEvent
+	Streaming   bool
+	Timestamp   time.Time
+	rendered    string // cached glamour-rendered form of Content (assistant only)
+	renderWidth int    // width used when rendered was produced
 }
 
 func newUserMessage(text string) ChatMessage {

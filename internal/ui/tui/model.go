@@ -334,7 +334,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.streaming = false
 		if len(m.messages) > 0 {
 			last := len(m.messages) - 1
-			if m.messages[last].Role == RoleAssistant && !m.messages[last].printed {
+			if m.messages[last].Role == RoleAssistant {
 				m.messages[last].finishStreaming()
 			}
 		}
@@ -954,20 +954,17 @@ func (m *Model) refreshViewport() {
 	if !m.vpReady {
 		return
 	}
-	m.viewport.SetContent(m.renderActiveMessages())
+	m.viewport.SetContent(m.renderConversation())
 }
 
-// renderActiveMessages renders only messages not yet committed to the scroll buffer.
-func (m *Model) renderActiveMessages() string {
+// renderConversation renders the full conversation for the viewport.
+func (m *Model) renderConversation() string {
 	innerWidth := m.width - 4
 	if innerWidth < 20 {
 		innerWidth = 20
 	}
 	var sb strings.Builder
 	for i := range m.messages {
-		if m.messages[i].printed {
-			continue
-		}
 		if sb.Len() > 0 {
 			sb.WriteByte('\n')
 		}
@@ -1158,12 +1155,10 @@ func (m *Model) handleStreamEvent(ev StreamEvent) []tea.Cmd {
 	case "done":
 		m.streaming = false
 		if len(m.messages) > 0 {
-			last := len(m.messages) - 1
-			if m.messages[last].Role == RoleAssistant {
-				m.messages[last].finishStreaming()
+			if last := &m.messages[len(m.messages)-1]; last.Role == RoleAssistant {
+				last.finishStreaming()
 			}
 		}
-		// Accumulate token usage when backend provides it.
 		if ev.UsagePromptTokens > 0 || ev.UsageCompletionTokens > 0 {
 			m.totalPromptTokens += ev.UsagePromptTokens
 			m.totalCompletionTokens += ev.UsageCompletionTokens

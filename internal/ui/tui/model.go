@@ -2,6 +2,8 @@ package tui
 
 import (
 	"fmt"
+	"os"
+	"os/exec"
 	"strconv"
 	"strings"
 	"time"
@@ -78,6 +80,9 @@ type MCPActivatedMsg struct {
 
 // tickMsg drives the spinner animation.
 type tickMsg time.Time
+
+// updateExecDoneMsg is sent when the bai update subprocess exits.
+type updateExecDoneMsg struct{ err error }
 
 // ──────────────────────────────────────────────
 //  SessionConfig is passed from cmd to the TUI
@@ -421,6 +426,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case UpdateAvailableMsg:
 		m.updateAvailable = msg.Version
 
+	case updateExecDoneMsg:
+		// After `bai update` exits (success or failure), quit rather than
+		// resuming — the binary on disk may have changed.
+		return m, tea.Quit
+
 	// ── Keyboard ──────────────────────────────
 
 	case tea.KeyMsg:
@@ -653,6 +663,18 @@ func (m Model) handleSlashCommand(input string) (tea.Model, tea.Cmd) {
 	m.showSlash = false
 
 	switch {
+	case input == "/update":
+		exe, err := os.Executable()
+		if err != nil {
+			m.messages = append(m.messages, newSystemMessage("Could not locate bai binary: "+err.Error()))
+			m.refreshViewport()
+			break
+		}
+		cmd := exec.Command(exe, "update")
+		return m, tea.ExecProcess(cmd, func(err error) tea.Msg {
+			return updateExecDoneMsg{err: err}
+		})
+
 	case input == "/exit" || input == "/quit":
 		m.quit = true
 		return m, tea.Quit
@@ -1005,6 +1027,7 @@ func helpText() string {
 		"  /mcp [name]      List or activate MCP servers",
 		"  /account         Show account info",
 		"  /usage           Show token usage",
+		"  /update          Check for a newer version and upgrade",
 		"  /clear  /reset  /context  /exit",
 		"",
 	}, "\n")

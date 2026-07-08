@@ -501,7 +501,14 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case "enter":
-		if m.showSlash {
+		if m.showSlash && len(m.slashMatches) > 0 {
+			cmd := m.slashMatches[m.slashIdx]
+			if m.textarea.Value() == cmd.Name {
+				// Already typed the exact command name — skip the autocomplete
+				// step and submit directly.
+				m.showSlash = false
+				return m.submitInput()
+			}
 			return m.acceptSlashCommand()
 		}
 		if m.streaming {

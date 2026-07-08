@@ -223,6 +223,9 @@ type Model struct {
 	totalPromptTokens     int32
 	totalCompletionTokens int32
 
+	// Update notification
+	updateAvailable string // non-empty when a newer version is found on startup
+
 	// Misc
 	quit              bool
 	initialPromptSent bool
@@ -286,6 +289,7 @@ func (m Model) Init() tea.Cmd {
 		textarea.Blink,
 		tickCmd(),
 		tea.EnableBracketedPaste,
+		checkForUpdateCmd(m.cfg.Version),
 	)
 }
 
@@ -413,6 +417,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.refreshViewport()
 		m.viewport.GotoBottom()
+
+	case UpdateAvailableMsg:
+		m.updateAvailable = msg.Version
 
 	// ── Keyboard ──────────────────────────────
 

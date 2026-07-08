@@ -297,7 +297,13 @@ func (m Model) renderFooter() string {
 	if m.streaming {
 		hint = "Ctrl+C to interrupt turn  ·  Ctrl+D to quit"
 	}
-	return "  " + th.Footer.Render(hint)
+	left := "  " + th.Footer.Render(hint)
+	if m.updateAvailable == "" {
+		return left
+	}
+	badge := lipgloss.NewStyle().Foreground(th.Warning).Render("↑ " + m.updateAvailable + "  run: bai update")
+	spacer := strings.Repeat(" ", max(0, m.width-lipgloss.Width(left)-lipgloss.Width(badge)-2))
+	return left + spacer + badge + "  "
 }
 
 // ──────────────────────────────────────────────

@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.35.2](https://github.com/bluefunda/bluefunda-ai/compare/v1.35.1...v1.35.2) (2026-07-08)
+
+
+### Bug Fixes
+
+* **tui:** sync thinkFilter with router — discard trailing think blocks to prevent duplicate response ([#218](https://github.com/bluefunda/bluefunda-ai/issues/218)) ([8a57938](https://github.com/bluefunda/bluefunda-ai/commit/8a5793820689825d4302e81096385a088736710f))
+
 ## [1.35.1](https://github.com/bluefunda/bluefunda-ai/compare/v1.35.0...v1.35.1) (2026-07-08)
 
 

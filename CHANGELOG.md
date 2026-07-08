@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.35.0](https://github.com/bluefunda/bluefunda-ai/compare/v1.34.1...v1.35.0) (2026-07-08)
+
+
+### Features
+
+* **tui:** model picker, update-check badge, /update slash command ([#210](https://github.com/bluefunda/bluefunda-ai/issues/210)) ([aaaba5d](https://github.com/bluefunda/bluefunda-ai/commit/aaaba5d1ffc1888c3ebf6c58fa54ea0971a3a93c))
+
 ## [1.34.1](https://github.com/bluefunda/bluefunda-ai/compare/v1.34.0...v1.34.1) (2026-07-06)
 
 

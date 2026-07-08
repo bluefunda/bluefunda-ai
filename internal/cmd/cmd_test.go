@@ -10,10 +10,12 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	pb "github.com/bluefunda/bluefunda-ai/api/proto/bff"
 	caigrpc "github.com/bluefunda/bluefunda-ai/internal/grpc"
 	"github.com/bluefunda/bluefunda-ai/internal/ui"
+	"github.com/bluefunda/bluefunda-ai/internal/ui/tui"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/test/bufconn"
@@ -866,3 +868,213 @@ func TestModelListRPC_JSON(t *testing.T) {
 
 // Ensure json import is used (it's referenced in TestModelList_JSON above).
 var _ = json.NewEncoder
+
+// ============================================================
+// --- drainPrintStream Tests (headless print mode, #77) ---
+// ============================================================
+
+// feedEvents sends events to a channel and closes it.
+func feedEvents(events []tui.StreamEvent) <-chan tui.StreamEvent {
+	ch := make(chan tui.StreamEvent, len(events)+1)
+	for _, e := range events {
+		ch <- e
+	}
+	close(ch)
+	return ch
+}
+
+func TestDrainPrintStream_TextMode_Chunk(t *testing.T) {
+	ch := feedEvents([]tui.StreamEvent{
+		{Kind: "chunk", Chunk: "Hello, "},
+		{Kind: "chunk", Chunk: "world!"},
+		{Kind: "done"},
+	})
+	var out, errOut bytes.Buffer
+	code := drainPrintStream(ch, "text", &out, &errOut)
+	if code != 0 {
+		t.Errorf("expected exit code 0, got %d", code)
+	}
+	if out.String() != "Hello, world!" {
+		t.Errorf("text mode output = %q, want %q", out.String(), "Hello, world!")
+	}
+}
+
+func TestDrainPrintStream_TextMode_Error(t *testing.T) {
+	ch := feedEvents([]tui.StreamEvent{
+		{Kind: "error", ErrMsg: "something failed"},
+		{Kind: "done"},
+	})
+	var out, errOut bytes.Buffer
+	code := drainPrintStream(ch, "text", &out, &errOut)
+	if code != 1 {
+		t.Errorf("expected exit code 1 on error, got %d", code)
+	}
+	if !strings.Contains(errOut.String(), "something failed") {
+		t.Errorf("expected error in stderr, got: %s", errOut.String())
+	}
+}
+
+func TestDrainPrintStream_JSONMode(t *testing.T) {
+	ch := feedEvents([]tui.StreamEvent{
+		{Kind: "chunk", Chunk: "The answer is 42."},
+		{Kind: "done"},
+	})
+	var out, errOut bytes.Buffer
+	code := drainPrintStream(ch, "json", &out, &errOut)
+	if code != 0 {
+		t.Errorf("expected exit code 0, got %d", code)
+	}
+
+	var result []map[string]any
+	if err := json.Unmarshal(out.Bytes(), &result); err != nil {
+		t.Fatalf("json mode output is not valid JSON: %v\noutput: %s", err, out.String())
+	}
+	if len(result) != 1 {
+		t.Fatalf("expected 1 result entry, got %d", len(result))
+	}
+	if result[0]["text"] != "The answer is 42." {
+		t.Errorf("text = %q, want %q", result[0]["text"], "The answer is 42.")
+	}
+	if result[0]["stop_reason"] != "end_turn" {
+		t.Errorf("stop_reason = %q, want %q", result[0]["stop_reason"], "end_turn")
+	}
+}
+
+func TestDrainPrintStream_JSONMode_AccumulatesChunks(t *testing.T) {
+	ch := feedEvents([]tui.StreamEvent{
+		{Kind: "chunk", Chunk: "part1 "},
+		{Kind: "chunk", Chunk: "part2 "},
+		{Kind: "chunk", Chunk: "part3"},
+		{Kind: "done"},
+	})
+	var out, errOut bytes.Buffer
+	drainPrintStream(ch, "json", &out, &errOut)
+
+	var result []map[string]any
+	if err := json.Unmarshal(out.Bytes(), &result); err != nil {
+		t.Fatalf("json output invalid: %v", err)
+	}
+	if result[0]["text"] != "part1 part2 part3" {
+		t.Errorf("accumulated text = %q, want %q", result[0]["text"], "part1 part2 part3")
+	}
+}
+
+func TestDrainPrintStream_StreamJSONMode_Chunk(t *testing.T) {
+	ch := feedEvents([]tui.StreamEvent{
+		{Kind: "chunk", Chunk: "hello"},
+		{Kind: "done"},
+	})
+	var out, errOut bytes.Buffer
+	drainPrintStream(ch, "stream-json", &out, &errOut)
+
+	lines := strings.Split(strings.TrimSpace(out.String()), "\n")
+	// Expect chunk line + done line.
+	if len(lines) < 2 {
+		t.Fatalf("expected at least 2 NDJSON lines, got: %s", out.String())
+	}
+	var ev map[string]any
+	if err := json.Unmarshal([]byte(lines[0]), &ev); err != nil {
+		t.Fatalf("line 0 not valid JSON: %v", err)
+	}
+	if ev["type"] != "text" || ev["text"] != "hello" {
+		t.Errorf("chunk event = %v, want type=text text=hello", ev)
+	}
+}
+
+func TestDrainPrintStream_StreamJSONMode_ToolCall(t *testing.T) {
+	ch := feedEvents([]tui.StreamEvent{
+		{Kind: "tool_call", ToolName: "read_file", ToolArgs: `{"path":"main.go"}`},
+		{Kind: "tool_exec", ToolName: "read_file", Status: "ok", DurationMs: 12},
+		{Kind: "done"},
+	})
+	var out, errOut bytes.Buffer
+	drainPrintStream(ch, "stream-json", &out, &errOut)
+
+	lines := strings.Split(strings.TrimSpace(out.String()), "\n")
+	// Should have tool_use, tool_result, result lines.
+	if len(lines) < 3 {
+		t.Fatalf("expected at least 3 NDJSON lines, got %d: %s", len(lines), out.String())
+	}
+	var toolUse map[string]any
+	if err := json.Unmarshal([]byte(lines[0]), &toolUse); err != nil {
+		t.Fatalf("tool_use line invalid JSON: %v", err)
+	}
+	if toolUse["type"] != "tool_use" {
+		t.Errorf("expected type=tool_use, got %v", toolUse["type"])
+	}
+	if toolUse["name"] != "read_file" {
+		t.Errorf("expected name=read_file, got %v", toolUse["name"])
+	}
+
+	var toolResult map[string]any
+	if err := json.Unmarshal([]byte(lines[1]), &toolResult); err != nil {
+		t.Fatalf("tool_result line invalid JSON: %v", err)
+	}
+	if toolResult["type"] != "tool_result" {
+		t.Errorf("expected type=tool_result, got %v", toolResult["type"])
+	}
+}
+
+func TestDrainPrintStream_StreamJSONMode_Error(t *testing.T) {
+	ch := feedEvents([]tui.StreamEvent{
+		{Kind: "error", ErrMsg: "rate limited"},
+		{Kind: "done"},
+	})
+	var out, errOut bytes.Buffer
+	code := drainPrintStream(ch, "stream-json", &out, &errOut)
+	if code != 1 {
+		t.Errorf("expected exit code 1, got %d", code)
+	}
+
+	var errEv map[string]any
+	if err := json.Unmarshal([]byte(strings.Split(strings.TrimSpace(out.String()), "\n")[0]), &errEv); err != nil {
+		t.Fatalf("error event not valid JSON: %v", err)
+	}
+	if errEv["type"] != "error" {
+		t.Errorf("expected type=error, got %v", errEv["type"])
+	}
+}
+
+func TestDrainPrintStream_DefaultMode_ToolEventsIgnored(t *testing.T) {
+	// tool_call and tool_exec in text mode should produce no output.
+	ch := feedEvents([]tui.StreamEvent{
+		{Kind: "tool_call", ToolName: "bash", ToolArgs: `{}`},
+		{Kind: "tool_exec", ToolName: "bash", Status: "ok", DurationMs: 5},
+		{Kind: "chunk", Chunk: "result"},
+		{Kind: "done"},
+	})
+	var out, errOut bytes.Buffer
+	drainPrintStream(ch, "text", &out, &errOut)
+	if out.String() != "result" {
+		t.Errorf("expected only 'result', got: %s", out.String())
+	}
+}
+
+// ============================================================
+// --- rateLimitDelay Tests (#83) ---
+// ============================================================
+
+func TestRateLimitDelay_Exponential(t *testing.T) {
+	cases := []struct {
+		retry int
+		want  time.Duration
+	}{
+		{0, 10 * time.Second},
+		{1, 20 * time.Second},
+		{2, 40 * time.Second},
+	}
+	for _, tc := range cases {
+		got := rateLimitDelay(tc.retry)
+		if got != tc.want {
+			t.Errorf("rateLimitDelay(%d) = %v, want %v", tc.retry, got, tc.want)
+		}
+	}
+}
+
+func TestRateLimitDelay_Capped(t *testing.T) {
+	// retry=5: 10s * 32 = 320s > rateLimitMaxDelay (300s) → capped.
+	got := rateLimitDelay(5)
+	if got != rateLimitMaxDelay {
+		t.Errorf("rateLimitDelay(5) = %v, want %v (capped at max)", got, rateLimitMaxDelay)
+	}
+}

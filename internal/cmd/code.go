@@ -477,9 +477,6 @@ func runCodePrint(
 	history = append(history, codeMessage{Role: "user", Content: prompt})
 
 	ch := make(chan tui.StreamEvent, 128)
-
-	var jsonEvents []map[string]any
-
 	go func() {
 		defer close(ch)
 		newHistory, loopErr := agenticLoopTUI(
@@ -494,6 +491,17 @@ func runCodePrint(
 		ch <- tui.StreamEvent{Kind: "done"}
 	}()
 
+	if exitCode := drainPrintStream(ch, outputFormat, os.Stdout, os.Stderr); exitCode != 0 {
+		os.Exit(exitCode)
+	}
+	return nil
+}
+
+// drainPrintStream reads StreamEvents from ch and writes formatted output.
+// Returns 0 on success, 1 if any error event was received.
+// Extracted from runCodePrint so the formatting logic can be unit-tested
+// independently of the agentic loop and gRPC stack.
+func drainPrintStream(ch <-chan tui.StreamEvent, outputFormat string, w, errW io.Writer) int {
 	var textBuf strings.Builder
 	exitCode := 0
 
@@ -502,51 +510,46 @@ func runCodePrint(
 		case "chunk":
 			switch outputFormat {
 			case "stream-json":
-				enc := json.NewEncoder(os.Stdout)
+				enc := json.NewEncoder(w)
 				enc.Encode(map[string]any{"type": "text", "text": ev.Chunk}) //nolint:errcheck
 			case "json":
 				textBuf.WriteString(ev.Chunk)
 			default:
-				fmt.Print(ev.Chunk)
+				fmt.Fprint(w, ev.Chunk)
 			}
 		case "tool_call":
 			if outputFormat == "stream-json" {
-				enc := json.NewEncoder(os.Stdout)
+				enc := json.NewEncoder(w)
 				enc.Encode(map[string]any{"type": "tool_use", "name": ev.ToolName, "input": ev.ToolArgs}) //nolint:errcheck
 			}
 		case "tool_exec":
 			if outputFormat == "stream-json" {
-				enc := json.NewEncoder(os.Stdout)
+				enc := json.NewEncoder(w)
 				enc.Encode(map[string]any{"type": "tool_result", "name": ev.ToolName, "status": ev.Status, "duration_ms": ev.DurationMs}) //nolint:errcheck
 			}
 		case "error":
 			exitCode = 1
 			if outputFormat == "stream-json" {
-				enc := json.NewEncoder(os.Stdout)
+				enc := json.NewEncoder(w)
 				enc.Encode(map[string]any{"type": "error", "error": ev.ErrMsg}) //nolint:errcheck
 			} else {
-				fmt.Fprintln(os.Stderr, "error:", ev.ErrMsg)
+				fmt.Fprintln(errW, "error:", ev.ErrMsg)
 			}
 		case "done":
 			result := map[string]any{"type": "result", "stop_reason": "end_turn"}
 			switch outputFormat {
 			case "stream-json":
-				enc := json.NewEncoder(os.Stdout)
+				enc := json.NewEncoder(w)
 				enc.Encode(result) //nolint:errcheck
 			case "json":
 				result["text"] = textBuf.String()
-				jsonEvents = append(jsonEvents, result)
-				enc := json.NewEncoder(os.Stdout)
-				enc.Encode(jsonEvents) //nolint:errcheck
+				enc := json.NewEncoder(w)
+				enc.Encode([]map[string]any{result}) //nolint:errcheck
 			}
 		}
-		_ = jsonEvents
 	}
 
-	if exitCode != 0 {
-		os.Exit(exitCode)
-	}
-	return nil
+	return exitCode
 }
 
 // isTerminal returns true when stdout is connected to an interactive terminal.

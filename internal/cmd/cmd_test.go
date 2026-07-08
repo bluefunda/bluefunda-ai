@@ -6,11 +6,14 @@ import (
 	"encoding/json"
 	"fmt"
 	"net"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	pb "github.com/bluefunda/bluefunda-ai/api/proto/bff"
 	caigrpc "github.com/bluefunda/bluefunda-ai/internal/grpc"
+	"github.com/bluefunda/bluefunda-ai/internal/ui"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/test/bufconn"
@@ -118,6 +121,14 @@ func (t *testBFF) GetStripePlans(_ context.Context, _ *pb.GetStripePlansRequest)
 func (t *testBFF) GetUserSettings(_ context.Context, _ *pb.GetUserSettingsRequest) (*pb.GetUserSettingsResponse, error) {
 	return &pb.GetUserSettingsResponse{
 		LlmModels: []*pb.LLMModel{{Name: "gpt-4", ModelId: 1}},
+	}, nil
+}
+
+func (t *testBFF) GetChatContext(_ context.Context, req *pb.GetChatContextRequest) (*pb.GetChatContextResponse, error) {
+	return &pb.GetChatContextResponse{
+		Messages: []*pb.ChatMessage{
+			{Role: "system", Content: "You are helpful.", CreatedAt: "2025-01-01T00:00:00Z"},
+		},
 	}, nil
 }
 
@@ -478,3 +489,380 @@ func TestTruncate(t *testing.T) {
 		}
 	}
 }
+
+// --- ResolveModelAlias Tests ---
+
+func TestResolveModelAlias(t *testing.T) {
+	cases := []struct {
+		alias string
+		want  string
+	}{
+		{"auto", ""},
+		{"", ""},
+		{"fast", "groq"},
+		{"think", ":think"},
+		{"thinking", ":think"},
+		{"openai", "openai"},
+		{"anthropic", "anthropic"},
+		{"groq:llama-3.3-70b", "groq:llama-3.3-70b"},
+		{"claude-3-sonnet", "claude-3-sonnet"},
+	}
+	for _, tc := range cases {
+		got := resolveModelAlias(tc.alias)
+		if got != tc.want {
+			t.Errorf("resolveModelAlias(%q) = %q, want %q", tc.alias, got, tc.want)
+		}
+	}
+}
+
+// --- FormatVersion Tests ---
+
+func TestFormatVersion(t *testing.T) {
+	cases := []struct {
+		ver  string
+		want string
+	}{
+		{"", ""},
+		{"dev", "dev"},
+		{"1.2.3", "v1.2.3"},
+		{"1.35.1", "v1.35.1"},
+	}
+	for _, tc := range cases {
+		got := formatVersion(tc.ver)
+		if got != tc.want {
+			t.Errorf("formatVersion(%q) = %q, want %q", tc.ver, got, tc.want)
+		}
+	}
+}
+
+// --- FindContextFile Tests ---
+
+func TestFindContextFile_BaiContext(t *testing.T) {
+	dir := t.TempDir()
+	baiDir := filepath.Join(dir, ".bai")
+	if err := os.MkdirAll(baiDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(baiDir, "context.md"), []byte("project context"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// Simulate git root so walk stops here.
+	if err := os.MkdirAll(filepath.Join(dir, ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	got := findContextFile(dir)
+	if got != "project context" {
+		t.Errorf("expected 'project context', got %q", got)
+	}
+}
+
+func TestFindContextFile_AgentsMd(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "AGENTS.md"), []byte("agents content"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(dir, ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	got := findContextFile(dir)
+	if got != "agents content" {
+		t.Errorf("expected 'agents content', got %q", got)
+	}
+}
+
+func TestFindContextFile_WalksUp(t *testing.T) {
+	root := t.TempDir()
+	baiDir := filepath.Join(root, ".bai")
+	if err := os.MkdirAll(baiDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(baiDir, "context.md"), []byte("root context"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(root, ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	sub := filepath.Join(root, "a", "b")
+	if err := os.MkdirAll(sub, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	got := findContextFile(sub)
+	if got != "root context" {
+		t.Errorf("expected 'root context', got %q", got)
+	}
+}
+
+func TestFindContextFile_NoneFound(t *testing.T) {
+	dir := t.TempDir()
+	// No .bai/context.md, no AGENTS.md, but has .git so walk stops.
+	if err := os.MkdirAll(filepath.Join(dir, ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	got := findContextFile(dir)
+	if got != "" {
+		t.Errorf("expected empty string, got %q", got)
+	}
+}
+
+// --- LoadContextFiles Tests ---
+
+func TestLoadContextFiles_ProjectOnly(t *testing.T) {
+	dir := t.TempDir()
+	baiDir := filepath.Join(dir, ".bai")
+	if err := os.MkdirAll(baiDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(baiDir, "context.md"), []byte("project ctx"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(dir, ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	got := loadContextFiles(dir)
+	if !strings.Contains(got, "project ctx") {
+		t.Errorf("expected 'project ctx' in output, got %q", got)
+	}
+}
+
+func TestLoadContextFiles_Empty(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	got := loadContextFiles(dir)
+	if got != "" {
+		t.Errorf("expected empty string, got %q", got)
+	}
+}
+
+// --- FindRecentSession Tests ---
+
+func TestFindRecentSession_NoChats(t *testing.T) {
+	// Use a testBFF that returns no chats.
+	srv, conn := startTestServerRaw(t, &emptyBFF{})
+	defer srv.Stop()
+
+	cid, title := findRecentSession(conn)
+	if cid != "" || title != "" {
+		t.Errorf("expected empty result, got chatID=%q title=%q", cid, title)
+	}
+}
+
+// emptyBFF returns no chats.
+type emptyBFF struct{ pb.UnimplementedBFFServiceServer }
+
+func (e *emptyBFF) GetChatIds(_ context.Context, _ *pb.GetChatIdsRequest) (*pb.GetChatIdsResponse, error) {
+	return &pb.GetChatIdsResponse{}, nil
+}
+
+// startTestServerRaw starts a gRPC server with the given handler and returns a Conn.
+func startTestServerRaw(t *testing.T, svc pb.BFFServiceServer) (*grpc.Server, *caigrpc.Conn) {
+	t.Helper()
+	lis := bufconn.Listen(1024 * 1024)
+	srv := grpc.NewServer()
+	pb.RegisterBFFServiceServer(srv, svc)
+	go func() { _ = srv.Serve(lis) }()
+	t.Cleanup(func() { srv.Stop() })
+
+	dialer := func(ctx context.Context, _ string) (net.Conn, error) { return lis.DialContext(ctx) }
+	cc, err := grpc.NewClient("passthrough:///bufconn",
+		grpc.WithTransportCredentials(insecure.NewCredentials()),
+		grpc.WithContextDialer(dialer),
+	)
+	if err != nil {
+		t.Fatalf("dial bufconn: %v", err)
+	}
+	t.Cleanup(func() { _ = cc.Close() })
+	return srv, &caigrpc.Conn{Client: pb.NewBFFServiceClient(cc)}
+}
+
+// testPrinter returns a Printer that writes to a buffer instead of stdout.
+func testPrinter(format ui.OutputFormat) (*ui.Printer, *bytes.Buffer) {
+	buf := &bytes.Buffer{}
+	return &ui.Printer{Out: buf, Err: buf, Format: format}, buf
+}
+
+// --- ChatListRPC Tests ---
+
+func TestChatListRPC_Table(t *testing.T) {
+	client := startTestServer(t)
+	conn := &caigrpc.Conn{Client: client}
+	p, buf := testPrinter(ui.FormatTable)
+
+	if err := chatListRPC(conn, p); err != nil {
+		t.Fatalf("chatListRPC: %v", err)
+	}
+
+	out := buf.String()
+	if !strings.Contains(out, "chat-1") {
+		t.Errorf("expected chat-1 in table output, got: %s", out)
+	}
+	if !strings.Contains(out, "First Chat") {
+		t.Errorf("expected 'First Chat' in table output, got: %s", out)
+	}
+	if !strings.Contains(out, "gpt-4") {
+		t.Errorf("expected model 'gpt-4' in table output, got: %s", out)
+	}
+}
+
+func TestChatListRPC_JSON(t *testing.T) {
+	client := startTestServer(t)
+	conn := &caigrpc.Conn{Client: client}
+	p, buf := testPrinter(ui.FormatJSON)
+
+	if err := chatListRPC(conn, p); err != nil {
+		t.Fatalf("chatListRPC: %v", err)
+	}
+
+	if !strings.Contains(buf.String(), "chat-1") {
+		t.Errorf("expected chat-1 in JSON output, got: %s", buf.String())
+	}
+}
+
+// --- ChatHistoryRPC Tests ---
+
+func TestChatHistoryRPC_Table(t *testing.T) {
+	client := startTestServer(t)
+	conn := &caigrpc.Conn{Client: client}
+	p, buf := testPrinter(ui.FormatTable)
+
+	if err := chatHistoryRPC(conn, "chat-1", p); err != nil {
+		t.Fatalf("chatHistoryRPC: %v", err)
+	}
+
+	out := buf.String()
+	if !strings.Contains(out, "user") {
+		t.Errorf("expected role 'user' in output, got: %s", out)
+	}
+	if !strings.Contains(out, "Hello") {
+		t.Errorf("expected 'Hello' in output, got: %s", out)
+	}
+}
+
+func TestChatHistoryRPC_JSON(t *testing.T) {
+	client := startTestServer(t)
+	conn := &caigrpc.Conn{Client: client}
+	p, buf := testPrinter(ui.FormatJSON)
+
+	if err := chatHistoryRPC(conn, "chat-1", p); err != nil {
+		t.Fatalf("chatHistoryRPC: %v", err)
+	}
+
+	out := buf.String()
+	if !strings.Contains(out, "Hello") {
+		t.Errorf("expected 'Hello' in JSON output, got: %s", out)
+	}
+}
+
+// --- ChatTitleRPC Tests ---
+
+func TestChatTitleRPC_Table(t *testing.T) {
+	client := startTestServer(t)
+	conn := &caigrpc.Conn{Client: client}
+	p, buf := testPrinter(ui.FormatTable)
+
+	if err := chatTitleRPC(conn, "chat-1", "hint", p); err != nil {
+		t.Fatalf("chatTitleRPC: %v", err)
+	}
+
+	if !strings.Contains(buf.String(), "Generated Title") {
+		t.Errorf("expected 'Generated Title' in output, got: %s", buf.String())
+	}
+}
+
+func TestChatTitleRPC_JSON(t *testing.T) {
+	client := startTestServer(t)
+	conn := &caigrpc.Conn{Client: client}
+	p, buf := testPrinter(ui.FormatJSON)
+
+	if err := chatTitleRPC(conn, "chat-1", "", p); err != nil {
+		t.Fatalf("chatTitleRPC: %v", err)
+	}
+
+	if !strings.Contains(buf.String(), "Generated Title") {
+		t.Errorf("expected 'Generated Title' in JSON output, got: %s", buf.String())
+	}
+}
+
+// --- ChatStopRPC Tests ---
+
+func TestChatStopRPC_Success(t *testing.T) {
+	client := startTestServer(t)
+	conn := &caigrpc.Conn{Client: client}
+	p, buf := testPrinter(ui.FormatTable)
+
+	if err := chatStopRPC(conn, "chat-1", p); err != nil {
+		t.Fatalf("chatStopRPC: %v", err)
+	}
+
+	if !strings.Contains(buf.String(), "stopped") {
+		t.Errorf("expected 'stopped' in output, got: %s", buf.String())
+	}
+}
+
+func TestChatStopRPC_Failure(t *testing.T) {
+	_, conn := startTestServerRaw(t, &failStopBFF{})
+	p, buf := testPrinter(ui.FormatTable)
+
+	if err := chatStopRPC(conn, "chat-1", p); err != nil {
+		t.Fatalf("chatStopRPC: %v", err)
+	}
+
+	if !strings.Contains(buf.String(), "Failed") {
+		t.Errorf("expected 'Failed' in output, got: %s", buf.String())
+	}
+}
+
+type failStopBFF struct{ pb.UnimplementedBFFServiceServer }
+
+func (f *failStopBFF) StopChat(_ context.Context, _ *pb.StopChatRequest) (*pb.StopChatResponse, error) {
+	return &pb.StopChatResponse{Success: false}, nil
+}
+
+// --- ModelListRPC Tests ---
+
+func TestModelListRPC_Table(t *testing.T) {
+	client := startTestServer(t)
+	conn := &caigrpc.Conn{Client: client}
+	p, buf := testPrinter(ui.FormatTable)
+
+	if err := modelListRPC(conn, p); err != nil {
+		t.Fatalf("modelListRPC: %v", err)
+	}
+
+	out := buf.String()
+	if !strings.Contains(out, "gpt-4") {
+		t.Errorf("expected 'gpt-4' in output, got: %s", out)
+	}
+	if !strings.Contains(out, "openai") {
+		t.Errorf("expected 'openai' in output, got: %s", out)
+	}
+	if !strings.Contains(out, "claude-3") {
+		t.Errorf("expected 'claude-3' in output, got: %s", out)
+	}
+}
+
+func TestModelListRPC_JSON(t *testing.T) {
+	client := startTestServer(t)
+	conn := &caigrpc.Conn{Client: client}
+	p, buf := testPrinter(ui.FormatJSON)
+
+	if err := modelListRPC(conn, p); err != nil {
+		t.Fatalf("modelListRPC: %v", err)
+	}
+
+	var m map[string]interface{}
+	// ProtoJSON wraps arrays; just check content is present.
+	if !strings.Contains(buf.String(), "gpt-4") {
+		t.Errorf("expected 'gpt-4' in JSON output, got: %s", buf.String())
+	}
+	_ = m
+}
+
+// Ensure json import is used (it's referenced in TestModelList_JSON above).
+var _ = json.NewEncoder

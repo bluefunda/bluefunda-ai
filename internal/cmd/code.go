@@ -378,6 +378,22 @@ func runAgenticSession(args []string) error {
 		InitialPrompt:  initialPrompt,
 		RepoName:       gitRepoName(),
 		CustomCommands: loadCustomSlashCommands("."),
+		ListModelsFn: func() ([]tui.ModelInfo, error) {
+			ctx, cancel := caigrpc.ContextWithTimeout()
+			defer cancel()
+			resp, err := conn.Client.GetLLMModels(ctx, &pb.GetLLMModelsRequest{})
+			if err != nil {
+				return nil, err
+			}
+			items := make([]tui.ModelInfo, 0, len(resp.GetModels()))
+			for _, mdl := range resp.GetModels() {
+				items = append(items, tui.ModelInfo{
+					Name:    mdl.GetName(),
+					OwnedBy: mdl.GetOwnedBy(),
+				})
+			}
+			return items, nil
+		},
 		SetAutoApplyFn: func(enabled bool) {
 			autoApplyState = enabled
 		},

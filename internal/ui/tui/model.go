@@ -78,6 +78,12 @@ type MCPActivatedMsg struct {
 	Err  error
 }
 
+// ModelsLoadedMsg is the async result of listing models for /model.
+type ModelsLoadedMsg struct {
+	Items []ModelInfo
+	Err   error
+}
+
 // tickMsg drives the spinner animation.
 type tickMsg time.Time
 
@@ -104,6 +110,7 @@ type SessionConfig struct {
 	UsageFn        func() (*UsageInfo, error)    // nil = usage not available
 	MCPListFn      func() ([]MCPInfo, error)     // nil = MCP listing not available
 	MCPActivateFn  func(name string) error       // nil = MCP activation not available
+	ListModelsFn   func() ([]ModelInfo, error)   // nil = model listing not available
 	SetAutoApplyFn func(enabled bool)            // nil = auto-apply not available (non-code sessions)
 	SetCodeModeFn  func(enabled bool)            // nil = mode switch not supported in this session
 	CustomCommands []SlashCommand                // loaded from .bai/commands/*.md
@@ -121,6 +128,12 @@ type AccountInfo struct {
 	Name     string
 	Email    string
 	Username string
+}
+
+// ModelInfo is one model entry shown by /model.
+type ModelInfo struct {
+	Name    string
+	OwnedBy string
 }
 
 // MCPInfo is one MCP server entry shown by /mcp.
@@ -223,6 +236,11 @@ type Model struct {
 	showSlash    bool
 	slashMatches []SlashCommand
 	slashIdx     int
+
+	// Model picker (shown when /model is typed with no argument)
+	showModelPicker  bool
+	modelPickerItems []ModelInfo
+	modelPickerIdx   int
 
 	// Token usage (cumulative across turns, updated on each "done" event)
 	totalPromptTokens     int32
@@ -423,6 +441,26 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.refreshViewport()
 		m.viewport.GotoBottom()
 
+	case ModelsLoadedMsg:
+		if len(m.messages) > 0 && m.messages[len(m.messages)-1].Role == RoleSystem {
+			m.messages = m.messages[:len(m.messages)-1]
+		}
+		if msg.Err != nil {
+			m.messages = append(m.messages, newSystemMessage("Error loading models: "+msg.Err.Error()))
+			m.refreshViewport()
+			m.viewport.GotoBottom()
+		} else {
+			m.modelPickerItems = msg.Items
+			m.modelPickerIdx = 0
+			for i, item := range msg.Items {
+				if item.Name == m.cfg.Model {
+					m.modelPickerIdx = i
+					break
+				}
+			}
+			m.showModelPicker = true
+		}
+
 	case UpdateAvailableMsg:
 		m.updateAvailable = msg.Version
 
@@ -436,6 +474,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.KeyMsg:
 		if m.pendingApproval != nil {
 			return m.handleApprovalKey(msg)
+		}
+		if m.showModelPicker {
+			return m.handleModelPickerKey(msg)
 		}
 		return m.handleKey(msg)
 	}
@@ -626,6 +667,31 @@ func (m Model) handleApprovalKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+func (m Model) handleModelPickerKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "up", "ctrl+p":
+		if m.modelPickerIdx > 0 {
+			m.modelPickerIdx--
+		}
+	case "down", "ctrl+n":
+		if m.modelPickerIdx < len(m.modelPickerItems)-1 {
+			m.modelPickerIdx++
+		}
+	case "enter":
+		if len(m.modelPickerItems) > 0 {
+			selected := m.modelPickerItems[m.modelPickerIdx]
+			m.cfg.Model = selected.Name
+			m.showModelPicker = false
+			m.messages = append(m.messages, newSystemMessage("Switched to model: "+selected.Name))
+			m.refreshViewport()
+			m.viewport.GotoBottom()
+		}
+	case "esc", "ctrl+c":
+		m.showModelPicker = false
+	}
+	return m, nil
+}
+
 func (m Model) submitInput() (tea.Model, tea.Cmd) {
 	input := strings.TrimSpace(m.textarea.Value())
 	if input == "" {
@@ -713,6 +779,16 @@ func (m Model) handleSlashCommand(input string) (tea.Model, tea.Cmd) {
 	case input == "/model" || strings.HasPrefix(input, "/model "):
 		arg := strings.TrimSpace(strings.TrimPrefix(input, "/model"))
 		if arg == "" {
+			if m.cfg.ListModelsFn != nil {
+				m.messages = append(m.messages, newSystemMessage("Loading models…"))
+				m.refreshViewport()
+				fn := m.cfg.ListModelsFn
+				m.viewport.GotoBottom()
+				return m, func() tea.Msg {
+					items, err := fn()
+					return ModelsLoadedMsg{Items: items, Err: err}
+				}
+			}
 			m.messages = append(m.messages, newSystemMessage("Model: "+m.cfg.Model))
 		} else {
 			m.cfg.Model = strings.TrimSpace(arg)

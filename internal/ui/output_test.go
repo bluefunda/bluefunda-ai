@@ -149,3 +149,115 @@ func TestPrinter_Table_JSONEmpty(t *testing.T) {
 		t.Errorf("expected empty array, got %d records", len(records))
 	}
 }
+
+func TestPrinter_Warn_Quiet(t *testing.T) {
+	var errBuf bytes.Buffer
+	p := &Printer{Out: &bytes.Buffer{}, Err: &errBuf, Format: FormatQuiet}
+	p.Warn("warning msg")
+	if errBuf.Len() != 0 {
+		t.Errorf("expected no warn in quiet mode, got: %s", errBuf.String())
+	}
+}
+
+func TestPrinter_Warn_Visible(t *testing.T) {
+	var errBuf bytes.Buffer
+	p := &Printer{Out: &bytes.Buffer{}, Err: &errBuf, Format: FormatTable}
+	p.Warn("watch out")
+	if !strings.Contains(errBuf.String(), "watch out") {
+		t.Errorf("expected warn message, got: %s", errBuf.String())
+	}
+}
+
+func TestPrinter_Success_Visible(t *testing.T) {
+	var errBuf bytes.Buffer
+	p := &Printer{Out: &bytes.Buffer{}, Err: &errBuf, Format: FormatTable}
+	p.Success("all good")
+	if !strings.Contains(errBuf.String(), "all good") {
+		t.Errorf("expected success message, got: %s", errBuf.String())
+	}
+}
+
+func TestPrinter_Info_Visible(t *testing.T) {
+	var errBuf bytes.Buffer
+	p := &Printer{Out: &bytes.Buffer{}, Err: &errBuf, Format: FormatTable}
+	p.Info("useful info")
+	if !strings.Contains(errBuf.String(), "useful info") {
+		t.Errorf("expected info message, got: %s", errBuf.String())
+	}
+}
+
+func TestPrinter_ToolCall_Table(t *testing.T) {
+	var errBuf bytes.Buffer
+	p := &Printer{Out: &bytes.Buffer{}, Err: &errBuf, Format: FormatTable}
+	p.ToolCall("read_file", `{"path":"main.go"}`)
+	if !strings.Contains(errBuf.String(), "read_file") {
+		t.Errorf("expected tool name in output, got: %s", errBuf.String())
+	}
+}
+
+func TestPrinter_ToolCall_Quiet(t *testing.T) {
+	var errBuf bytes.Buffer
+	p := &Printer{Out: &bytes.Buffer{}, Err: &errBuf, Format: FormatQuiet}
+	p.ToolCall("read_file", `{}`)
+	if errBuf.Len() != 0 {
+		t.Errorf("expected no output in quiet mode, got: %s", errBuf.String())
+	}
+}
+
+func TestPrinter_ToolExec_OK(t *testing.T) {
+	var errBuf bytes.Buffer
+	p := &Printer{Out: &bytes.Buffer{}, Err: &errBuf, Format: FormatTable}
+	p.ToolExec("bash", "ok", 150, "exit 0")
+	out := errBuf.String()
+	if !strings.Contains(out, "bash") {
+		t.Errorf("expected 'bash' in output, got: %s", out)
+	}
+	if !strings.Contains(out, "exit 0") {
+		t.Errorf("expected summary in output, got: %s", out)
+	}
+}
+
+func TestPrinter_ToolExec_Error(t *testing.T) {
+	var errBuf bytes.Buffer
+	p := &Printer{Out: &bytes.Buffer{}, Err: &errBuf, Format: FormatTable}
+	p.ToolExec("bash", "error", 200, "")
+	if !strings.Contains(errBuf.String(), "bash") {
+		t.Errorf("expected 'bash' in error output, got: %s", errBuf.String())
+	}
+}
+
+func TestPrinter_ToolExec_Quiet(t *testing.T) {
+	var errBuf bytes.Buffer
+	p := &Printer{Out: &bytes.Buffer{}, Err: &errBuf, Format: FormatQuiet}
+	p.ToolExec("bash", "ok", 100, "done")
+	if errBuf.Len() != 0 {
+		t.Errorf("expected no output in quiet mode, got: %s", errBuf.String())
+	}
+}
+
+func TestFormatToolArgs_WithArgs(t *testing.T) {
+	got := formatToolArgs(`{"path":"src/main.go"}`)
+	if !strings.Contains(got, "path") {
+		t.Errorf("expected 'path' in formatted args, got: %s", got)
+	}
+	if !strings.Contains(got, "src/main.go") {
+		t.Errorf("expected value in formatted args, got: %s", got)
+	}
+}
+
+func TestFormatToolArgs_Empty(t *testing.T) {
+	if got := formatToolArgs(""); got != "" {
+		t.Errorf("expected empty string for empty args, got: %s", got)
+	}
+	if got := formatToolArgs("{}"); got != "" {
+		t.Errorf("expected empty string for empty object, got: %s", got)
+	}
+}
+
+func TestFormatToolArgs_LongValue(t *testing.T) {
+	long := strings.Repeat("x", 50)
+	got := formatToolArgs(`{"key":"` + long + `"}`)
+	if len(got) > 90 {
+		t.Errorf("expected truncated output, got len=%d: %s", len(got), got)
+	}
+}

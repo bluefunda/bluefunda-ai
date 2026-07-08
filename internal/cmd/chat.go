@@ -100,7 +100,10 @@ func runChatList(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	defer conn.Close()
+	return chatListRPC(conn, printer(cfg))
+}
 
+func chatListRPC(conn *caigrpc.Conn, p *ui.Printer) error {
 	ctx, cancel := caigrpc.ContextWithTimeout()
 	defer cancel()
 
@@ -109,7 +112,6 @@ func runChatList(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("get chats: %w", err)
 	}
 
-	p := printer(cfg)
 	if p.Format == ui.FormatJSON {
 		p.ProtoJSON(resp)
 		return nil
@@ -400,16 +402,18 @@ func runChatHistory(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	defer conn.Close()
+	return chatHistoryRPC(conn, args[0], printer(cfg))
+}
 
+func chatHistoryRPC(conn *caigrpc.Conn, chatID string, p *ui.Printer) error {
 	ctx, cancel := caigrpc.ContextWithTimeout()
 	defer cancel()
 
-	resp, err := conn.Client.GetChatHistory(ctx, &pb.GetChatHistoryRequest{ChatId: args[0]})
+	resp, err := conn.Client.GetChatHistory(ctx, &pb.GetChatHistoryRequest{ChatId: chatID})
 	if err != nil {
 		return fmt.Errorf("get history: %w", err)
 	}
 
-	p := printer(cfg)
 	if p.Format == ui.FormatJSON {
 		p.ProtoJSON(resp)
 		return nil
@@ -477,13 +481,16 @@ func runChatTitle(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	defer conn.Close()
+	return chatTitleRPC(conn, args[0], chatTitlePrompt, printer(cfg))
+}
 
+func chatTitleRPC(conn *caigrpc.Conn, chatID, prompt string, p *ui.Printer) error {
 	ctx, cancel := caigrpc.ContextWithTimeout()
 	defer cancel()
 
 	resp, err := conn.Client.GenerateTitle(ctx, &pb.GenerateTitleRequest{
-		ChatId: args[0],
-		Prompt: chatTitlePrompt,
+		ChatId: chatID,
+		Prompt: prompt,
 	})
 	if err != nil {
 		return fmt.Errorf("generate title: %w", err)
@@ -493,7 +500,6 @@ func runChatTitle(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("title generation: %s", resp.GetError())
 	}
 
-	p := printer(cfg)
 	if p.Format == ui.FormatJSON {
 		p.ProtoJSON(resp)
 	} else {
@@ -517,16 +523,18 @@ func runChatStop(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	defer conn.Close()
+	return chatStopRPC(conn, args[0], printer(cfg))
+}
 
+func chatStopRPC(conn *caigrpc.Conn, chatID string, p *ui.Printer) error {
 	ctx, cancel := caigrpc.ContextWithTimeout()
 	defer cancel()
 
-	resp, err := conn.Client.StopChat(ctx, &pb.StopChatRequest{ChatId: args[0]})
+	resp, err := conn.Client.StopChat(ctx, &pb.StopChatRequest{ChatId: chatID})
 	if err != nil {
 		return fmt.Errorf("stop session: %w", err)
 	}
 
-	p := printer(cfg)
 	if resp.GetSuccess() {
 		p.Success("Session stopped")
 	} else {

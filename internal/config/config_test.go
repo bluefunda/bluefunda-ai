@@ -218,3 +218,230 @@ func contains(s, sub string) bool {
 			return false
 		}()
 }
+
+// --- applyEnvOverrides Tests ---
+
+func TestApplyEnvOverrides_AllVars(t *testing.T) {
+	t.Setenv("BAI_GATEWAY", "https://gw.test.com")
+	t.Setenv("BAI_BFF", "bff.test.com:443")
+	t.Setenv("BAI_DOMAIN", "test.com")
+	t.Setenv("BAI_REALM", "testrealm")
+	t.Setenv("BAI_MODEL", "testmodel")
+
+	cfg := &Config{}
+	applyEnvOverrides(cfg)
+
+	if cfg.GatewayURL != "https://gw.test.com" {
+		t.Errorf("GatewayURL = %q, want %q", cfg.GatewayURL, "https://gw.test.com")
+	}
+	if cfg.BFFURL != "bff.test.com:443" {
+		t.Errorf("BFFURL = %q, want %q", cfg.BFFURL, "bff.test.com:443")
+	}
+	if cfg.Domain != "test.com" {
+		t.Errorf("Domain = %q, want %q", cfg.Domain, "test.com")
+	}
+	if cfg.Realm != "testrealm" {
+		t.Errorf("Realm = %q, want %q", cfg.Realm, "testrealm")
+	}
+	if cfg.Defaults.Model != "testmodel" {
+		t.Errorf("Model = %q, want %q", cfg.Defaults.Model, "testmodel")
+	}
+}
+
+func TestApplyEnvOverrides_AccessToken(t *testing.T) {
+	t.Setenv("BAI_ACCESS_TOKEN", "mytoken")
+
+	cfg := &Config{}
+	applyEnvOverrides(cfg)
+
+	if cfg.Auth.AccessToken != "mytoken" {
+		t.Errorf("AccessToken = %q, want %q", cfg.Auth.AccessToken, "mytoken")
+	}
+	if cfg.Auth.TokenExpiry.IsZero() {
+		t.Error("expected TokenExpiry to be set when BAI_ACCESS_TOKEN is provided")
+	}
+}
+
+func TestApplyEnvOverrides_NoVarsSet(t *testing.T) {
+	// Unset any lingering env vars that might be set by other tests.
+	for _, k := range []string{"BAI_GATEWAY", "BAI_BFF", "BAI_DOMAIN", "BAI_REALM", "BAI_MODEL", "BAI_ACCESS_TOKEN"} {
+		t.Setenv(k, "")
+	}
+	cfg := &Config{GatewayURL: "original"}
+	applyEnvOverrides(cfg)
+	if cfg.GatewayURL != "original" {
+		t.Errorf("expected no override, GatewayURL = %q", cfg.GatewayURL)
+	}
+}
+
+// --- MergeProject Tests ---
+
+func TestMergeProject_ModelOverride(t *testing.T) {
+	cfg := &Config{Defaults: Defaults{Model: "auto"}}
+	p := &ProjectConfig{Model: "anthropic"}
+	cfg.mergeProject(p)
+	if cfg.Defaults.Model != "anthropic" {
+		t.Errorf("expected model 'anthropic', got %q", cfg.Defaults.Model)
+	}
+}
+
+func TestMergeProject_EndpointOverride(t *testing.T) {
+	cfg := &Config{BFFURL: "default.com:443"}
+	p := &ProjectConfig{Endpoint: "project.com:443"}
+	cfg.mergeProject(p)
+	if cfg.BFFURL != "project.com:443" {
+		t.Errorf("expected endpoint 'project.com:443', got %q", cfg.BFFURL)
+	}
+}
+
+func TestMergeProject_EmptyDoesNotOverride(t *testing.T) {
+	cfg := &Config{Defaults: Defaults{Model: "auto"}, BFFURL: "orig.com:443"}
+	p := &ProjectConfig{}
+	cfg.mergeProject(p)
+	if cfg.Defaults.Model != "auto" {
+		t.Errorf("empty project model should not override, got %q", cfg.Defaults.Model)
+	}
+	if cfg.BFFURL != "orig.com:443" {
+		t.Errorf("empty project endpoint should not override, got %q", cfg.BFFURL)
+	}
+}
+
+// --- FindProjectConfig Tests ---
+
+func TestFindProjectConfig_Found(t *testing.T) {
+	root := t.TempDir()
+	baiDir := filepath.Join(root, ".bai")
+	if err := os.MkdirAll(baiDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	yaml := "model: gpt-4\nmax_turns: 10\n"
+	if err := os.WriteFile(filepath.Join(baiDir, "settings.yaml"), []byte(yaml), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(root, ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	p := FindProjectConfig(root)
+	if p == nil {
+		t.Fatal("expected non-nil ProjectConfig")
+	}
+	if p.Model != "gpt-4" {
+		t.Errorf("expected model 'gpt-4', got %q", p.Model)
+	}
+	if p.MaxTurns != 10 {
+		t.Errorf("expected max_turns 10, got %d", p.MaxTurns)
+	}
+}
+
+func TestFindProjectConfig_NotFound(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	p := FindProjectConfig(root)
+	if p != nil {
+		t.Errorf("expected nil ProjectConfig, got %+v", p)
+	}
+}
+
+func TestFindProjectConfig_WalksUp(t *testing.T) {
+	root := t.TempDir()
+	baiDir := filepath.Join(root, ".bai")
+	if err := os.MkdirAll(baiDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(baiDir, "settings.yaml"), []byte("model: parent-model\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(root, ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	sub := filepath.Join(root, "pkg", "mypackage")
+	if err := os.MkdirAll(sub, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	p := FindProjectConfig(sub)
+	if p == nil {
+		t.Fatal("expected non-nil ProjectConfig when walking up")
+	}
+	if p.Model != "parent-model" {
+		t.Errorf("expected 'parent-model', got %q", p.Model)
+	}
+}
+
+// --- Load Tests ---
+
+func TestLoad_MissingFile_ReturnsDefaults(t *testing.T) {
+	withTempHome(t)
+	// Unset env overrides so we get pure defaults.
+	for _, k := range []string{"BAI_GATEWAY", "BAI_BFF", "BAI_DOMAIN", "BAI_REALM", "BAI_MODEL", "BAI_ACCESS_TOKEN"} {
+		t.Setenv(k, "")
+	}
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.GatewayURL != DefaultGatewayURL {
+		t.Errorf("GatewayURL = %q, want %q", cfg.GatewayURL, DefaultGatewayURL)
+	}
+	if cfg.BFFURL != DefaultBFFURL {
+		t.Errorf("BFFURL = %q, want %q", cfg.BFFURL, DefaultBFFURL)
+	}
+}
+
+func TestLoad_BackfillsMissingFields(t *testing.T) {
+	withTempHome(t)
+	for _, k := range []string{"BAI_GATEWAY", "BAI_BFF", "BAI_DOMAIN", "BAI_REALM", "BAI_MODEL", "BAI_ACCESS_TOKEN"} {
+		t.Setenv(k, "")
+	}
+	home, _ := os.UserHomeDir()
+	baiDir := filepath.Join(home, ".bai")
+	if err := os.MkdirAll(baiDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// Write a minimal config file with missing fields.
+	if err := os.WriteFile(filepath.Join(baiDir, "config.yaml"), []byte("realm: myrealm\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	orig := keychain.Default
+	keychain.SetBackend(newMockKeychain(false))
+	defer keychain.SetBackend(orig)
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.GatewayURL != DefaultGatewayURL {
+		t.Errorf("GatewayURL not backfilled: %q", cfg.GatewayURL)
+	}
+	if cfg.BFFURL != DefaultBFFURL {
+		t.Errorf("BFFURL not backfilled: %q", cfg.BFFURL)
+	}
+	if cfg.Domain != DefaultDomain {
+		t.Errorf("Domain not backfilled: %q", cfg.Domain)
+	}
+	if cfg.Realm != "myrealm" {
+		t.Errorf("Realm should be preserved: %q", cfg.Realm)
+	}
+}
+
+// --- RawAccessToken Tests ---
+
+func TestRawAccessToken_Present(t *testing.T) {
+	data := []byte("auth:\n  access_token: enc:abc123\n")
+	got := rawAccessToken(&data)
+	if got != "enc:abc123" {
+		t.Errorf("rawAccessToken = %q, want %q", got, "enc:abc123")
+	}
+}
+
+func TestRawAccessToken_Missing(t *testing.T) {
+	data := []byte("realm: test\n")
+	got := rawAccessToken(&data)
+	if got != "" {
+		t.Errorf("rawAccessToken = %q, want empty string", got)
+	}
+}

@@ -31,7 +31,10 @@ func runModelList(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	defer conn.Close()
+	return modelListRPC(conn, printer(cfg))
+}
 
+func modelListRPC(conn *caigrpc.Conn, p *ui.Printer) error {
 	ctx, cancel := caigrpc.ContextWithTimeout()
 	defer cancel()
 
@@ -40,7 +43,6 @@ func runModelList(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("get models: %w", err)
 	}
 
-	p := printer(cfg)
 	if p.Format == ui.FormatJSON {
 		p.ProtoJSON(resp)
 		return nil

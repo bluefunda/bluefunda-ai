@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.35.1](https://github.com/bluefunda/bluefunda-ai/compare/v1.35.0...v1.35.1) (2026-07-08)
+
+
+### Bug Fixes
+
+* **sdk:** resolve model alias in RunLoop before sending to BFF ([#212](https://github.com/bluefunda/bluefunda-ai/issues/212)) ([c8467c3](https://github.com/bluefunda/bluefunda-ai/commit/c8467c33ef5f009d99dc9e5bae14d1bbee19b1d7))
+
 ## [1.35.0](https://github.com/bluefunda/bluefunda-ai/compare/v1.34.1...v1.35.0) (2026-07-08)
 
 

@@ -102,9 +102,25 @@ const (
 	cliPayloadVersion      = 1
 )
 
+// resolveModelAlias maps user-facing aliases to the backend model strings
+// expected by the BFF gRPC protocol. "auto"/"" both mean "use server default".
+func resolveModelAlias(alias string) string {
+	switch alias {
+	case "auto", "":
+		return ""
+	case "fast":
+		return "groq"
+	case "think", "thinking":
+		return ":think"
+	default:
+		return alias
+	}
+}
+
 // RunLoop executes the agentic loop synchronously. It appends the user prompt
 // to history, runs up to MaxTurns iterations, and returns the final history.
 func RunLoop(ctx context.Context, opts LoopOptions) ([]Message, error) {
+	opts.Model = resolveModelAlias(opts.Model)
 	if opts.MaxTurns <= 0 {
 		opts.MaxTurns = defaultMaxTurns
 	}

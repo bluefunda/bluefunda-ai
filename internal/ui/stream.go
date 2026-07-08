@@ -17,7 +17,8 @@ type ToolCallEvent struct {
 type thinkFilter struct {
 	inside     bool   // true when inside a <think> block
 	buf        string // partial tag buffer
-	suppressed string // content inside unclosed <think> (recovered on Flush)
+	suppressed string // content inside unclosed <think> (recovered on Flush if no prior output)
+	hadOutput  bool   // true if Filter() ever returned non-empty content
 }
 
 func (f *thinkFilter) Filter(chunk string) string {
@@ -60,22 +61,33 @@ func (f *thinkFilter) Filter(chunk string) string {
 		f.buf = ""
 	}
 
-	return out.String()
+	result := out.String()
+	if result != "" {
+		f.hadOutput = true
+	}
+	return result
 }
 
 // Flush returns any remaining buffered content.
-// If still inside an unclosed <think> block, returns the suppressed content
-// since some models (e.g. Sarvam) emit <think> without a closing tag.
+// If still inside an unclosed <think> block and no real content was emitted
+// before it, the suppressed content is returned as the actual response (handles
+// older Sarvam behavior where the response is wrapped in an unclosed <think>).
+// If real content was already streamed (hadOutput), the unclosed <think> is
+// trailing chain-of-thought — discard it to prevent duplicate output.
 func (f *thinkFilter) Flush() string {
 	var result string
 	if f.inside {
-		result = f.suppressed + f.buf
+		if !f.hadOutput {
+			result = f.suppressed + f.buf
+		}
+		// real content already streamed — discard trailing think block
 	} else {
 		result = f.buf
 	}
 	f.buf = ""
 	f.suppressed = ""
 	f.inside = false
+	f.hadOutput = false
 	return result
 }
 

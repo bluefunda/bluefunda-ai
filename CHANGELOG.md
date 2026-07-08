@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.35.3](https://github.com/bluefunda/bluefunda-ai/compare/v1.35.2...v1.35.3) (2026-07-08)
+
+
+### Bug Fixes
+
+* **code:** extract drainPrintStream for testable headless output formatting ([#223](https://github.com/bluefunda/bluefunda-ai/issues/223)) ([1523629](https://github.com/bluefunda/bluefunda-ai/commit/15236295f1e0a224dadead72af45fab58c313d86))
+
 ## [1.35.2](https://github.com/bluefunda/bluefunda-ai/compare/v1.35.1...v1.35.2) (2026-07-08)
 
 

@@ -338,6 +338,22 @@ func runChatSession(chatID, initialPrompt, model, mcpServer string) error {
 			}
 			return items, nil
 		},
+		ListModelsFn: func() ([]tui.ModelInfo, error) {
+			ctx, cancel := caigrpc.ContextWithTimeout()
+			defer cancel()
+			resp, err := conn.Client.GetLLMModels(ctx, &pb.GetLLMModelsRequest{})
+			if err != nil {
+				return nil, err
+			}
+			items := make([]tui.ModelInfo, 0, len(resp.GetModels()))
+			for _, m := range resp.GetModels() {
+				items = append(items, tui.ModelInfo{
+					Name:    m.GetName(),
+					OwnedBy: m.GetOwnedBy(),
+				})
+			}
+			return items, nil
+		},
 		MCPActivateFn: func(name string) error {
 			ctx, cancel := caigrpc.ContextWithTimeout()
 			defer cancel()

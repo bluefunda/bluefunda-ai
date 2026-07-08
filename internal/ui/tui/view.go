@@ -22,28 +22,19 @@ func (m Model) View() string {
 	b.WriteString(m.renderHeader())
 	b.WriteByte('\n')
 
-	// Active content: messages not yet committed to the terminal scroll buffer.
-	// Committed messages are flushed above via tea.Println(); this block only
-	// contains the in-flight streaming turn, and is empty (not rendered) when idle.
-	activeContent := m.renderActiveMessages()
-	if activeContent != "" {
-		// Clamp to the allocated viewport height so a long response doesn't
-		// overflow the terminal and cause the inline block to grow unboundedly.
-		maxLines := m.viewport.Height
-		if maxLines < 4 {
-			maxLines = 4
-		}
-		lines := strings.Split(activeContent, "\n")
-		if len(lines) > maxLines {
-			lines = lines[len(lines)-maxLines:]
-		}
-		b.WriteString(strings.Join(lines, "\n"))
-		b.WriteByte('\n')
-	}
+	// Viewport renders the full conversation with proper scrollback.
+	b.WriteString(m.viewport.View())
+	b.WriteByte('\n')
 
 	// Slash menu (shown above input when active)
 	if m.showSlash && len(m.slashMatches) > 0 {
 		b.WriteString(m.renderSlashMenu())
+		b.WriteByte('\n')
+	}
+
+	// Model picker (shown above input when /model is invoked with no arg)
+	if m.showModelPicker && len(m.modelPickerItems) > 0 {
+		b.WriteString(m.renderModelPicker())
 		b.WriteByte('\n')
 	}
 
@@ -275,6 +266,53 @@ func (m Model) renderSlashMenu() string {
 }
 
 // ──────────────────────────────────────────────
+//  Model picker
+// ──────────────────────────────────────────────
+
+func (m Model) renderModelPicker() string {
+	th := m.theme
+
+	header := "  " + th.ToolDim.Render("Select model  ·  ↑↓ navigate  ·  Enter select  ·  Esc cancel")
+
+	const maxVisible = 8
+	items := m.modelPickerItems
+	start := m.modelPickerIdx - maxVisible/2
+	if start < 0 {
+		start = 0
+	}
+	end := start + maxVisible
+	if end > len(items) {
+		end = len(items)
+		start = end - maxVisible
+		if start < 0 {
+			start = 0
+		}
+	}
+
+	var rows []string
+	for i := start; i < end; i++ {
+		item := items[i]
+		check := "  "
+		if item.Name == m.cfg.Model {
+			check = th.ToolSuccess.Render("✓ ")
+		}
+		name := lipgloss.NewStyle().Foreground(th.AccentBold).Render(item.Name)
+		owner := ""
+		if item.OwnedBy != "" {
+			owner = lipgloss.NewStyle().Foreground(th.Secondary).Render("  " + item.OwnedBy)
+		}
+		line := "  " + check + name + owner
+		if i == m.modelPickerIdx {
+			line = th.SlashSelected.Width(m.width - 6).Render(line)
+		}
+		rows = append(rows, line)
+	}
+
+	content := header + "\n" + strings.Join(rows, "\n")
+	return th.SlashMenu.Width(m.width - 4).Render(content)
+}
+
+// ──────────────────────────────────────────────
 //  Approval prompt
 // ──────────────────────────────────────────────
 
@@ -312,7 +350,13 @@ func (m Model) renderFooter() string {
 	if m.streaming {
 		hint = "Ctrl+C to interrupt turn  ·  Ctrl+D to quit"
 	}
-	return "  " + th.Footer.Render(hint)
+	left := "  " + th.Footer.Render(hint)
+	if m.updateAvailable == "" {
+		return left
+	}
+	badge := lipgloss.NewStyle().Foreground(th.Warning).Render("↑ " + m.updateAvailable + "  run: bai update")
+	spacer := strings.Repeat(" ", max(0, m.width-lipgloss.Width(left)-lipgloss.Width(badge)-2))
+	return left + spacer + badge + "  "
 }
 
 // ──────────────────────────────────────────────

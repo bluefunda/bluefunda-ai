@@ -29,6 +29,7 @@ var builtinCommands = []SlashCommand{
 	{"/usage", "Show token usage and rate limits", "", ""},
 	{"/tools", "List available tools", "", ""},
 	{"/context", "Show current context info", "", ""},
+	{"/update", "Check for a newer bai version and upgrade", "", ""},
 	{"/exit", "Quit the session", "quit", ""},
 }
 

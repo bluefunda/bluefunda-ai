@@ -20,7 +20,9 @@ func Run(m Model) error {
 	fmt.Fprint(os.Stdout, cursorBar)
 	defer fmt.Fprint(os.Stdout, cursorDefault)
 
-	p := tea.NewProgram(m)
+	// WithMouseCellMotion passes mouse wheel events to the viewport bubble,
+	// enabling scroll-by-wheel without requiring keyboard-only navigation.
+	p := tea.NewProgram(m, tea.WithMouseCellMotion())
 
 	finalModel, err := p.Run()
 	if err != nil {

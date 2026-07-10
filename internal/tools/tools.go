@@ -168,7 +168,7 @@ func LocalToolSchemas() (string, error) {
 			Type: "function",
 			Function: FunctionDef{
 				Name:        "web_fetch",
-				Description: "Fetch a URL and return its content as plain text. Useful for reading documentation, specs, package READMEs, or any web resource. HTML is stripped. Content capped at 50 000 characters.",
+				Description: "Fetch a URL and return its content as plain text. Use for documentation, specs, READMEs, news articles, or any web page. HTML is stripped. Content capped at 50 000 characters.",
 				Parameters: json.RawMessage(`{
 					"type": "object",
 					"properties": {
@@ -182,7 +182,7 @@ func LocalToolSchemas() (string, error) {
 			Type: "function",
 			Function: FunctionDef{
 				Name:        "web_search",
-				Description: "Search the web using DuckDuckGo and return the top results (title, URL, snippet). Use to look up APIs, error messages, or library documentation.",
+				Description: "Search the web using DuckDuckGo and return the top results (title, URL, snippet). Use for current events, news, weather, sports, stock prices, software versions, API docs, or any question where up-to-date information matters.",
 				Parameters: json.RawMessage(`{
 					"type": "object",
 					"properties": {

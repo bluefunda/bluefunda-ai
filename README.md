@@ -10,7 +10,7 @@
 Ask it to fix a test, refactor a package, or explain a codebase — it reads and writes your files, runs shell commands, and works the problem turn by turn until it's done. No browser, no copy-paste, no leaving the terminal.
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/bluefunda/bluefunda-ai/main/install.sh | sh
+curl -fsSL https://bluefunda.com/ai/install.sh | sh
 bai login
 bai "add table-driven tests for the parser package"
 ```
@@ -42,7 +42,9 @@ bai --worktree "try a risky refactor" # run in an isolated git worktree
 bai -c                                # resume your most recent session
 ```
 
-Inside a session, type `/` for slash commands — `/model` to switch models, `/clear` to reset, `/help` for the rest. `Enter` sends, `Ctrl+C` quits.
+Inside a session, type `/` for slash commands — `/model` to switch models, `/clear` to reset, `/help` for the rest. `Enter` sends, `Ctrl+C` interrupts the current turn (or quits when idle), `Ctrl+D` quits.
+
+**Scrolling and copying:** scroll the conversation with the mouse wheel, `PgUp`/`PgDn`, or arrow keys. To copy text, hold **Shift** while clicking and dragging — this hands selection back to the terminal when mouse-scroll mode is active.
 
 Scaffold project-level config and conventions once:
 
@@ -106,7 +108,7 @@ Register your own tools via `OnToolCall`, and fall back to `agent.DefaultExecute
 **macOS / Linux (one-liner)** — installs to `/usr/local/bin` or `~/.local/bin`, verifies SHA256:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/bluefunda/bluefunda-ai/main/install.sh | sh
+curl -fsSL https://bluefunda.com/ai/install.sh | sh
 ```
 
 **Homebrew (macOS)**

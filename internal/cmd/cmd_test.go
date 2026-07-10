@@ -6,11 +6,16 @@ import (
 	"encoding/json"
 	"fmt"
 	"net"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	pb "github.com/bluefunda/bluefunda-ai/api/proto/bff"
 	caigrpc "github.com/bluefunda/bluefunda-ai/internal/grpc"
+	"github.com/bluefunda/bluefunda-ai/internal/ui"
+	"github.com/bluefunda/bluefunda-ai/internal/ui/tui"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/test/bufconn"
@@ -118,6 +123,14 @@ func (t *testBFF) GetStripePlans(_ context.Context, _ *pb.GetStripePlansRequest)
 func (t *testBFF) GetUserSettings(_ context.Context, _ *pb.GetUserSettingsRequest) (*pb.GetUserSettingsResponse, error) {
 	return &pb.GetUserSettingsResponse{
 		LlmModels: []*pb.LLMModel{{Name: "gpt-4", ModelId: 1}},
+	}, nil
+}
+
+func (t *testBFF) GetChatContext(_ context.Context, req *pb.GetChatContextRequest) (*pb.GetChatContextResponse, error) {
+	return &pb.GetChatContextResponse{
+		Messages: []*pb.ChatMessage{
+			{Role: "system", Content: "You are helpful.", CreatedAt: "2025-01-01T00:00:00Z"},
+		},
 	}, nil
 }
 
@@ -476,5 +489,592 @@ func TestTruncate(t *testing.T) {
 		if got != tc.want {
 			t.Errorf("truncate(%q, %d) = %q, want %q", tc.input, tc.max, got, tc.want)
 		}
+	}
+}
+
+// --- ResolveModelAlias Tests ---
+
+func TestResolveModelAlias(t *testing.T) {
+	cases := []struct {
+		alias string
+		want  string
+	}{
+		{"auto", ""},
+		{"", ""},
+		{"fast", "groq"},
+		{"think", ":think"},
+		{"thinking", ":think"},
+		{"openai", "openai"},
+		{"anthropic", "anthropic"},
+		{"groq:llama-3.3-70b", "groq:llama-3.3-70b"},
+		{"claude-3-sonnet", "claude-3-sonnet"},
+	}
+	for _, tc := range cases {
+		got := resolveModelAlias(tc.alias)
+		if got != tc.want {
+			t.Errorf("resolveModelAlias(%q) = %q, want %q", tc.alias, got, tc.want)
+		}
+	}
+}
+
+// --- FormatVersion Tests ---
+
+func TestFormatVersion(t *testing.T) {
+	cases := []struct {
+		ver  string
+		want string
+	}{
+		{"", ""},
+		{"dev", "dev"},
+		{"1.2.3", "v1.2.3"},
+		{"1.35.1", "v1.35.1"},
+	}
+	for _, tc := range cases {
+		got := formatVersion(tc.ver)
+		if got != tc.want {
+			t.Errorf("formatVersion(%q) = %q, want %q", tc.ver, got, tc.want)
+		}
+	}
+}
+
+// --- FindContextFile Tests ---
+
+func TestFindContextFile_BaiContext(t *testing.T) {
+	dir := t.TempDir()
+	baiDir := filepath.Join(dir, ".bai")
+	if err := os.MkdirAll(baiDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(baiDir, "context.md"), []byte("project context"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// Simulate git root so walk stops here.
+	if err := os.MkdirAll(filepath.Join(dir, ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	got := findContextFile(dir)
+	if got != "project context" {
+		t.Errorf("expected 'project context', got %q", got)
+	}
+}
+
+func TestFindContextFile_AgentsMd(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "AGENTS.md"), []byte("agents content"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(dir, ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	got := findContextFile(dir)
+	if got != "agents content" {
+		t.Errorf("expected 'agents content', got %q", got)
+	}
+}
+
+func TestFindContextFile_WalksUp(t *testing.T) {
+	root := t.TempDir()
+	baiDir := filepath.Join(root, ".bai")
+	if err := os.MkdirAll(baiDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(baiDir, "context.md"), []byte("root context"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(root, ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	sub := filepath.Join(root, "a", "b")
+	if err := os.MkdirAll(sub, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	got := findContextFile(sub)
+	if got != "root context" {
+		t.Errorf("expected 'root context', got %q", got)
+	}
+}
+
+func TestFindContextFile_NoneFound(t *testing.T) {
+	dir := t.TempDir()
+	// No .bai/context.md, no AGENTS.md, but has .git so walk stops.
+	if err := os.MkdirAll(filepath.Join(dir, ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	got := findContextFile(dir)
+	if got != "" {
+		t.Errorf("expected empty string, got %q", got)
+	}
+}
+
+// --- LoadContextFiles Tests ---
+
+func TestLoadContextFiles_ProjectOnly(t *testing.T) {
+	dir := t.TempDir()
+	baiDir := filepath.Join(dir, ".bai")
+	if err := os.MkdirAll(baiDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(baiDir, "context.md"), []byte("project ctx"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(dir, ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	got := loadContextFiles(dir)
+	if !strings.Contains(got, "project ctx") {
+		t.Errorf("expected 'project ctx' in output, got %q", got)
+	}
+}
+
+func TestLoadContextFiles_Empty(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	got := loadContextFiles(dir)
+	if got != "" {
+		t.Errorf("expected empty string, got %q", got)
+	}
+}
+
+// --- FindRecentSession Tests ---
+
+func TestFindRecentSession_NoChats(t *testing.T) {
+	// Use a testBFF that returns no chats.
+	srv, conn := startTestServerRaw(t, &emptyBFF{})
+	defer srv.Stop()
+
+	cid, title := findRecentSession(conn)
+	if cid != "" || title != "" {
+		t.Errorf("expected empty result, got chatID=%q title=%q", cid, title)
+	}
+}
+
+// emptyBFF returns no chats.
+type emptyBFF struct{ pb.UnimplementedBFFServiceServer }
+
+func (e *emptyBFF) GetChatIds(_ context.Context, _ *pb.GetChatIdsRequest) (*pb.GetChatIdsResponse, error) {
+	return &pb.GetChatIdsResponse{}, nil
+}
+
+// startTestServerRaw starts a gRPC server with the given handler and returns a Conn.
+func startTestServerRaw(t *testing.T, svc pb.BFFServiceServer) (*grpc.Server, *caigrpc.Conn) {
+	t.Helper()
+	lis := bufconn.Listen(1024 * 1024)
+	srv := grpc.NewServer()
+	pb.RegisterBFFServiceServer(srv, svc)
+	go func() { _ = srv.Serve(lis) }()
+	t.Cleanup(func() { srv.Stop() })
+
+	dialer := func(ctx context.Context, _ string) (net.Conn, error) { return lis.DialContext(ctx) }
+	cc, err := grpc.NewClient("passthrough:///bufconn",
+		grpc.WithTransportCredentials(insecure.NewCredentials()),
+		grpc.WithContextDialer(dialer),
+	)
+	if err != nil {
+		t.Fatalf("dial bufconn: %v", err)
+	}
+	t.Cleanup(func() { _ = cc.Close() })
+	return srv, &caigrpc.Conn{Client: pb.NewBFFServiceClient(cc)}
+}
+
+// testPrinter returns a Printer that writes to a buffer instead of stdout.
+func testPrinter(format ui.OutputFormat) (*ui.Printer, *bytes.Buffer) {
+	buf := &bytes.Buffer{}
+	return &ui.Printer{Out: buf, Err: buf, Format: format}, buf
+}
+
+// --- ChatListRPC Tests ---
+
+func TestChatListRPC_Table(t *testing.T) {
+	client := startTestServer(t)
+	conn := &caigrpc.Conn{Client: client}
+	p, buf := testPrinter(ui.FormatTable)
+
+	if err := chatListRPC(conn, p); err != nil {
+		t.Fatalf("chatListRPC: %v", err)
+	}
+
+	out := buf.String()
+	if !strings.Contains(out, "chat-1") {
+		t.Errorf("expected chat-1 in table output, got: %s", out)
+	}
+	if !strings.Contains(out, "First Chat") {
+		t.Errorf("expected 'First Chat' in table output, got: %s", out)
+	}
+	if !strings.Contains(out, "gpt-4") {
+		t.Errorf("expected model 'gpt-4' in table output, got: %s", out)
+	}
+}
+
+func TestChatListRPC_JSON(t *testing.T) {
+	client := startTestServer(t)
+	conn := &caigrpc.Conn{Client: client}
+	p, buf := testPrinter(ui.FormatJSON)
+
+	if err := chatListRPC(conn, p); err != nil {
+		t.Fatalf("chatListRPC: %v", err)
+	}
+
+	if !strings.Contains(buf.String(), "chat-1") {
+		t.Errorf("expected chat-1 in JSON output, got: %s", buf.String())
+	}
+}
+
+// --- ChatHistoryRPC Tests ---
+
+func TestChatHistoryRPC_Table(t *testing.T) {
+	client := startTestServer(t)
+	conn := &caigrpc.Conn{Client: client}
+	p, buf := testPrinter(ui.FormatTable)
+
+	if err := chatHistoryRPC(conn, "chat-1", p); err != nil {
+		t.Fatalf("chatHistoryRPC: %v", err)
+	}
+
+	out := buf.String()
+	if !strings.Contains(out, "user") {
+		t.Errorf("expected role 'user' in output, got: %s", out)
+	}
+	if !strings.Contains(out, "Hello") {
+		t.Errorf("expected 'Hello' in output, got: %s", out)
+	}
+}
+
+func TestChatHistoryRPC_JSON(t *testing.T) {
+	client := startTestServer(t)
+	conn := &caigrpc.Conn{Client: client}
+	p, buf := testPrinter(ui.FormatJSON)
+
+	if err := chatHistoryRPC(conn, "chat-1", p); err != nil {
+		t.Fatalf("chatHistoryRPC: %v", err)
+	}
+
+	out := buf.String()
+	if !strings.Contains(out, "Hello") {
+		t.Errorf("expected 'Hello' in JSON output, got: %s", out)
+	}
+}
+
+// --- ChatTitleRPC Tests ---
+
+func TestChatTitleRPC_Table(t *testing.T) {
+	client := startTestServer(t)
+	conn := &caigrpc.Conn{Client: client}
+	p, buf := testPrinter(ui.FormatTable)
+
+	if err := chatTitleRPC(conn, "chat-1", "hint", p); err != nil {
+		t.Fatalf("chatTitleRPC: %v", err)
+	}
+
+	if !strings.Contains(buf.String(), "Generated Title") {
+		t.Errorf("expected 'Generated Title' in output, got: %s", buf.String())
+	}
+}
+
+func TestChatTitleRPC_JSON(t *testing.T) {
+	client := startTestServer(t)
+	conn := &caigrpc.Conn{Client: client}
+	p, buf := testPrinter(ui.FormatJSON)
+
+	if err := chatTitleRPC(conn, "chat-1", "", p); err != nil {
+		t.Fatalf("chatTitleRPC: %v", err)
+	}
+
+	if !strings.Contains(buf.String(), "Generated Title") {
+		t.Errorf("expected 'Generated Title' in JSON output, got: %s", buf.String())
+	}
+}
+
+// --- ChatStopRPC Tests ---
+
+func TestChatStopRPC_Success(t *testing.T) {
+	client := startTestServer(t)
+	conn := &caigrpc.Conn{Client: client}
+	p, buf := testPrinter(ui.FormatTable)
+
+	if err := chatStopRPC(conn, "chat-1", p); err != nil {
+		t.Fatalf("chatStopRPC: %v", err)
+	}
+
+	if !strings.Contains(buf.String(), "stopped") {
+		t.Errorf("expected 'stopped' in output, got: %s", buf.String())
+	}
+}
+
+func TestChatStopRPC_Failure(t *testing.T) {
+	_, conn := startTestServerRaw(t, &failStopBFF{})
+	p, buf := testPrinter(ui.FormatTable)
+
+	if err := chatStopRPC(conn, "chat-1", p); err != nil {
+		t.Fatalf("chatStopRPC: %v", err)
+	}
+
+	if !strings.Contains(buf.String(), "Failed") {
+		t.Errorf("expected 'Failed' in output, got: %s", buf.String())
+	}
+}
+
+type failStopBFF struct{ pb.UnimplementedBFFServiceServer }
+
+func (f *failStopBFF) StopChat(_ context.Context, _ *pb.StopChatRequest) (*pb.StopChatResponse, error) {
+	return &pb.StopChatResponse{Success: false}, nil
+}
+
+// --- ModelListRPC Tests ---
+
+func TestModelListRPC_Table(t *testing.T) {
+	client := startTestServer(t)
+	conn := &caigrpc.Conn{Client: client}
+	p, buf := testPrinter(ui.FormatTable)
+
+	if err := modelListRPC(conn, p); err != nil {
+		t.Fatalf("modelListRPC: %v", err)
+	}
+
+	out := buf.String()
+	if !strings.Contains(out, "gpt-4") {
+		t.Errorf("expected 'gpt-4' in output, got: %s", out)
+	}
+	if !strings.Contains(out, "openai") {
+		t.Errorf("expected 'openai' in output, got: %s", out)
+	}
+	if !strings.Contains(out, "claude-3") {
+		t.Errorf("expected 'claude-3' in output, got: %s", out)
+	}
+}
+
+func TestModelListRPC_JSON(t *testing.T) {
+	client := startTestServer(t)
+	conn := &caigrpc.Conn{Client: client}
+	p, buf := testPrinter(ui.FormatJSON)
+
+	if err := modelListRPC(conn, p); err != nil {
+		t.Fatalf("modelListRPC: %v", err)
+	}
+
+	var m map[string]interface{}
+	// ProtoJSON wraps arrays; just check content is present.
+	if !strings.Contains(buf.String(), "gpt-4") {
+		t.Errorf("expected 'gpt-4' in JSON output, got: %s", buf.String())
+	}
+	_ = m
+}
+
+// Ensure json import is used (it's referenced in TestModelList_JSON above).
+var _ = json.NewEncoder
+
+// ============================================================
+// --- drainPrintStream Tests (headless print mode, #77) ---
+// ============================================================
+
+// feedEvents sends events to a channel and closes it.
+func feedEvents(events []tui.StreamEvent) <-chan tui.StreamEvent {
+	ch := make(chan tui.StreamEvent, len(events)+1)
+	for _, e := range events {
+		ch <- e
+	}
+	close(ch)
+	return ch
+}
+
+func TestDrainPrintStream_TextMode_Chunk(t *testing.T) {
+	ch := feedEvents([]tui.StreamEvent{
+		{Kind: "chunk", Chunk: "Hello, "},
+		{Kind: "chunk", Chunk: "world!"},
+		{Kind: "done"},
+	})
+	var out, errOut bytes.Buffer
+	code := drainPrintStream(ch, "text", &out, &errOut)
+	if code != 0 {
+		t.Errorf("expected exit code 0, got %d", code)
+	}
+	if out.String() != "Hello, world!" {
+		t.Errorf("text mode output = %q, want %q", out.String(), "Hello, world!")
+	}
+}
+
+func TestDrainPrintStream_TextMode_Error(t *testing.T) {
+	ch := feedEvents([]tui.StreamEvent{
+		{Kind: "error", ErrMsg: "something failed"},
+		{Kind: "done"},
+	})
+	var out, errOut bytes.Buffer
+	code := drainPrintStream(ch, "text", &out, &errOut)
+	if code != 1 {
+		t.Errorf("expected exit code 1 on error, got %d", code)
+	}
+	if !strings.Contains(errOut.String(), "something failed") {
+		t.Errorf("expected error in stderr, got: %s", errOut.String())
+	}
+}
+
+func TestDrainPrintStream_JSONMode(t *testing.T) {
+	ch := feedEvents([]tui.StreamEvent{
+		{Kind: "chunk", Chunk: "The answer is 42."},
+		{Kind: "done"},
+	})
+	var out, errOut bytes.Buffer
+	code := drainPrintStream(ch, "json", &out, &errOut)
+	if code != 0 {
+		t.Errorf("expected exit code 0, got %d", code)
+	}
+
+	var result []map[string]any
+	if err := json.Unmarshal(out.Bytes(), &result); err != nil {
+		t.Fatalf("json mode output is not valid JSON: %v\noutput: %s", err, out.String())
+	}
+	if len(result) != 1 {
+		t.Fatalf("expected 1 result entry, got %d", len(result))
+	}
+	if result[0]["text"] != "The answer is 42." {
+		t.Errorf("text = %q, want %q", result[0]["text"], "The answer is 42.")
+	}
+	if result[0]["stop_reason"] != "end_turn" {
+		t.Errorf("stop_reason = %q, want %q", result[0]["stop_reason"], "end_turn")
+	}
+}
+
+func TestDrainPrintStream_JSONMode_AccumulatesChunks(t *testing.T) {
+	ch := feedEvents([]tui.StreamEvent{
+		{Kind: "chunk", Chunk: "part1 "},
+		{Kind: "chunk", Chunk: "part2 "},
+		{Kind: "chunk", Chunk: "part3"},
+		{Kind: "done"},
+	})
+	var out, errOut bytes.Buffer
+	drainPrintStream(ch, "json", &out, &errOut)
+
+	var result []map[string]any
+	if err := json.Unmarshal(out.Bytes(), &result); err != nil {
+		t.Fatalf("json output invalid: %v", err)
+	}
+	if result[0]["text"] != "part1 part2 part3" {
+		t.Errorf("accumulated text = %q, want %q", result[0]["text"], "part1 part2 part3")
+	}
+}
+
+func TestDrainPrintStream_StreamJSONMode_Chunk(t *testing.T) {
+	ch := feedEvents([]tui.StreamEvent{
+		{Kind: "chunk", Chunk: "hello"},
+		{Kind: "done"},
+	})
+	var out, errOut bytes.Buffer
+	drainPrintStream(ch, "stream-json", &out, &errOut)
+
+	lines := strings.Split(strings.TrimSpace(out.String()), "\n")
+	// Expect chunk line + done line.
+	if len(lines) < 2 {
+		t.Fatalf("expected at least 2 NDJSON lines, got: %s", out.String())
+	}
+	var ev map[string]any
+	if err := json.Unmarshal([]byte(lines[0]), &ev); err != nil {
+		t.Fatalf("line 0 not valid JSON: %v", err)
+	}
+	if ev["type"] != "text" || ev["text"] != "hello" {
+		t.Errorf("chunk event = %v, want type=text text=hello", ev)
+	}
+}
+
+func TestDrainPrintStream_StreamJSONMode_ToolCall(t *testing.T) {
+	ch := feedEvents([]tui.StreamEvent{
+		{Kind: "tool_call", ToolName: "read_file", ToolArgs: `{"path":"main.go"}`},
+		{Kind: "tool_exec", ToolName: "read_file", Status: "ok", DurationMs: 12},
+		{Kind: "done"},
+	})
+	var out, errOut bytes.Buffer
+	drainPrintStream(ch, "stream-json", &out, &errOut)
+
+	lines := strings.Split(strings.TrimSpace(out.String()), "\n")
+	// Should have tool_use, tool_result, result lines.
+	if len(lines) < 3 {
+		t.Fatalf("expected at least 3 NDJSON lines, got %d: %s", len(lines), out.String())
+	}
+	var toolUse map[string]any
+	if err := json.Unmarshal([]byte(lines[0]), &toolUse); err != nil {
+		t.Fatalf("tool_use line invalid JSON: %v", err)
+	}
+	if toolUse["type"] != "tool_use" {
+		t.Errorf("expected type=tool_use, got %v", toolUse["type"])
+	}
+	if toolUse["name"] != "read_file" {
+		t.Errorf("expected name=read_file, got %v", toolUse["name"])
+	}
+
+	var toolResult map[string]any
+	if err := json.Unmarshal([]byte(lines[1]), &toolResult); err != nil {
+		t.Fatalf("tool_result line invalid JSON: %v", err)
+	}
+	if toolResult["type"] != "tool_result" {
+		t.Errorf("expected type=tool_result, got %v", toolResult["type"])
+	}
+}
+
+func TestDrainPrintStream_StreamJSONMode_Error(t *testing.T) {
+	ch := feedEvents([]tui.StreamEvent{
+		{Kind: "error", ErrMsg: "rate limited"},
+		{Kind: "done"},
+	})
+	var out, errOut bytes.Buffer
+	code := drainPrintStream(ch, "stream-json", &out, &errOut)
+	if code != 1 {
+		t.Errorf("expected exit code 1, got %d", code)
+	}
+
+	var errEv map[string]any
+	if err := json.Unmarshal([]byte(strings.Split(strings.TrimSpace(out.String()), "\n")[0]), &errEv); err != nil {
+		t.Fatalf("error event not valid JSON: %v", err)
+	}
+	if errEv["type"] != "error" {
+		t.Errorf("expected type=error, got %v", errEv["type"])
+	}
+}
+
+func TestDrainPrintStream_DefaultMode_ToolEventsIgnored(t *testing.T) {
+	// tool_call and tool_exec in text mode should produce no output.
+	ch := feedEvents([]tui.StreamEvent{
+		{Kind: "tool_call", ToolName: "bash", ToolArgs: `{}`},
+		{Kind: "tool_exec", ToolName: "bash", Status: "ok", DurationMs: 5},
+		{Kind: "chunk", Chunk: "result"},
+		{Kind: "done"},
+	})
+	var out, errOut bytes.Buffer
+	drainPrintStream(ch, "text", &out, &errOut)
+	if out.String() != "result" {
+		t.Errorf("expected only 'result', got: %s", out.String())
+	}
+}
+
+// ============================================================
+// --- rateLimitDelay Tests (#83) ---
+// ============================================================
+
+func TestRateLimitDelay_Exponential(t *testing.T) {
+	cases := []struct {
+		retry int
+		want  time.Duration
+	}{
+		{0, 10 * time.Second},
+		{1, 20 * time.Second},
+		{2, 40 * time.Second},
+	}
+	for _, tc := range cases {
+		got := rateLimitDelay(tc.retry)
+		if got != tc.want {
+			t.Errorf("rateLimitDelay(%d) = %v, want %v", tc.retry, got, tc.want)
+		}
+	}
+}
+
+func TestRateLimitDelay_Capped(t *testing.T) {
+	// retry=5: 10s * 32 = 320s > rateLimitMaxDelay (300s) → capped.
+	got := rateLimitDelay(5)
+	if got != rateLimitMaxDelay {
+		t.Errorf("rateLimitDelay(5) = %v, want %v (capped at max)", got, rateLimitMaxDelay)
 	}
 }

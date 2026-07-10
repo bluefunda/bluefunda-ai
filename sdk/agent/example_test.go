@@ -1,7 +1,6 @@
 package agent_test
 
 import (
-	"context"
 	"fmt"
 
 	"github.com/bluefunda/bluefunda-ai/sdk/agent"
@@ -55,17 +54,12 @@ func ExampleDefaultExecute() {
 	// Output: hello
 }
 
-// ExampleRunner_Continue shows session continuity across prompts.
+// ExampleRunner_Continue shows that History starts empty and accumulates after
+// each Run / Continue call. This example does not make live backend calls.
 func ExampleRunner_Continue() {
 	runner := agent.New(agent.Options{Model: "auto"})
-	ctx := context.Background()
 
-	// First turn — requires live credentials so errors are ignored in example.
-	_ = runner.Run(ctx, "remember the number 42")
-	// Second turn reuses history.
-	_ = runner.Continue(ctx, "what number did I ask you to remember?")
-
-	history := runner.History()
-	fmt.Printf("history has %d messages\n", len(history))
+	// History is empty before any prompts are submitted.
+	fmt.Printf("history has %d messages\n", len(runner.History()))
 	// Output: history has 0 messages
 }

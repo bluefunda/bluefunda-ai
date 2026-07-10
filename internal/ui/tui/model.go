@@ -2,6 +2,8 @@ package tui
 
 import (
 	"fmt"
+	"os"
+	"os/exec"
 	"strconv"
 	"strings"
 	"time"
@@ -82,8 +84,17 @@ type MCPActivatedMsg struct {
 	Err  error
 }
 
+// ModelsLoadedMsg is the async result of listing models for /model.
+type ModelsLoadedMsg struct {
+	Items []ModelInfo
+	Err   error
+}
+
 // tickMsg drives the spinner animation.
 type tickMsg time.Time
+
+// updateExecDoneMsg is sent when the bai update subprocess exits.
+type updateExecDoneMsg struct{ err error }
 
 // ──────────────────────────────────────────────
 //  SessionConfig is passed from cmd to the TUI
@@ -105,6 +116,7 @@ type SessionConfig struct {
 	UsageFn        func() (*UsageInfo, error)    // nil = usage not available
 	MCPListFn      func() ([]MCPInfo, error)     // nil = MCP listing not available
 	MCPActivateFn  func(name string) error       // nil = MCP activation not available
+	ListModelsFn   func() ([]ModelInfo, error)   // nil = model listing not available
 	SetAutoApplyFn func(enabled bool)            // nil = auto-apply not available (non-code sessions)
 	SetCodeModeFn  func(enabled bool)            // nil = mode switch not supported in this session
 	CustomCommands []SlashCommand                // loaded from .bai/commands/*.md
@@ -122,6 +134,12 @@ type AccountInfo struct {
 	Name     string
 	Email    string
 	Username string
+}
+
+// ModelInfo is one model entry shown by /model.
+type ModelInfo struct {
+	Name    string
+	OwnedBy string
 }
 
 // MCPInfo is one MCP server entry shown by /mcp.
@@ -229,9 +247,17 @@ type Model struct {
 	slashMatches []SlashCommand
 	slashIdx     int
 
+	// Model picker (shown when /model is typed with no argument)
+	showModelPicker  bool
+	modelPickerItems []ModelInfo
+	modelPickerIdx   int
+
 	// Token usage (cumulative across turns, updated on each "done" event)
 	totalPromptTokens     int32
 	totalCompletionTokens int32
+
+	// Update notification
+	updateAvailable string // non-empty when a newer version is found on startup
 
 	// Misc
 	quit              bool
@@ -296,6 +322,7 @@ func (m Model) Init() tea.Cmd {
 		textarea.Blink,
 		tickCmd(),
 		tea.EnableBracketedPaste,
+		checkForUpdateCmd(m.cfg.Version),
 	)
 }
 
@@ -344,7 +371,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.streaming = false
 		finalizedIdx := -1
 		for i := len(m.messages) - 1; i >= 0; i-- {
-			if m.messages[i].Role == RoleAssistant && m.messages[i].Streaming && !m.messages[i].printed {
+			if m.messages[i].Role == RoleAssistant && m.messages[i].Streaming {
 				m.messages[i].finishStreaming()
 				finalizedIdx = i
 				break
@@ -443,11 +470,42 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.refreshViewport()
 		m.viewport.GotoBottom()
 
+	case ModelsLoadedMsg:
+		if len(m.messages) > 0 && m.messages[len(m.messages)-1].Role == RoleSystem {
+			m.messages = m.messages[:len(m.messages)-1]
+		}
+		if msg.Err != nil {
+			m.messages = append(m.messages, newSystemMessage("Error loading models: "+msg.Err.Error()))
+			m.refreshViewport()
+			m.viewport.GotoBottom()
+		} else {
+			m.modelPickerItems = msg.Items
+			m.modelPickerIdx = 0
+			for i, item := range msg.Items {
+				if item.Name == m.cfg.Model {
+					m.modelPickerIdx = i
+					break
+				}
+			}
+			m.showModelPicker = true
+		}
+
+	case UpdateAvailableMsg:
+		m.updateAvailable = msg.Version
+
+	case updateExecDoneMsg:
+		// After `bai update` exits (success or failure), quit rather than
+		// resuming — the binary on disk may have changed.
+		return m, tea.Quit
+
 	// ── Keyboard ──────────────────────────────
 
 	case tea.KeyMsg:
 		if m.pendingApproval != nil {
 			return m.handleApprovalKey(msg)
+		}
+		if m.showModelPicker {
+			return m.handleModelPickerKey(msg)
 		}
 		return m.handleKey(msg)
 	}
@@ -513,7 +571,14 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case "enter":
-		if m.showSlash {
+		if m.showSlash && len(m.slashMatches) > 0 {
+			cmd := m.slashMatches[m.slashIdx]
+			if m.textarea.Value() == cmd.Name {
+				// Already typed the exact command name — skip the autocomplete
+				// step and submit directly.
+				m.showSlash = false
+				return m.submitInput()
+			}
 			return m.acceptSlashCommand()
 		}
 		if m.streaming {
@@ -631,6 +696,31 @@ func (m Model) handleApprovalKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+func (m Model) handleModelPickerKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "up", "ctrl+p":
+		if m.modelPickerIdx > 0 {
+			m.modelPickerIdx--
+		}
+	case "down", "ctrl+n":
+		if m.modelPickerIdx < len(m.modelPickerItems)-1 {
+			m.modelPickerIdx++
+		}
+	case "enter":
+		if len(m.modelPickerItems) > 0 {
+			selected := m.modelPickerItems[m.modelPickerIdx]
+			m.cfg.Model = selected.Name
+			m.showModelPicker = false
+			m.messages = append(m.messages, newSystemMessage("Switched to model: "+selected.Name))
+			m.refreshViewport()
+			m.viewport.GotoBottom()
+		}
+	case "esc", "ctrl+c":
+		m.showModelPicker = false
+	}
+	return m, nil
+}
+
 func (m Model) submitInput() (tea.Model, tea.Cmd) {
 	input := strings.TrimSpace(m.textarea.Value())
 	if input == "" {
@@ -675,6 +765,18 @@ func (m Model) handleSlashCommand(input string) (tea.Model, tea.Cmd) {
 	m.showSlash = false
 
 	switch {
+	case input == "/update":
+		exe, err := os.Executable()
+		if err != nil {
+			m.messages = append(m.messages, newSystemMessage("Could not locate bai binary: "+err.Error()))
+			m.refreshViewport()
+			break
+		}
+		cmd := exec.Command(exe, "update")
+		return m, tea.ExecProcess(cmd, func(err error) tea.Msg {
+			return updateExecDoneMsg{err: err}
+		})
+
 	case input == "/exit" || input == "/quit":
 		m.quit = true
 		return m, tea.Quit
@@ -706,6 +808,16 @@ func (m Model) handleSlashCommand(input string) (tea.Model, tea.Cmd) {
 	case input == "/model" || strings.HasPrefix(input, "/model "):
 		arg := strings.TrimSpace(strings.TrimPrefix(input, "/model"))
 		if arg == "" {
+			if m.cfg.ListModelsFn != nil {
+				m.messages = append(m.messages, newSystemMessage("Loading models…"))
+				m.refreshViewport()
+				fn := m.cfg.ListModelsFn
+				m.viewport.GotoBottom()
+				return m, func() tea.Msg {
+					items, err := fn()
+					return ModelsLoadedMsg{Items: items, Err: err}
+				}
+			}
 			m.messages = append(m.messages, newSystemMessage("Model: "+m.cfg.Model))
 		} else {
 			m.cfg.Model = strings.TrimSpace(arg)
@@ -996,20 +1108,17 @@ func (m *Model) refreshViewport() {
 	if !m.vpReady {
 		return
 	}
-	m.viewport.SetContent(m.renderActiveMessages())
+	m.viewport.SetContent(m.renderConversation())
 }
 
-// renderActiveMessages renders only messages not yet committed to the scroll buffer.
-func (m *Model) renderActiveMessages() string {
+// renderConversation renders the full conversation for the viewport.
+func (m *Model) renderConversation() string {
 	innerWidth := m.width - 4
 	if innerWidth < 20 {
 		innerWidth = 20
 	}
 	var sb strings.Builder
 	for i := range m.messages {
-		if m.messages[i].printed {
-			continue
-		}
 		if sb.Len() > 0 {
 			sb.WriteByte('\n')
 		}
@@ -1043,6 +1152,7 @@ func helpText() string {
 		"  /mcp [name]      List or activate MCP servers",
 		"  /account         Show account info",
 		"  /usage           Show token usage",
+		"  /update          Check for a newer version and upgrade",
 		"  /clear  /reset  /context  /exit",
 		"",
 	}, "\n")
@@ -1336,7 +1446,6 @@ func (m *Model) handleStreamEvent(ev StreamEvent) []tea.Cmd {
 				break
 			}
 		}
-		// Accumulate token usage when backend provides it.
 		if ev.UsagePromptTokens > 0 || ev.UsageCompletionTokens > 0 {
 			m.totalPromptTokens += ev.UsagePromptTokens
 			m.totalCompletionTokens += ev.UsageCompletionTokens
@@ -1378,9 +1487,6 @@ func (m *Model) scrollToMessageStart(msgIdx int) {
 	}
 	var sb strings.Builder
 	for i := 0; i < msgIdx; i++ {
-		if m.messages[i].printed {
-			continue
-		}
 		if sb.Len() > 0 {
 			sb.WriteByte('\n')
 		}

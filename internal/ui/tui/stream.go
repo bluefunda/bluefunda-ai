@@ -180,6 +180,7 @@ type thinkFilter struct {
 	inside     bool
 	buf        string
 	suppressed string
+	hadOutput  bool // true if Filter() ever returned non-empty content
 }
 
 func (f *thinkFilter) Filter(chunk string) string {
@@ -222,19 +223,27 @@ func (f *thinkFilter) Filter(chunk string) string {
 		f.buf = ""
 	}
 
-	return out.String()
+	result := out.String()
+	if result != "" {
+		f.hadOutput = true
+	}
+	return result
 }
 
 func (f *thinkFilter) Flush() string {
 	var result string
 	if f.inside {
-		result = f.suppressed + f.buf
+		if !f.hadOutput {
+			result = f.suppressed + f.buf
+		}
+		// real content already streamed — discard trailing think block
 	} else {
 		result = f.buf
 	}
 	f.buf = ""
 	f.suppressed = ""
 	f.inside = false
+	f.hadOutput = false
 	return result
 }
 

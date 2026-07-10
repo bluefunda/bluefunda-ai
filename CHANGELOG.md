@@ -1,5 +1,33 @@
 # Changelog
 
+## [1.35.3](https://github.com/bluefunda/bluefunda-ai/compare/v1.35.2...v1.35.3) (2026-07-08)
+
+
+### Bug Fixes
+
+* **code:** extract drainPrintStream for testable headless output formatting ([#223](https://github.com/bluefunda/bluefunda-ai/issues/223)) ([1523629](https://github.com/bluefunda/bluefunda-ai/commit/15236295f1e0a224dadead72af45fab58c313d86))
+
+## [1.35.2](https://github.com/bluefunda/bluefunda-ai/compare/v1.35.1...v1.35.2) (2026-07-08)
+
+
+### Bug Fixes
+
+* **tui:** sync thinkFilter with router — discard trailing think blocks to prevent duplicate response ([#218](https://github.com/bluefunda/bluefunda-ai/issues/218)) ([8a57938](https://github.com/bluefunda/bluefunda-ai/commit/8a5793820689825d4302e81096385a088736710f))
+
+## [1.35.1](https://github.com/bluefunda/bluefunda-ai/compare/v1.35.0...v1.35.1) (2026-07-08)
+
+
+### Bug Fixes
+
+* **sdk:** resolve model alias in RunLoop before sending to BFF ([#212](https://github.com/bluefunda/bluefunda-ai/issues/212)) ([c8467c3](https://github.com/bluefunda/bluefunda-ai/commit/c8467c33ef5f009d99dc9e5bae14d1bbee19b1d7))
+
+## [1.35.0](https://github.com/bluefunda/bluefunda-ai/compare/v1.34.1...v1.35.0) (2026-07-08)
+
+
+### Features
+
+* **tui:** model picker, update-check badge, /update slash command ([#210](https://github.com/bluefunda/bluefunda-ai/issues/210)) ([aaaba5d](https://github.com/bluefunda/bluefunda-ai/commit/aaaba5d1ffc1888c3ebf6c58fa54ea0971a3a93c))
+
 ## [1.34.1](https://github.com/bluefunda/bluefunda-ai/compare/v1.34.0...v1.34.1) (2026-07-06)
 
 

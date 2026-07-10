@@ -34,6 +34,12 @@ func (m Model) View() string {
 		b.WriteByte('\n')
 	}
 
+	// Model picker (shown above input when /model is invoked with no arg)
+	if m.showModelPicker && len(m.modelPickerItems) > 0 {
+		b.WriteString(m.renderModelPicker())
+		b.WriteByte('\n')
+	}
+
 	// Approval prompt
 	if m.pendingApproval != nil {
 		b.WriteString(m.renderApproval())
@@ -264,6 +270,53 @@ func (m Model) renderSlashMenu() string {
 }
 
 // ──────────────────────────────────────────────
+//  Model picker
+// ──────────────────────────────────────────────
+
+func (m Model) renderModelPicker() string {
+	th := m.theme
+
+	header := "  " + th.ToolDim.Render("Select model  ·  ↑↓ navigate  ·  Enter select  ·  Esc cancel")
+
+	const maxVisible = 8
+	items := m.modelPickerItems
+	start := m.modelPickerIdx - maxVisible/2
+	if start < 0 {
+		start = 0
+	}
+	end := start + maxVisible
+	if end > len(items) {
+		end = len(items)
+		start = end - maxVisible
+		if start < 0 {
+			start = 0
+		}
+	}
+
+	var rows []string
+	for i := start; i < end; i++ {
+		item := items[i]
+		check := "  "
+		if item.Name == m.cfg.Model {
+			check = th.ToolSuccess.Render("✓ ")
+		}
+		name := lipgloss.NewStyle().Foreground(th.AccentBold).Render(item.Name)
+		owner := ""
+		if item.OwnedBy != "" {
+			owner = lipgloss.NewStyle().Foreground(th.Secondary).Render("  " + item.OwnedBy)
+		}
+		line := "  " + check + name + owner
+		if i == m.modelPickerIdx {
+			line = th.SlashSelected.Width(m.width - 6).Render(line)
+		}
+		rows = append(rows, line)
+	}
+
+	content := header + "\n" + strings.Join(rows, "\n")
+	return th.SlashMenu.Width(m.width - 4).Render(content)
+}
+
+// ──────────────────────────────────────────────
 //  Approval prompt
 // ──────────────────────────────────────────────
 
@@ -301,7 +354,13 @@ func (m Model) renderFooter() string {
 	if m.streaming {
 		hint = "Ctrl+C to interrupt turn  ·  Ctrl+D to quit"
 	}
-	return "  " + th.Footer.Render(hint)
+	left := "  " + th.Footer.Render(hint)
+	if m.updateAvailable == "" {
+		return left
+	}
+	badge := lipgloss.NewStyle().Foreground(th.Warning).Render("↑ " + m.updateAvailable + "  run: bai update")
+	spacer := strings.Repeat(" ", max(0, m.width-lipgloss.Width(left)-lipgloss.Width(badge)-2))
+	return left + spacer + badge + "  "
 }
 
 // ──────────────────────────────────────────────

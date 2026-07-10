@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"strconv"
 	"strings"
 
 	pb "github.com/bluefunda/bluefunda-ai/api/proto/bff"
@@ -125,7 +126,34 @@ func pump(stream grpc.ServerStreamingClient[pb.ChatEvent], ch chan<- StreamEvent
 		case "stream_heartbeat":
 			ch <- StreamEvent{Kind: "heartbeat"}
 
-		case "tool_result", "stream_start":
+		case "rate_limited":
+			// Rate limit hit — deliver as a dedicated kind so the TUI can show
+			// a system notification instead of an AI chat bubble.
+			msg := ev.GetContent()
+			if msg == "" {
+				msg = "You've reached your usage limit."
+			}
+			ch <- StreamEvent{Kind: "rate_limited", ErrMsg: msg}
+
+		case "usage_warning":
+			// Sent after response completes when usage crosses a threshold.
+			msg := ev.GetContent()
+			if msg == "" {
+				msg = "You're approaching your usage limit."
+			}
+			ch <- StreamEvent{Kind: "usage_warning", ErrMsg: msg}
+
+		case "live_usage_pct":
+			// Live usage tick during streaming — content is "pct|period" e.g. "92.65|hourly".
+			content := ev.GetContent()
+			if content != "" {
+				parts := strings.SplitN(content, "|", 2)
+				if pct, err := strconv.ParseFloat(parts[0], 64); err == nil {
+					ch <- StreamEvent{Kind: "live_usage_pct", LivePct: pct}
+				}
+			}
+
+		case "tool_result", "stream_start", "stream_stopped":
 			// no display
 
 		default:

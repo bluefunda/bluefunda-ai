@@ -318,6 +318,11 @@ func runChatSession(chatID, initialPrompt, model, mcpServer string) error {
 				info.OutputTokens = int64(u.GetOutputTokens())
 				info.TotalTokens = int64(u.GetTotalTokens())
 			}
+			if resetAt := resp.GetResetAt(); resetAt > 0 {
+				if secs := int(time.Until(time.Unix(resetAt, 0)).Seconds()); secs > 0 {
+					info.RetryAfter = secs
+				}
+			}
 			return info, nil
 		},
 		MCPListFn: func() ([]tui.MCPInfo, error) {

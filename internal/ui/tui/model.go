@@ -64,6 +64,12 @@ type UsageLoadedMsg struct {
 	Err  error
 }
 
+// UsageAutoCheckMsg is the async result of the post-response background usage check.
+type UsageAutoCheckMsg struct {
+	Info *UsageInfo
+	Err  error
+}
+
 // MCPListLoadedMsg is the async result of listing MCP servers for /mcp.
 type MCPListLoadedMsg struct {
 	Items []MCPInfo
@@ -135,12 +141,13 @@ type UsageInfo struct {
 	InputTokens    int64
 	OutputTokens   int64
 	TotalTokens    int64
+	RetryAfter     int // seconds to wait when rate limited (future: populated by cai-bff)
 }
 
 // StreamEvent is a discriminated union of all events that can arrive from a
 // gRPC stream. The BubbleTea cmd reads one event from the channel per tick.
 type StreamEvent struct {
-	Kind string // "chunk"|"tool_call"|"tool_exec"|"progress"|"heartbeat"|"approval"|"done"|"error"
+	Kind string // "chunk"|"tool_call"|"tool_exec"|"progress"|"heartbeat"|"approval"|"done"|"error"|"rate_limited"|"usage_warning"|"live_usage_pct"
 	// chunk
 	Chunk string
 	// tool_call / tool_exec / approval
@@ -162,6 +169,8 @@ type StreamEvent struct {
 	// token usage — set on "done" events when the backend provides usage data
 	UsagePromptTokens     int32
 	UsageCompletionTokens int32
+	// live_usage_pct — live usage percentage during streaming (0-100)
+	LivePct float64
 }
 
 // SubmitFn opens a gRPC stream for the given input and pumps events into the
@@ -206,10 +215,11 @@ type Model struct {
 	historyDraft string
 
 	// Streaming
-	streaming  bool
-	streamCh   <-chan StreamEvent
-	streamStop chan struct{} // closed to interrupt the current turn without quitting
-	spinnerIdx int
+	streaming    bool
+	streamCh     <-chan StreamEvent
+	streamStop   chan struct{} // closed to interrupt the current turn without quitting
+	spinnerIdx   int
+	liveUsagePct float64 // live usage % updated every ~25 tokens during streaming (0 = inactive)
 
 	// Approval prompt (tool confirmation)
 	pendingApproval *ApprovalRequestMsg
@@ -332,17 +342,24 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case StreamDoneMsg:
 		m.streaming = false
-		if len(m.messages) > 0 {
-			last := len(m.messages) - 1
-			if m.messages[last].Role == RoleAssistant && !m.messages[last].printed {
-				m.messages[last].finishStreaming()
+		finalizedIdx := -1
+		for i := len(m.messages) - 1; i >= 0; i-- {
+			if m.messages[i].Role == RoleAssistant && m.messages[i].Streaming && !m.messages[i].printed {
+				m.messages[i].finishStreaming()
+				finalizedIdx = i
+				break
 			}
 		}
 		if msg.Err != nil {
 			m.messages = append(m.messages, newSystemMessage("Error: "+msg.Err.Error()))
 		}
 		m.refreshViewport()
-		m.viewport.GotoBottom()
+		if finalizedIdx >= 0 && m.messages[finalizedIdx].Content != "" {
+			m.scrollToMessageStart(finalizedIdx)
+		} else {
+			m.viewport.GotoBottom()
+		}
+		m.atBottom = m.viewport.AtBottom()
 		m.textarea.Focus()
 		cmds = append(cmds, textarea.Blink)
 
@@ -389,6 +406,18 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.refreshViewport()
 		m.viewport.GotoBottom()
+
+	case UsageAutoCheckMsg:
+		if msg.Err == nil && msg.Info != nil {
+			if line := formatUsageCompact(msg.Info); line != "" {
+				m.messages = append(m.messages, newSystemMessage(line))
+				wasAtBottom := m.atBottom
+				m.refreshViewport()
+				if wasAtBottom {
+					m.viewport.GotoBottom()
+				}
+			}
+		}
 
 	case MCPListLoadedMsg:
 		if len(m.messages) > 0 && m.messages[len(m.messages)-1].Role == RoleSystem {
@@ -859,6 +888,15 @@ func (m Model) handleSlashCommand(input string) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+// slashCommandNeedsArg lists commands that require an argument typed after them.
+// These are filled into the textarea but not immediately submitted so the user
+// can append the argument before pressing Enter again.
+var slashCommandNeedsArg = map[string]bool{
+	"/model":  true,
+	"/resume": true,
+	"/mcp":    true,
+}
+
 func (m *Model) acceptSlashCommand() (tea.Model, tea.Cmd) {
 	if len(m.slashMatches) == 0 {
 		return m, nil
@@ -867,6 +905,10 @@ func (m *Model) acceptSlashCommand() (tea.Model, tea.Cmd) {
 	m.textarea.SetValue(cmd.Name)
 	m.textarea.CursorEnd()
 	m.showSlash = false
+	// Submit immediately for commands that don't need an argument.
+	if !slashCommandNeedsArg[cmd.Name] {
+		return m.submitInput()
+	}
 	return m, nil
 }
 
@@ -1045,23 +1087,119 @@ func formatAccount(info *AccountInfo) string {
 	}, "\n")
 }
 
+// usageBar renders a fixed-width block progress bar, e.g. "████░░░░░░".
+func usageBar(pct float64, width int) string {
+	if pct < 0 {
+		pct = 0
+	}
+	if pct > 100 {
+		pct = 100
+	}
+	filled := int(pct / 100 * float64(width))
+	return strings.Repeat("█", filled) + strings.Repeat("░", width-filled)
+}
+
+// usageAlert returns an inline suffix based on consumption level.
+func usageAlert(pct float64) string {
+	switch {
+	case pct >= 100:
+		return "  ✗ limit reached"
+	case pct >= 95:
+		return "  ⚠ almost out"
+	case pct >= 90:
+		return "  ⚠ running low"
+	case pct >= 80:
+		return "  ⚠ warning"
+	default:
+		return ""
+	}
+}
+
+// formatUsageCompact returns a one-liner shown after each response.
+// Returns "" when consumption is below 70% (quiet path).
+func formatUsageCompact(info *UsageInfo) string {
+	if info == nil {
+		return ""
+	}
+	// Pick the highest-usage window that is actively enforced.
+	type window struct {
+		pct    float64
+		period string
+	}
+	var windows []window
+	if info.PlanType == "free" {
+		windows = []window{{info.HourlyPercent, "hourly"}}
+	} else {
+		windows = []window{
+			{info.HourlyPercent, "hourly"},
+			{info.DailyPercent, "daily"},
+			{info.MonthlyPercent, "monthly"},
+		}
+	}
+	best := window{}
+	for _, w := range windows {
+		if w.pct > best.pct {
+			best = w
+		}
+	}
+	if best.pct < 80 {
+		return ""
+	}
+	displayPct := best.pct
+	if displayPct > 100 {
+		displayPct = 100
+	}
+	suffix := usageAlert(best.pct)
+	if best.pct >= 100 && info.RetryAfter > 0 {
+		if mins := info.RetryAfter / 60; mins > 0 {
+			suffix = fmt.Sprintf("  ✗ resets in %dm", mins)
+		} else {
+			suffix = fmt.Sprintf("  ✗ resets in %ds", info.RetryAfter)
+		}
+	}
+	return fmt.Sprintf("  [%s] %.0f%% %s%s", usageBar(best.pct, 10), displayPct, best.period, suffix)
+}
+
 func formatUsage(info *UsageInfo) string {
 	if info == nil {
 		return "No usage info available."
 	}
-	return strings.Join([]string{
+
+	lines := []string{
 		"",
 		"  Usage  ·  plan: " + info.PlanType,
 		"  ─────────────────────────────────",
-		fmt.Sprintf("  Hourly:   %.1f%%", info.HourlyPercent),
-		fmt.Sprintf("  Daily:    %.1f%%", info.DailyPercent),
-		fmt.Sprintf("  Monthly:  %.1f%%", info.MonthlyPercent),
-		"",
-		fmt.Sprintf("  Input tokens:   %d", info.InputTokens),
-		fmt.Sprintf("  Output tokens:  %d", info.OutputTokens),
-		fmt.Sprintf("  Total tokens:   %d", info.TotalTokens),
-		"",
-	}, "\n")
+	}
+
+	addRow := func(label string, pct float64) {
+		displayPct := pct
+		if displayPct > 100 {
+			displayPct = 100
+		}
+		lines = append(lines, fmt.Sprintf("  %-8s [%s] %5.1f%%%s",
+			label, usageBar(pct, 10), displayPct, usageAlert(pct)))
+	}
+
+	if info.PlanType == "free" {
+		addRow("Hourly", info.HourlyPercent)
+	} else {
+		addRow("Hourly", info.HourlyPercent)
+		addRow("Daily", info.DailyPercent)
+		addRow("Monthly", info.MonthlyPercent)
+	}
+
+	if info.RetryAfter > 0 {
+		lines = append(lines, fmt.Sprintf("  ✗ Rate limited — retry in %ds", info.RetryAfter))
+	}
+
+	if info.TotalTokens > 0 {
+		lines = append(lines, "")
+		lines = append(lines, fmt.Sprintf("  Input:   %d tokens", info.InputTokens))
+		lines = append(lines, fmt.Sprintf("  Output:  %d tokens", info.OutputTokens))
+		lines = append(lines, fmt.Sprintf("  Total:   %d tokens", info.TotalTokens))
+	}
+	lines = append(lines, "")
+	return strings.Join(lines, "\n")
 }
 
 func formatMCPList(items []MCPInfo) string {
@@ -1148,6 +1286,36 @@ func (m *Model) handleStreamEvent(ev StreamEvent) []tea.Cmd {
 		m.refreshViewport()
 		// No next-read cmd here — handleApprovalKey will resume the stream pump.
 
+	case "rate_limited":
+		// Rate limit hit — shown as a styled system notice, not an AI chat bubble.
+		// Finish any in-flight assistant message; if it has no content (pre-block),
+		// remove it so there's no blank bubble.
+		m.streaming = false
+		if last := len(m.messages) - 1; last >= 0 && m.messages[last].Role == RoleAssistant {
+			m.messages[last].finishStreaming()
+			if m.messages[last].Content == "" && len(m.messages[last].ToolEvents) == 0 {
+				m.messages = m.messages[:last]
+			}
+		}
+		m.messages = append(m.messages, newSystemMessage("⚠ "+ev.ErrMsg))
+		m.refreshViewport()
+		m.viewport.GotoBottom()
+		m.textarea.Focus()
+		cmds = append(cmds, waitForStreamEvent(m.streamCh, m.streamStop))
+
+	case "live_usage_pct":
+		// Live usage tick during streaming — update the header bar and continue.
+		// Do NOT drain the stream; the response is still in progress.
+		m.liveUsagePct = ev.LivePct
+		cmds = append(cmds, waitForStreamEvent(m.streamCh, m.streamStop))
+
+	case "usage_warning":
+		// Show a non-blocking warning and continue reading the stream.
+		// The response is still in progress; the done event follows shortly.
+		m.messages = append(m.messages, newSystemMessage("⚠ "+ev.ErrMsg))
+		m.refreshViewport()
+		cmds = append(cmds, waitForStreamEvent(m.streamCh, m.streamStop))
+
 	case "error":
 		m.streaming = false
 		m.messages = append(m.messages, newSystemMessage("Error: "+ev.ErrMsg))
@@ -1157,10 +1325,15 @@ func (m *Model) handleStreamEvent(ev StreamEvent) []tea.Cmd {
 
 	case "done":
 		m.streaming = false
-		if len(m.messages) > 0 {
-			last := len(m.messages) - 1
-			if m.messages[last].Role == RoleAssistant {
-				m.messages[last].finishStreaming()
+		m.liveUsagePct = 0
+		// Search backwards: a usage_warning system message may have been appended
+		// after the assistant message, so the last entry might not be the assistant.
+		newlyFinalizedIdx := -1
+		for i := len(m.messages) - 1; i >= 0; i-- {
+			if m.messages[i].Role == RoleAssistant && m.messages[i].Streaming {
+				m.messages[i].finishStreaming()
+				newlyFinalizedIdx = i
+				break
 			}
 		}
 		// Accumulate token usage when backend provides it.
@@ -1169,17 +1342,57 @@ func (m *Model) handleStreamEvent(ev StreamEvent) []tea.Cmd {
 			m.totalCompletionTokens += ev.UsageCompletionTokens
 		}
 		m.refreshViewport()
-		m.viewport.GotoBottom()
+		if newlyFinalizedIdx >= 0 && m.messages[newlyFinalizedIdx].Content != "" {
+			// Scroll viewport to the top of the response so it's immediately visible.
+			m.scrollToMessageStart(newlyFinalizedIdx)
+		} else {
+			m.viewport.GotoBottom()
+		}
+		// Sync atBottom so UsageAutoCheckMsg doesn't force-scroll past the response.
+		m.atBottom = m.viewport.AtBottom()
 		m.textarea.Focus()
 		cmds = append(cmds, textarea.Blink)
+		// Silently check usage after each response; shows alert only when >= 80%.
+		// Wait 600ms so cai-mcp-go has time to record stream_end tokens to KV
+		// before we query — avoids showing stale pre-response percentage.
+		if m.cfg.UsageFn != nil {
+			fn := m.cfg.UsageFn
+			cmds = append(cmds, func() tea.Msg {
+				time.Sleep(600 * time.Millisecond)
+				info, err := fn()
+				return UsageAutoCheckMsg{Info: info, Err: err}
+			})
+		}
 	}
 
 	return cmds
 }
 
-// scrollToLastMsgStart positions the viewport so the user sees the beginning
-// of the last message. For short messages that fit in the viewport it falls
-// back to GotoBottom so the full message is visible without dead space above.
+// scrollToMessageStart positions the viewport so the user sees the beginning
+// of the message at msgIdx. The viewport clamps YOffset automatically so this
+// is equivalent to GotoBottom when the remaining content fits on screen.
+func (m *Model) scrollToMessageStart(msgIdx int) {
+	innerWidth := m.width - 4
+	if innerWidth < 20 {
+		innerWidth = 20
+	}
+	var sb strings.Builder
+	for i := 0; i < msgIdx; i++ {
+		if m.messages[i].printed {
+			continue
+		}
+		if sb.Len() > 0 {
+			sb.WriteByte('\n')
+		}
+		sb.WriteString(m.renderMessageAt(i, innerWidth))
+	}
+	linesBefore := 0
+	if s := sb.String(); s != "" {
+		linesBefore = strings.Count(s, "\n") + 1
+	}
+	m.viewport.YOffset = linesBefore
+	// viewport clamps to maxYOffset internally, so short content auto-bottoms
+}
 
 // waitForStreamEvent returns a tea.Cmd that blocks until the next StreamEvent
 // arrives on ch or the stop channel is closed (Ctrl+C interrupt).

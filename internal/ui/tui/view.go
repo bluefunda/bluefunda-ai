@@ -22,24 +22,11 @@ func (m Model) View() string {
 	b.WriteString(m.renderHeader())
 	b.WriteByte('\n')
 
-	// Active content: messages not yet committed to the terminal scroll buffer.
-	// Committed messages are flushed above via tea.Println(); this block only
-	// contains the in-flight streaming turn, and is empty (not rendered) when idle.
-	activeContent := m.renderActiveMessages()
-	if activeContent != "" {
-		// Clamp to the allocated viewport height so a long response doesn't
-		// overflow the terminal and cause the inline block to grow unboundedly.
-		maxLines := m.viewport.Height
-		if maxLines < 4 {
-			maxLines = 4
-		}
-		lines := strings.Split(activeContent, "\n")
-		if len(lines) > maxLines {
-			lines = lines[len(lines)-maxLines:]
-		}
-		b.WriteString(strings.Join(lines, "\n"))
-		b.WriteByte('\n')
-	}
+	// Use the viewport's own renderer so that the scroll position (YOffset)
+	// set by scrollToMessageStart / GotoBottom is actually respected.
+	// Content is kept current via refreshViewport → viewport.SetContent.
+	b.WriteString(m.viewport.View())
+	b.WriteByte('\n')
 
 	// Slash menu (shown above input when active)
 	if m.showSlash && len(m.slashMatches) > 0 {
@@ -87,8 +74,10 @@ func (m Model) renderHeader() string {
 	}
 
 	right := th.ToolDim.Render(m.cfg.ChatID[:8])
-	// Show cumulative prompt token count once we have data.
-	if m.totalPromptTokens > 0 {
+	// Show live usage % while streaming, or cumulative prompt token count when idle.
+	if m.streaming && m.liveUsagePct > 0 {
+		right = th.ToolDim.Render(fmt.Sprintf("%.0f%% used  ·  ", m.liveUsagePct)) + right
+	} else if m.totalPromptTokens > 0 {
 		right = th.ToolDim.Render(formatTokenCount(m.totalPromptTokens) + "  ·  ") + right
 	}
 

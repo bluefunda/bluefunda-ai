@@ -51,7 +51,7 @@ func runRateLimit(cmd *cobra.Command, args []string) error {
 	if stats := resp.GetUserStats(); stats != nil {
 		rows = append(rows,
 			[]string{"Plan", stats.GetPlanType()},
-			[]string{"Hourly Usage", fmt.Sprintf("%.1f%%", stats.GetHourlyPercentage())},
+			[]string{"RPM Usage", fmt.Sprintf("%d/%d (%.1f%%)", stats.GetRpmUsed(), stats.GetRpmLimit(), stats.GetRpmPercentage())},
 			[]string{"Daily Usage", fmt.Sprintf("%.1f%%", stats.GetDailyPercentage())},
 			[]string{"Monthly Usage", fmt.Sprintf("%.1f%%", stats.GetMonthlyPercentage())},
 		)

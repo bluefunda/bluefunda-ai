@@ -147,7 +147,9 @@ type MCPInfo struct {
 // UsageInfo holds the data shown by /usage.
 type UsageInfo struct {
 	PlanType       string
-	HourlyPercent  float64
+	RPMUsed        int32
+	RPMLimit       int32
+	RPMPercent     float64
 	DailyPercent   float64
 	MonthlyPercent float64
 	InputTokens    int64
@@ -1159,11 +1161,12 @@ func formatUsage(info *UsageInfo) string {
 	if info == nil {
 		return "No usage info available."
 	}
+	rpmRow := fmt.Sprintf("  RPM:      %d/%d  (%.1f%%)", info.RPMUsed, info.RPMLimit, info.RPMPercent)
 	return strings.Join([]string{
 		"",
 		"  Usage  ·  plan: " + info.PlanType,
 		"  ─────────────────────────────────",
-		fmt.Sprintf("  Hourly:   %.1f%%", info.HourlyPercent),
+		rpmRow,
 		fmt.Sprintf("  Daily:    %.1f%%", info.DailyPercent),
 		fmt.Sprintf("  Monthly:  %.1f%%", info.MonthlyPercent),
 		"",

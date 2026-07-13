@@ -85,7 +85,9 @@ func (t *testBFF) QueryRateLimit(_ context.Context, _ *pb.QueryRateLimitRequest)
 		Remaining: 42,
 		UserStats: &pb.UserLimitStats{
 			PlanType:          "pro",
-			HourlyPercentage:  10.5,
+			RpmUsed:           2,
+			RpmLimit:          5,
+			RpmPercentage:     40.0,
 			DailyPercentage:   25.0,
 			MonthlyPercentage: 5.2,
 		},
@@ -325,6 +327,55 @@ func TestRateLimit(t *testing.T) {
 	}
 	if resp.GetUserStats().GetPlanType() != "pro" {
 		t.Errorf("expected plan 'pro', got %q", resp.GetUserStats().GetPlanType())
+	}
+}
+
+func TestRateLimit_RPMFields(t *testing.T) {
+	client := startTestServer(t)
+	ctx := context.Background()
+
+	resp, err := client.QueryRateLimit(ctx, &pb.QueryRateLimitRequest{})
+	if err != nil {
+		t.Fatalf("QueryRateLimit: %v", err)
+	}
+
+	stats := resp.GetUserStats()
+	if stats == nil {
+		t.Fatal("expected UserStats to be set")
+	}
+	if stats.GetRpmUsed() != 2 {
+		t.Errorf("RpmUsed: want 2, got %d", stats.GetRpmUsed())
+	}
+	if stats.GetRpmLimit() != 5 {
+		t.Errorf("RpmLimit: want 5, got %d", stats.GetRpmLimit())
+	}
+	if stats.GetRpmPercentage() != 40.0 {
+		t.Errorf("RpmPercentage: want 40.0, got %f", stats.GetRpmPercentage())
+	}
+}
+
+func TestRateLimit_NoHourlyPercentage(t *testing.T) {
+	client := startTestServer(t)
+	ctx := context.Background()
+
+	resp, err := client.QueryRateLimit(ctx, &pb.QueryRateLimitRequest{})
+	if err != nil {
+		t.Fatalf("QueryRateLimit: %v", err)
+	}
+
+	// Field 2 (hourly_percentage) is reserved — GetHourlyPercentage should not exist.
+	// This test verifies the testBFF stub compiles without it. The compile-time
+	// absence of HourlyPercentage in UserLimitStats is the real assertion.
+	stats := resp.GetUserStats()
+	if stats == nil {
+		t.Fatal("expected UserStats")
+	}
+	// daily and monthly should still be populated
+	if stats.GetDailyPercentage() != 25.0 {
+		t.Errorf("DailyPercentage: want 25.0, got %f", stats.GetDailyPercentage())
+	}
+	if stats.GetMonthlyPercentage() != 5.2 {
+		t.Errorf("MonthlyPercentage: want 5.2, got %f", stats.GetMonthlyPercentage())
 	}
 }
 

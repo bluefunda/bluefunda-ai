@@ -68,8 +68,7 @@ func runRateLimit(cmd *cobra.Command, args []string) error {
 	}
 
 	if stats := resp.GetUserStats(); stats != nil {
-		plan := stats.GetPlanType()
-		rows = append(rows, []string{"Plan", plan})
+		rows = append(rows, []string{"Plan", stats.GetPlanType()})
 
 		addUsageRow := func(label string, pct float64) {
 			bar := usageBarASCII(pct, 10)
@@ -90,13 +89,11 @@ func runRateLimit(cmd *cobra.Command, args []string) error {
 			rows = append(rows, []string{label, fmt.Sprintf("[%s] %.1f%%%s", bar, pct, alert)})
 		}
 
-		if plan == "free" {
-			addUsageRow("Hourly", stats.GetHourlyPercentage())
-		} else {
-			addUsageRow("Hourly", stats.GetHourlyPercentage())
-			addUsageRow("Daily", stats.GetDailyPercentage())
-			addUsageRow("Monthly", stats.GetMonthlyPercentage())
-		}
+		rpmPct := stats.GetRpmPercentage()
+		rpmBar := usageBarASCII(rpmPct, 10)
+		rows = append(rows, []string{"RPM", fmt.Sprintf("%d/%d [%s] %.1f%%", stats.GetRpmUsed(), stats.GetRpmLimit(), rpmBar, rpmPct)})
+		addUsageRow("Daily", stats.GetDailyPercentage())
+		addUsageRow("Monthly", stats.GetMonthlyPercentage())
 	}
 
 	if usage := resp.GetTokenUsage(); usage != nil {

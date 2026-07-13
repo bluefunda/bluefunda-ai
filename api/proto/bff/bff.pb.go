@@ -1819,9 +1819,11 @@ func (x *QueryRateLimitResponse) GetCircuitBreaker() *CircuitBreakerStats {
 type UserLimitStats struct {
 	state             protoimpl.MessageState `protogen:"open.v1"`
 	PlanType          string                 `protobuf:"bytes,1,opt,name=plan_type,json=planType,proto3" json:"plan_type,omitempty"`
-	HourlyPercentage  float64                `protobuf:"fixed64,2,opt,name=hourly_percentage,json=hourlyPercentage,proto3" json:"hourly_percentage,omitempty"`
 	DailyPercentage   float64                `protobuf:"fixed64,3,opt,name=daily_percentage,json=dailyPercentage,proto3" json:"daily_percentage,omitempty"`
 	MonthlyPercentage float64                `protobuf:"fixed64,4,opt,name=monthly_percentage,json=monthlyPercentage,proto3" json:"monthly_percentage,omitempty"`
+	RpmPercentage     float64                `protobuf:"fixed64,5,opt,name=rpm_percentage,json=rpmPercentage,proto3" json:"rpm_percentage,omitempty"`
+	RpmUsed           int32                  `protobuf:"varint,6,opt,name=rpm_used,json=rpmUsed,proto3" json:"rpm_used,omitempty"`
+	RpmLimit          int32                  `protobuf:"varint,7,opt,name=rpm_limit,json=rpmLimit,proto3" json:"rpm_limit,omitempty"`
 	unknownFields     protoimpl.UnknownFields
 	sizeCache         protoimpl.SizeCache
 }
@@ -1863,13 +1865,6 @@ func (x *UserLimitStats) GetPlanType() string {
 	return ""
 }
 
-func (x *UserLimitStats) GetHourlyPercentage() float64 {
-	if x != nil {
-		return x.HourlyPercentage
-	}
-	return 0
-}
-
 func (x *UserLimitStats) GetDailyPercentage() float64 {
 	if x != nil {
 		return x.DailyPercentage
@@ -1880,6 +1875,27 @@ func (x *UserLimitStats) GetDailyPercentage() float64 {
 func (x *UserLimitStats) GetMonthlyPercentage() float64 {
 	if x != nil {
 		return x.MonthlyPercentage
+	}
+	return 0
+}
+
+func (x *UserLimitStats) GetRpmPercentage() float64 {
+	if x != nil {
+		return x.RpmPercentage
+	}
+	return 0
+}
+
+func (x *UserLimitStats) GetRpmUsed() int32 {
+	if x != nil {
+		return x.RpmUsed
+	}
+	return 0
+}
+
+func (x *UserLimitStats) GetRpmLimit() int32 {
+	if x != nil {
+		return x.RpmLimit
 	}
 	return 0
 }
@@ -2576,12 +2592,14 @@ const file_bff_proto_rawDesc = "" +
 	"user_stats\x18\x05 \x01(\v2\x16.bff.v1.UserLimitStatsR\tuserStats\x123\n" +
 	"\vtoken_usage\x18\x06 \x01(\v2\x12.bff.v1.TokenUsageR\n" +
 	"tokenUsage\x12D\n" +
-	"\x0fcircuit_breaker\x18\a \x01(\v2\x1b.bff.v1.CircuitBreakerStatsR\x0ecircuitBreaker\"\xb4\x01\n" +
+	"\x0fcircuit_breaker\x18\a \x01(\v2\x1b.bff.v1.CircuitBreakerStatsR\x0ecircuitBreaker\"\xff\x01\n" +
 	"\x0eUserLimitStats\x12\x1b\n" +
-	"\tplan_type\x18\x01 \x01(\tR\bplanType\x12+\n" +
-	"\x11hourly_percentage\x18\x02 \x01(\x01R\x10hourlyPercentage\x12)\n" +
+	"\tplan_type\x18\x01 \x01(\tR\bplanType\x12)\n" +
 	"\x10daily_percentage\x18\x03 \x01(\x01R\x0fdailyPercentage\x12-\n" +
-	"\x12monthly_percentage\x18\x04 \x01(\x01R\x11monthlyPercentage\"w\n" +
+	"\x12monthly_percentage\x18\x04 \x01(\x01R\x11monthlyPercentage\x12%\n" +
+	"\x0erpm_percentage\x18\x05 \x01(\x01R\rrpmPercentage\x12\x19\n" +
+	"\brpm_used\x18\x06 \x01(\x05R\arpmUsed\x12\x1b\n" +
+	"\trpm_limit\x18\a \x01(\x05R\brpmLimitJ\x04\b\x02\x10\x03R\x11hourly_percentage\"w\n" +
 	"\n" +
 	"TokenUsage\x12!\n" +
 	"\finput_tokens\x18\x01 \x01(\x03R\vinputTokens\x12#\n" +

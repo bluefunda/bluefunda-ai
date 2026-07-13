@@ -153,7 +153,9 @@ type MCPInfo struct {
 // UsageInfo holds the data shown by /usage.
 type UsageInfo struct {
 	PlanType       string
-	HourlyPercent  float64
+	RPMUsed        int32
+	RPMLimit       int32
+	RPMPercent     float64
 	DailyPercent   float64
 	MonthlyPercent float64
 	InputTokens    int64
@@ -1237,14 +1239,10 @@ func formatUsageCompact(info *UsageInfo) string {
 		period string
 	}
 	var windows []window
-	if info.PlanType == "free" {
-		windows = []window{{info.HourlyPercent, "hourly"}}
-	} else {
-		windows = []window{
-			{info.HourlyPercent, "hourly"},
-			{info.DailyPercent, "daily"},
-			{info.MonthlyPercent, "monthly"},
-		}
+	windows = []window{
+		{info.RPMPercent, "rpm"},
+		{info.DailyPercent, "daily"},
+		{info.MonthlyPercent, "monthly"},
 	}
 	best := window{}
 	for _, w := range windows {
@@ -1290,13 +1288,14 @@ func formatUsage(info *UsageInfo) string {
 			label, usageBar(pct, 10), displayPct, usageAlert(pct)))
 	}
 
-	if info.PlanType == "free" {
-		addRow("Hourly", info.HourlyPercent)
-	} else {
-		addRow("Hourly", info.HourlyPercent)
-		addRow("Daily", info.DailyPercent)
-		addRow("Monthly", info.MonthlyPercent)
+	rpmDisplayPct := info.RPMPercent
+	if rpmDisplayPct > 100 {
+		rpmDisplayPct = 100
 	}
+	lines = append(lines, fmt.Sprintf("  RPM      %d/%d [%s] %5.1f%%%s",
+		info.RPMUsed, info.RPMLimit, usageBar(info.RPMPercent, 10), rpmDisplayPct, usageAlert(info.RPMPercent)))
+	addRow("Daily", info.DailyPercent)
+	addRow("Monthly", info.MonthlyPercent)
 
 	if info.RetryAfter > 0 {
 		lines = append(lines, fmt.Sprintf("  ✗ Rate limited — retry in %ds", info.RetryAfter))

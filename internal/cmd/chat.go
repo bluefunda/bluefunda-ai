@@ -311,7 +311,9 @@ func runChatSession(chatID, initialPrompt, model, mcpServer string) error {
 			info := &tui.UsageInfo{}
 			if s := resp.GetUserStats(); s != nil {
 				info.PlanType = s.GetPlanType()
-				info.HourlyPercent = s.GetHourlyPercentage()
+				info.RPMUsed = s.GetRpmUsed()
+				info.RPMLimit = s.GetRpmLimit()
+				info.RPMPercent = s.GetRpmPercentage()
 				info.DailyPercent = s.GetDailyPercentage()
 				info.MonthlyPercent = s.GetMonthlyPercentage()
 			}

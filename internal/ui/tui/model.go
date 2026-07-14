@@ -1238,8 +1238,7 @@ func formatUsageCompact(info *UsageInfo) string {
 		pct    float64
 		period string
 	}
-	var windows []window
-	windows = []window{
+	windows := []window{
 		{info.RPMPercent, "rpm"},
 		{info.DailyPercent, "daily"},
 		{info.MonthlyPercent, "monthly"},

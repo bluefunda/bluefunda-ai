@@ -311,7 +311,9 @@ func runChatSession(chatID, initialPrompt, model, mcpServer string) error {
 			info := &tui.UsageInfo{}
 			if s := resp.GetUserStats(); s != nil {
 				info.PlanType = s.GetPlanType()
-				info.HourlyPercent = s.GetHourlyPercentage()
+				info.RPMUsed = s.GetRpmUsed()
+				info.RPMLimit = s.GetRpmLimit()
+				info.RPMPercent = s.GetRpmPercentage()
 				info.DailyPercent = s.GetDailyPercentage()
 				info.MonthlyPercent = s.GetMonthlyPercentage()
 			}
@@ -319,6 +321,11 @@ func runChatSession(chatID, initialPrompt, model, mcpServer string) error {
 				info.InputTokens = int64(u.GetInputTokens())
 				info.OutputTokens = int64(u.GetOutputTokens())
 				info.TotalTokens = int64(u.GetTotalTokens())
+			}
+			if resetAt := resp.GetResetAt(); resetAt > 0 {
+				if secs := int(time.Until(time.Unix(resetAt, 0)).Seconds()); secs > 0 {
+					info.RetryAfter = secs
+				}
 			}
 			return info, nil
 		},

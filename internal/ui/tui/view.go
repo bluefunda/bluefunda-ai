@@ -22,7 +22,9 @@ func (m Model) View() string {
 	b.WriteString(m.renderHeader())
 	b.WriteByte('\n')
 
-	// Viewport renders the full conversation with proper scrollback.
+	// Use the viewport's own renderer so that the scroll position (YOffset)
+	// set by scrollToMessageStart / GotoBottom is actually respected.
+	// Content is kept current via refreshViewport → viewport.SetContent.
 	b.WriteString(m.viewport.View())
 	b.WriteByte('\n')
 
@@ -78,8 +80,10 @@ func (m Model) renderHeader() string {
 	}
 
 	right := th.ToolDim.Render(m.cfg.ChatID[:8])
-	// Show cumulative prompt token count once we have data.
-	if m.totalPromptTokens > 0 {
+	// Show live usage % while streaming, or cumulative prompt token count when idle.
+	if m.streaming && m.liveUsagePct > 0 {
+		right = th.ToolDim.Render(fmt.Sprintf("%.0f%% used  ·  ", m.liveUsagePct)) + right
+	} else if m.totalPromptTokens > 0 {
 		right = th.ToolDim.Render(formatTokenCount(m.totalPromptTokens) + "  ·  ") + right
 	}
 

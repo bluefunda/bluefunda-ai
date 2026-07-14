@@ -10,6 +10,25 @@ import (
 	"github.com/bluefunda/bluefunda-ai/internal/ui"
 )
 
+func usageBarASCII(pct float64, width int) string {
+	if pct < 0 {
+		pct = 0
+	}
+	if pct > 100 {
+		pct = 100
+	}
+	filled := int(pct / 100 * float64(width))
+	bar := ""
+	for i := 0; i < width; i++ {
+		if i < filled {
+			bar += "#"
+		} else {
+			bar += "-"
+		}
+	}
+	return bar
+}
+
 var rateLimitCmd = &cobra.Command{
 	Use:     "rate-limit",
 	Aliases: []string{"rl"},
@@ -49,12 +68,32 @@ func runRateLimit(cmd *cobra.Command, args []string) error {
 	}
 
 	if stats := resp.GetUserStats(); stats != nil {
-		rows = append(rows,
-			[]string{"Plan", stats.GetPlanType()},
-			[]string{"Hourly Usage", fmt.Sprintf("%.1f%%", stats.GetHourlyPercentage())},
-			[]string{"Daily Usage", fmt.Sprintf("%.1f%%", stats.GetDailyPercentage())},
-			[]string{"Monthly Usage", fmt.Sprintf("%.1f%%", stats.GetMonthlyPercentage())},
-		)
+		rows = append(rows, []string{"Plan", stats.GetPlanType()})
+
+		addUsageRow := func(label string, pct float64) {
+			bar := usageBarASCII(pct, 10)
+			alert := ""
+			switch {
+			case pct >= 100:
+				pct = 100
+				alert = " ✗"
+			case pct >= 95:
+				alert = " ⚠ 95%"
+			case pct >= 90:
+				alert = " ⚠ 90%"
+			case pct >= 75:
+				alert = " ⚠ 75%"
+			case pct >= 50:
+				alert = " ◆ 50%"
+			}
+			rows = append(rows, []string{label, fmt.Sprintf("[%s] %.1f%%%s", bar, pct, alert)})
+		}
+
+		rpmPct := stats.GetRpmPercentage()
+		rpmBar := usageBarASCII(rpmPct, 10)
+		rows = append(rows, []string{"RPM", fmt.Sprintf("%d/%d [%s] %.1f%%", stats.GetRpmUsed(), stats.GetRpmLimit(), rpmBar, rpmPct)})
+		addUsageRow("Daily", stats.GetDailyPercentage())
+		addUsageRow("Monthly", stats.GetMonthlyPercentage())
 	}
 
 	if usage := resp.GetTokenUsage(); usage != nil {

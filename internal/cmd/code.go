@@ -378,6 +378,34 @@ func runAgenticSession(args []string) error {
 		InitialPrompt:  initialPrompt,
 		RepoName:       gitRepoName(),
 		CustomCommands: loadCustomSlashCommands("."),
+		UsageFn: func() (*tui.UsageInfo, error) {
+			ctx, cancel := caigrpc.ContextWithTimeout()
+			defer cancel()
+			resp, err := conn.Client.QueryRateLimit(ctx, &pb.QueryRateLimitRequest{})
+			if err != nil {
+				return nil, err
+			}
+			info := &tui.UsageInfo{}
+			if s := resp.GetUserStats(); s != nil {
+				info.PlanType = s.GetPlanType()
+				info.RPMUsed = s.GetRpmUsed()
+				info.RPMLimit = s.GetRpmLimit()
+				info.RPMPercent = s.GetRpmPercentage()
+				info.DailyPercent = s.GetDailyPercentage()
+				info.MonthlyPercent = s.GetMonthlyPercentage()
+			}
+			if u := resp.GetTokenUsage(); u != nil {
+				info.InputTokens = int64(u.GetInputTokens())
+				info.OutputTokens = int64(u.GetOutputTokens())
+				info.TotalTokens = int64(u.GetTotalTokens())
+			}
+			if resetAt := resp.GetResetAt(); resetAt > 0 {
+				if secs := int(time.Until(time.Unix(resetAt, 0)).Seconds()); secs > 0 {
+					info.RetryAfter = secs
+				}
+			}
+			return info, nil
+		},
 		ListModelsFn: func() ([]tui.ModelInfo, error) {
 			ctx, cancel := caigrpc.ContextWithTimeout()
 			defer cancel()
@@ -883,6 +911,35 @@ func pumpCodeStream(
 				PromptTokens:     ev.GetUsagePromptTokens(),
 				CompletionTokens: ev.GetUsageCompletionTokens(),
 			}, nil
+
+		case "usage_warning":
+			// Show as a non-blocking system notice, not as inline assistant text.
+			msg := ev.GetContent()
+			if msg == "" {
+				msg = ev.GetError()
+			}
+			if msg != "" {
+				ch <- tui.StreamEvent{Kind: "usage_warning", ErrMsg: msg}
+			}
+
+		case "rate_limited":
+			// Rate limit hit — forward as a styled system notice so the TUI can
+			// show "⚠ You've reached your limit" instead of a blank response.
+			msg := ev.GetContent()
+			if msg == "" {
+				msg = "You've reached your usage limit."
+			}
+			ch <- tui.StreamEvent{Kind: "rate_limited", ErrMsg: msg}
+
+		case "live_usage_pct":
+			// Live usage tick — forward so the header bar updates during streaming.
+			content := ev.GetContent()
+			if content != "" {
+				parts := strings.SplitN(content, "|", 2)
+				if pct, err := strconv.ParseFloat(parts[0], 64); err == nil {
+					ch <- tui.StreamEvent{Kind: "live_usage_pct", LivePct: pct}
+				}
+			}
 
 		case "error", "stream_error":
 			return toolCalls, iterationUsage{}, fmt.Errorf("%s", ev.GetError())

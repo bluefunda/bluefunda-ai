@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.36.0](https://github.com/bluefunda/bluefunda-ai/compare/v1.35.3...v1.36.0) (2026-07-14)
+
+
+### Features
+
+* replace hourly usage row with RPM usage in rate-limit command and chat overlay ([#226](https://github.com/bluefunda/bluefunda-ai/issues/226)) ([cf7f002](https://github.com/bluefunda/bluefunda-ai/commit/cf7f002319d982f1d93170cd23c7cd2ae1e7b7fc))
+
 ## [1.35.3](https://github.com/bluefunda/bluefunda-ai/compare/v1.35.2...v1.35.3) (2026-07-08)
 
 

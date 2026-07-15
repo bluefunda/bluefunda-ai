@@ -1258,10 +1258,23 @@ func formatUsageCompact(info *UsageInfo) string {
 	}
 	suffix := usageAlert(best.pct)
 	if best.pct >= 100 && info.RetryAfter > 0 {
-		if mins := info.RetryAfter / 60; mins > 0 {
-			suffix = fmt.Sprintf("  ✗ resets in %dm", mins)
-		} else {
-			suffix = fmt.Sprintf("  ✗ resets in %ds", info.RetryAfter)
+		s := info.RetryAfter
+		d := s / 86400
+		h := (s % 86400) / 3600
+		m := (s % 3600) / 60
+		switch {
+		case d > 0 && h > 0:
+			suffix = fmt.Sprintf("  ✗ resets in %dd %dh", d, h)
+		case d > 0:
+			suffix = fmt.Sprintf("  ✗ resets in %dd", d)
+		case h > 0 && m > 0:
+			suffix = fmt.Sprintf("  ✗ resets in %dh %dm", h, m)
+		case h > 0:
+			suffix = fmt.Sprintf("  ✗ resets in %dh", h)
+		case m > 0:
+			suffix = fmt.Sprintf("  ✗ resets in %dm", m)
+		default:
+			suffix = fmt.Sprintf("  ✗ resets in %ds", s)
 		}
 	}
 	return fmt.Sprintf("  [%s] %.0f%% %s%s", usageBar(best.pct, 10), displayPct, best.period, suffix)
@@ -1297,7 +1310,26 @@ func formatUsage(info *UsageInfo) string {
 	addRow("Monthly", info.MonthlyPercent)
 
 	if info.RetryAfter > 0 {
-		lines = append(lines, fmt.Sprintf("  ✗ Rate limited — retry in %ds", info.RetryAfter))
+		s := info.RetryAfter
+		d := s / 86400
+		h := (s % 86400) / 3600
+		m := (s % 3600) / 60
+		var retryStr string
+		switch {
+		case d > 0 && h > 0:
+			retryStr = fmt.Sprintf("%dd %dh", d, h)
+		case d > 0:
+			retryStr = fmt.Sprintf("%dd", d)
+		case h > 0 && m > 0:
+			retryStr = fmt.Sprintf("%dh %dm", h, m)
+		case h > 0:
+			retryStr = fmt.Sprintf("%dh", h)
+		case m > 0:
+			retryStr = fmt.Sprintf("%dm", m)
+		default:
+			retryStr = fmt.Sprintf("%ds", s)
+		}
+		lines = append(lines, fmt.Sprintf("  ✗ Rate limited — retry in %s", retryStr))
 	}
 
 	if info.TotalTokens > 0 {

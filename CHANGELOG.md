@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.36.1](https://github.com/bluefunda/bluefunda-ai/compare/v1.36.0...v1.36.1) (2026-07-15)
+
+
+### Bug Fixes
+
+* **rate-limit:** show days in TUI reset time (e.g. 16d 14h not 398h) ([#228](https://github.com/bluefunda/bluefunda-ai/issues/228)) ([afd7d01](https://github.com/bluefunda/bluefunda-ai/commit/afd7d011e1084f31a2829febbf7f2d48d0793b3c))
+
 ## [1.36.0](https://github.com/bluefunda/bluefunda-ai/compare/v1.35.3...v1.36.0) (2026-07-14)
 
 

@@ -17,6 +17,7 @@ import (
 	pb "github.com/bluefunda/bluefunda-ai/api/proto/bff"
 	"github.com/bluefunda/bluefunda-ai/internal/config"
 	caigrpc "github.com/bluefunda/bluefunda-ai/internal/grpc"
+	"github.com/bluefunda/bluefunda-ai/internal/memory"
 	"github.com/bluefunda/bluefunda-ai/internal/plugins"
 	"github.com/bluefunda/bluefunda-ai/internal/session"
 )
@@ -152,6 +153,20 @@ func runDoctor(cmd *cobra.Command, args []string) error {
 	}
 	if !hasContext {
 		checks = append(checks, checkResult{"Project context", "info", "no .bai/context.md or AGENTS.md found — create one to give the agent project context"})
+	}
+
+	// 11b. Persistent memory (#144)
+	if entries, err := memory.New(cwd).List(); err != nil {
+		checks = append(checks, checkResult{"Memory", "warn", err.Error()})
+		warnings++
+	} else if len(entries) == 0 {
+		checks = append(checks, checkResult{"Memory", "info", "none loaded — run `bai memory list` or see docs for memory_write"})
+	} else {
+		noun := "entries"
+		if len(entries) == 1 {
+			noun = "entry"
+		}
+		checks = append(checks, checkResult{"Memory", "ok", fmt.Sprintf("%d %s loaded — run `bai memory list` to view", len(entries), noun)})
 	}
 
 	// 12. Hooks

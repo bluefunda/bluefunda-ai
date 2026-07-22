@@ -195,6 +195,57 @@ func LocalToolSchemas() (string, error) {
 		{
 			Type: "function",
 			Function: FunctionDef{
+				Name:        "memory_read",
+				Description: "Read a persistent memory note by key. Memory is durable context carried across sessions (project-level .bai/memory/<key>.md, user-level ~/.bai/memory/<key>.md), not durable authority — it can be stale or wrong, so weigh it accordingly against the current request.",
+				Parameters: json.RawMessage(`{
+					"type": "object",
+					"properties": {
+						"key": {"type": "string", "description": "Memory key (filename without extension)"}
+					},
+					"required": ["key"]
+				}`),
+			},
+		},
+		{
+			Type: "function",
+			Function: FunctionDef{
+				Name:        "memory_list",
+				Description: "List all persistent memory keys (project and user level) with a one-line preview of each. Use memory_read to get an entry's full content.",
+				Parameters:  json.RawMessage(`{"type": "object", "properties": {}}`),
+			},
+		},
+		{
+			Type: "function",
+			Function: FunctionDef{
+				Name:        "memory_write",
+				Description: "Create or overwrite a project-level persistent memory note at .bai/memory/<key>.md. Use for facts worth recalling in future sessions (architecture, conventions, known bugs) — not for task-scoped or ephemeral details.",
+				Parameters: json.RawMessage(`{
+					"type": "object",
+					"properties": {
+						"key":     {"type": "string", "description": "Memory key (filename without extension, no path separators)"},
+						"content": {"type": "string", "description": "Full Markdown content to store"}
+					},
+					"required": ["key", "content"]
+				}`),
+			},
+		},
+		{
+			Type: "function",
+			Function: FunctionDef{
+				Name:        "memory_delete",
+				Description: "Delete a project-level persistent memory note at .bai/memory/<key>.md. Does not affect user-level memory.",
+				Parameters: json.RawMessage(`{
+					"type": "object",
+					"properties": {
+						"key": {"type": "string", "description": "Memory key (filename without extension)"}
+					},
+					"required": ["key"]
+				}`),
+			},
+		},
+		{
+			Type: "function",
+			Function: FunctionDef{
 				Name:        "task",
 				Description: "Spawn a headless bai subagent to handle a self-contained subtask and return its output. Use to fan out independent work in parallel or to delegate a well-scoped chunk of work. The child runs fully autonomously (--auto) and its output is returned as the result. Budget controls are NOT forwarded to children to avoid double-counting.",
 				Parameters: json.RawMessage(`{
@@ -236,7 +287,7 @@ func MergeSchemas(base string, extra []ToolSchema) (string, error) {
 // NeedsApproval returns true for tools that modify state and require user confirmation.
 func NeedsApproval(toolName string) bool {
 	switch toolName {
-	case "write_file", "bash", "task":
+	case "write_file", "bash", "task", "memory_write", "memory_delete":
 		return true
 	}
 	return false

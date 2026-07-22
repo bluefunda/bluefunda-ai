@@ -280,10 +280,13 @@ func runAgenticSession(args []string) error {
 	hooksDir := hooks.FindHooksDir(".")
 	hookRunner := hooks.New(hooksDir, sessionID, workDir)
 
-	// --- History: context + optional resume (#82) ---
+	// --- History: context + memory + optional resume (#82, #144) ---
 	var history []codeMessage
 	if ctx := loadContextFiles("."); ctx != "" {
 		history = append(history, codeMessage{Role: "system", Content: ctx})
+	}
+	if idx := loadMemoryIndex("."); idx != "" {
+		history = append(history, codeMessage{Role: "system", Content: idx})
 	}
 	if codeResume != "" || codeContinue {
 		if msgs, err := session.Load(sessPath); err == nil {

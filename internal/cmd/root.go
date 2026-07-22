@@ -140,6 +140,7 @@ func init() {
 		codeCmd,
 		configCmd,
 		doctorCmd,
+		memoryCmd,
 		mcpCmd,
 		updateCmd,
 		versionCmd,

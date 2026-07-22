@@ -695,6 +695,44 @@ func TestLoadContextFiles_Empty(t *testing.T) {
 
 // --- FindRecentSession Tests ---
 
+// --- LoadMemoryIndex Tests ---
+
+func TestLoadMemoryIndex_Empty(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("HOME", t.TempDir())
+
+	got := loadMemoryIndex(dir)
+	if got != "" {
+		t.Errorf("expected empty string with no memory entries, got %q", got)
+	}
+}
+
+func TestLoadMemoryIndex_ListsKeyAndPreviewNotFullContent(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("HOME", t.TempDir())
+
+	memDir := filepath.Join(dir, ".bai", "memory")
+	if err := os.MkdirAll(memDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	secondLine := "this stays out of the bounded index"
+	content := "Known bug: race in the compaction path.\n" + secondLine
+	if err := os.WriteFile(filepath.Join(memDir, "known-bugs.md"), []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	got := loadMemoryIndex(dir)
+	if !strings.Contains(got, "known-bugs") {
+		t.Errorf("loadMemoryIndex = %q, want it to mention key 'known-bugs'", got)
+	}
+	if !strings.Contains(got, "Known bug: race in the compaction path.") {
+		t.Errorf("loadMemoryIndex = %q, want the first-line preview present", got)
+	}
+	if strings.Contains(got, secondLine) {
+		t.Errorf("loadMemoryIndex = %q, want full content withheld from the bounded index", got)
+	}
+}
+
 func TestFindRecentSession_NoChats(t *testing.T) {
 	// Use a testBFF that returns no chats.
 	srv, conn := startTestServerRaw(t, &emptyBFF{})
@@ -707,7 +745,9 @@ func TestFindRecentSession_NoChats(t *testing.T) {
 }
 
 // emptyBFF returns no chats.
-type emptyBFF struct{ pb.UnimplementedBFFServiceServer }
+type emptyBFF struct {
+	pb.UnimplementedBFFServiceServer
+}
 
 func (e *emptyBFF) GetChatIds(_ context.Context, _ *pb.GetChatIdsRequest) (*pb.GetChatIdsResponse, error) {
 	return &pb.GetChatIdsResponse{}, nil
@@ -871,7 +911,9 @@ func TestChatStopRPC_Failure(t *testing.T) {
 	}
 }
 
-type failStopBFF struct{ pb.UnimplementedBFFServiceServer }
+type failStopBFF struct {
+	pb.UnimplementedBFFServiceServer
+}
 
 func (f *failStopBFF) StopChat(_ context.Context, _ *pb.StopChatRequest) (*pb.StopChatResponse, error) {
 	return &pb.StopChatResponse{Success: false}, nil

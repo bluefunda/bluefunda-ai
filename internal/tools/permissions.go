@@ -107,6 +107,8 @@ func extractPrimaryArg(toolName, argumentsJSON string) string {
 		return strArg(args, "url")
 	case "web_search":
 		return strArg(args, "query")
+	case "memory_read", "memory_write", "memory_delete":
+		return strArg(args, "key")
 	case "search_content":
 		return strArg(args, "pattern")
 	default:

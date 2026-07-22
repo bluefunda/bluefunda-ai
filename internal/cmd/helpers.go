@@ -10,6 +10,7 @@ import (
 	"github.com/bluefunda/bluefunda-ai/internal/auth"
 	"github.com/bluefunda/bluefunda-ai/internal/config"
 	caigrpc "github.com/bluefunda/bluefunda-ai/internal/grpc"
+	"github.com/bluefunda/bluefunda-ai/internal/memory"
 	"github.com/bluefunda/bluefunda-ai/internal/ui"
 )
 
@@ -31,6 +32,18 @@ func loadContextFiles(cwd string) string {
 	}
 
 	return strings.Join(parts, "\n\n---\n\n")
+}
+
+// loadMemoryIndex returns the bounded persistent-memory index (see
+// internal/memory) for cwd, or "" if there are no memory entries or none can
+// be read. This is deliberately just key + one-line preview per entry, not
+// full file contents — see memory.Manager.Index for why.
+func loadMemoryIndex(cwd string) string {
+	idx, err := memory.New(cwd).Index()
+	if err != nil {
+		return ""
+	}
+	return idx
 }
 
 // findContextFile walks upward from dir until a git root, returning the contents

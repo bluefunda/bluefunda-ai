@@ -82,6 +82,18 @@ func Execute(name, argumentsJSON string) (string, error) {
 	case "bash":
 		command, _ := args["command"].(string)
 		return Bash(command)
+	case "memory_read":
+		key, _ := args["key"].(string)
+		return MemoryRead(key)
+	case "memory_list":
+		return MemoryList()
+	case "memory_write":
+		key, _ := args["key"].(string)
+		content, _ := args["content"].(string)
+		return MemoryWrite(key, content)
+	case "memory_delete":
+		key, _ := args["key"].(string)
+		return MemoryDelete(key)
 	case "task":
 		prompt, _ := args["prompt"].(string)
 		workDir, _ := args["working_directory"].(string)

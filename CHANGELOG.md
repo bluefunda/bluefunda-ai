@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.37.0](https://github.com/bluefunda/bluefunda-ai/compare/v1.36.1...v1.37.0) (2026-07-22)
+
+
+### Features
+
+* **memory:** persistent project and user memory ([#231](https://github.com/bluefunda/bluefunda-ai/issues/231)) ([fc1857f](https://github.com/bluefunda/bluefunda-ai/commit/fc1857f12a846d3cdbf60334645bcf8f8781c012))
+
 ## [1.36.1](https://github.com/bluefunda/bluefunda-ai/compare/v1.36.0...v1.36.1) (2026-07-15)
 
 

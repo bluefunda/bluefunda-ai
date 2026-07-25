@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.38.0](https://github.com/bluefunda/bluefunda-ai/compare/v1.37.0...v1.38.0) (2026-07-25)
+
+
+### Features
+
+* **tips:** local interest-signal collection (Phase 1) ([#238](https://github.com/bluefunda/bluefunda-ai/issues/238)) ([715429c](https://github.com/bluefunda/bluefunda-ai/commit/715429c48934453d7e8a83e38ec8f1447bddd71c))
+
 ## [1.37.0](https://github.com/bluefunda/bluefunda-ai/compare/v1.36.1...v1.37.0) (2026-07-22)
 
 

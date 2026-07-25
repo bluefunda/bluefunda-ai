@@ -12,6 +12,13 @@ func TestMaybeShowTip_NeverWritesStdout(t *testing.T) {
 	simulateInteractiveTerminal(t)
 	clearSilenceEnv(t)
 
+	// Seed the invocation budget so this call actually reaches the
+	// selection/render path instead of exiting early on the anti-annoyance
+	// gate (Phase 4) — this test needs the real print path exercised.
+	if err := withAnnoyanceLock(func(s *AnnoyanceState) { s.Invocations = invocationBudget }); err != nil {
+		t.Fatalf("seed budget: %v", err)
+	}
+
 	fetchDone := make(chan struct{})
 	orig := fetchLatestManifestFn
 	fetchLatestManifestFn = func() ([]byte, []byte, error) {
@@ -47,7 +54,10 @@ func TestMaybeShowTip_NeverWritesStdout(t *testing.T) {
 // BenchmarkMaybeShowTip measures the steady-state per-invocation cost of
 // the tip hook — the acceptance target is <2ms added to a command like
 // `bai --version`. The first call primes the 24h refresh marker so
-// subsequent iterations reflect the common case (no fetch attempted).
+// subsequent iterations reflect the common case (no fetch attempted). Since
+// Phase 4's anti-annoyance budget denies most invocations outright (by
+// design — at most 1 in 20), this also measures the actual common case:
+// the cheap early-exit path, not the full selection/render pipeline.
 func BenchmarkMaybeShowTip(b *testing.B) {
 	home := b.TempDir()
 	b.Setenv("HOME", home)

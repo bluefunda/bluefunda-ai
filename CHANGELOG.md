@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.40.0](https://github.com/bluefunda/bluefunda-ai/compare/v1.39.0...v1.40.0) (2026-07-25)
+
+
+### Features
+
+* **tips:** selector, silence detection, and PostRun hook (Phase 3) ([#242](https://github.com/bluefunda/bluefunda-ai/issues/242)) ([572865e](https://github.com/bluefunda/bluefunda-ai/commit/572865eeb87c4e51134066d43a45a01a6309d4ad))
+
 ## [1.39.0](https://github.com/bluefunda/bluefunda-ai/compare/v1.38.0...v1.39.0) (2026-07-25)
 
 

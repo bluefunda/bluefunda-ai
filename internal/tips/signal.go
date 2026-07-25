@@ -102,15 +102,25 @@ func bucket(key string) int {
 	return int(h.Sum32() % interestVectorDim)
 }
 
-// statePath returns ~/.bai/tips/signal.json, creating the containing
-// directory if needed.
-func statePath() (string, error) {
+// tipsDir returns ~/.bai/tips, creating it if needed. Shared by signal.go
+// (signal.json) and catalog.go (catalog.json / catalog.json.sig).
+func tipsDir() (string, error) {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return "", err
 	}
 	dir := filepath.Join(home, ".bai", "tips")
 	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return "", err
+	}
+	return dir, nil
+}
+
+// statePath returns ~/.bai/tips/signal.json, creating the containing
+// directory if needed.
+func statePath() (string, error) {
+	dir, err := tipsDir()
+	if err != nil {
 		return "", err
 	}
 	return filepath.Join(dir, "signal.json"), nil
@@ -208,9 +218,19 @@ func loadState(path string) (State, error) {
 	return s, nil
 }
 
-// saveState writes state to path atomically (temp file + rename), mirroring
+// saveState writes state to path atomically, mirroring
 // internal/session/store.go's Save.
 func saveState(path string, state State) error {
+	b, err := json.Marshal(state)
+	if err != nil {
+		return err
+	}
+	return atomicWriteFile(path, b)
+}
+
+// atomicWriteFile writes data to path via temp file + rename, so readers
+// never observe a partial write. Shared by signal.go and catalog.go.
+func atomicWriteFile(path string, data []byte) error {
 	dir := filepath.Dir(path)
 	tmp, err := os.CreateTemp(dir, ".bai-tips-*")
 	if err != nil {
@@ -219,7 +239,7 @@ func saveState(path string, state State) error {
 	tmpName := tmp.Name()
 
 	w := bufio.NewWriter(tmp)
-	if err := json.NewEncoder(w).Encode(state); err != nil {
+	if _, err := w.Write(data); err != nil {
 		_ = tmp.Close()
 		_ = os.Remove(tmpName)
 		return err

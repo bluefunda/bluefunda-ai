@@ -5,6 +5,7 @@ go 1.26.5
 require (
 	github.com/alecthomas/chroma/v2 v2.27.0
 	github.com/bluefunda/go-update v0.1.1
+	github.com/bluefunda/tipcatalog v1.0.0
 	github.com/charmbracelet/bubbles v1.0.0
 	github.com/charmbracelet/bubbletea v1.3.10
 	github.com/charmbracelet/glamour v1.0.0

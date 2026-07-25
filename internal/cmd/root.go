@@ -3,10 +3,13 @@ package cmd
 import (
 	"fmt"
 	"os"
+	"time"
 
 	"github.com/spf13/cobra"
+	"github.com/spf13/pflag"
 
 	"github.com/bluefunda/bluefunda-ai/internal/config"
+	"github.com/bluefunda/bluefunda-ai/internal/tips"
 	"github.com/bluefunda/bluefunda-ai/internal/ui"
 )
 
@@ -32,6 +35,12 @@ var (
 	rootNoTools          bool
 	rootOutFormat        string
 	rootWorktree         bool
+
+	// Captured by PersistentPostRunE for Execute's post-run signal
+	// recording — PersistentPostRunE sees the actually-invoked (leaf)
+	// command, which a bare rootCmd.Execute() error does not expose.
+	invokedCmdPath string
+	invokedFlags   []string
 )
 
 // Version is set at build time via -ldflags.
@@ -130,6 +139,14 @@ func init() {
 		}
 		return nil
 	}
+	rootCmd.PersistentPostRunE = func(cmd *cobra.Command, args []string) error {
+		invokedCmdPath = cmd.CommandPath()
+		cmd.Flags().Visit(func(f *pflag.Flag) { invokedFlags = append(invokedFlags, f.Name) })
+
+		cfg := loadConfig()
+		tips.MaybeShowTip(outputFormat(cfg) == ui.FormatQuiet)
+		return nil
+	}
 
 	rootCmd.AddCommand(
 		// Visible commands
@@ -157,9 +174,30 @@ func init() {
 	)
 }
 
-// Execute runs the root command.
+// Execute runs the root command, then records this invocation's signal for
+// the Contextual Tip Engine. Recording happens here rather than in
+// PersistentPostRunE because only Execute's return value reflects whether
+// the invoked command actually failed.
 func Execute() error {
-	return rootCmd.Execute()
+	start := time.Now()
+	err := rootCmd.Execute()
+
+	exitCode := 0
+	if err != nil {
+		exitCode = 1
+	}
+	cmdPath := invokedCmdPath
+	if cmdPath == "" {
+		cmdPath = rootCmd.Name()
+	}
+	_ = tips.Record(tips.Invocation{
+		Command:        cmdPath,
+		Flags:          invokedFlags,
+		ExitCode:       exitCode,
+		DurationBucket: tips.DurationBucket(time.Since(start)),
+	})
+
+	return err
 }
 
 // loadConfig loads the config and applies any flag overrides.

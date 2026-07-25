@@ -26,15 +26,6 @@ func failNetworkFetch(t *testing.T) {
 	t.Cleanup(func() { fetchLatestManifestFn = orig })
 }
 
-func hasSurface(tp tipcatalog.Tip, surface string) bool {
-	for _, s := range tp.Surfaces {
-		if s == surface {
-			return true
-		}
-	}
-	return false
-}
-
 func TestCLITips_FallsBackToEmbeddedWithNoCache(t *testing.T) {
 	withHome(t)
 	failNetworkFetch(t)

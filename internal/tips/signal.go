@@ -127,8 +127,9 @@ func statePath() (string, error) {
 }
 
 // Record loads the persisted state, applies decay, folds in inv, trims
-// history to maxHistory, and atomically persists the result. Safe for
-// concurrent use across processes via a file lock.
+// history to maxHistory, and atomically persists the result. inv.Timestamp
+// is overwritten with the current time regardless of what the caller set.
+// Safe for concurrent use across processes via a file lock.
 func Record(inv Invocation) error {
 	path, err := statePath()
 	if err != nil {
@@ -147,6 +148,7 @@ func Record(inv Invocation) error {
 	}
 
 	t := now()
+	inv.Timestamp = t
 	state.decay(t)
 	state.apply(inv)
 	if len(state.History) > maxHistory {

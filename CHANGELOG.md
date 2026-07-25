@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.39.0](https://github.com/bluefunda/bluefunda-ai/compare/v1.38.0...v1.39.0) (2026-07-25)
+
+
+### Features
+
+* **tips:** catalog client with signed-manifest fetch (Phase 2) ([#240](https://github.com/bluefunda/bluefunda-ai/issues/240)) ([2d2c319](https://github.com/bluefunda/bluefunda-ai/commit/2d2c319f61ff56ad9e92e985d9b5fc0088715dec))
+
 ## [1.38.0](https://github.com/bluefunda/bluefunda-ai/compare/v1.37.0...v1.38.0) (2026-07-25)
 
 

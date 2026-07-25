@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.41.0](https://github.com/bluefunda/bluefunda-ai/compare/v1.40.0...v1.41.0) (2026-07-25)
+
+
+### Features
+
+* **tips:** anti-annoyance budget, backoff, and retirement (Phase 4) ([#244](https://github.com/bluefunda/bluefunda-ai/issues/244)) ([68af890](https://github.com/bluefunda/bluefunda-ai/commit/68af8906dcbf7bf531a720c5edb1ac213e6cbdde))
+
 ## [1.40.0](https://github.com/bluefunda/bluefunda-ai/compare/v1.39.0...v1.40.0) (2026-07-25)
 
 

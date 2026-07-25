@@ -159,6 +159,7 @@ func init() {
 		doctorCmd,
 		memoryCmd,
 		mcpCmd,
+		tipsCmd,
 		updateCmd,
 		versionCmd,
 		completionCmd,

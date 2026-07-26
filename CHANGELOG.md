@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.42.0](https://github.com/bluefunda/bluefunda-ai/compare/v1.41.0...v1.42.0) (2026-07-26)
+
+
+### Features
+
+* **tips:** replace hash-bucketed interest vector with real topic counting ([#246](https://github.com/bluefunda/bluefunda-ai/issues/246)) ([60e6ec5](https://github.com/bluefunda/bluefunda-ai/commit/60e6ec5ea3c659faf97d5fd317d4316230d7ec60))
+
 ## [1.41.0](https://github.com/bluefunda/bluefunda-ai/compare/v1.40.0...v1.41.0) (2026-07-25)
 
 

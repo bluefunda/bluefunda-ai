@@ -124,8 +124,8 @@ func TestEligible_CooldownDefaultsWhenUnset(t *testing.T) {
 }
 
 func TestCosineSimilarity_IdenticalVectorsIsOne(t *testing.T) {
-	var v [interestVectorDim]float64
-	b := make([]float64, interestVectorDim)
+	v := make([]float64, tipcatalog.EmbeddingDim)
+	b := make([]float64, tipcatalog.EmbeddingDim)
 	for i := range v {
 		v[i] = float64(i + 1)
 		b[i] = float64(i + 1)
@@ -137,8 +137,8 @@ func TestCosineSimilarity_IdenticalVectorsIsOne(t *testing.T) {
 }
 
 func TestCosineSimilarity_ZeroVectorIsZero(t *testing.T) {
-	var v [interestVectorDim]float64
-	b := make([]float64, interestVectorDim)
+	v := make([]float64, tipcatalog.EmbeddingDim)
+	b := make([]float64, tipcatalog.EmbeddingDim)
 	b[0] = 1
 	if got := cosineSimilarity(v, b); got != 0 {
 		t.Fatalf("expected 0 for a zero vector, got %v", got)
@@ -148,23 +148,23 @@ func TestCosineSimilarity_ZeroVectorIsZero(t *testing.T) {
 func TestSelect_PicksHighestSimilarityAmongEligible(t *testing.T) {
 	ctx := baseCtx()
 
-	var interest [interestVectorDim]float64
+	interest := make([]float64, tipcatalog.EmbeddingDim)
 	interest[0] = 1
 
 	near := baseTip()
 	near.ID = "near"
-	near.Embedding = make([]float64, interestVectorDim)
+	near.Embedding = make([]float64, tipcatalog.EmbeddingDim)
 	near.Embedding[0] = 1
 
 	far := baseTip()
 	far.ID = "far"
-	far.Embedding = make([]float64, interestVectorDim)
+	far.Embedding = make([]float64, tipcatalog.EmbeddingDim)
 	far.Embedding[1] = 1
 
 	gated := baseTip()
 	gated.ID = "gated"
 	gated.PersonaGate = "power_user"
-	gated.Embedding = make([]float64, interestVectorDim)
+	gated.Embedding = make([]float64, tipcatalog.EmbeddingDim)
 	gated.Embedding[0] = 1
 
 	selected, ok := Select([]tipcatalog.Tip{far, gated, near}, interest, nil, ctx, RulesRanker{})
@@ -180,7 +180,7 @@ func TestSelect_NoneEligible(t *testing.T) {
 	ctx := baseCtx()
 	tip := baseTip()
 	tip.PersonaGate = "power_user" // ctx.Persona is ""
-	_, ok := Select([]tipcatalog.Tip{tip}, [interestVectorDim]float64{}, nil, ctx, RulesRanker{})
+	_, ok := Select([]tipcatalog.Tip{tip}, make([]float64, tipcatalog.EmbeddingDim), nil, ctx, RulesRanker{})
 	if ok {
 		t.Fatal("expected no tip selected when none are eligible")
 	}

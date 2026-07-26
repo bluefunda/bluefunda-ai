@@ -90,7 +90,7 @@ func TestCLITips_FallsBackWhenSignedByForeignKey(t *testing.T) {
 		Family:         "fam",
 		Surfaces:       []string{tipcatalog.SurfaceCLI},
 		Render:         tipcatalog.Render{CLI: &tipcatalog.RenderContent{Title: "T", Body: "B"}},
-		Embedding:      make([]float64, 32),
+		Embedding:      make([]float64, tipcatalog.EmbeddingDim),
 		CatalogVersion: "1",
 	}
 	compiled, err := tipcatalog.Compile([]tipcatalog.Tip{tip})

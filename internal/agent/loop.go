@@ -9,6 +9,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"os"
+	"strings"
 	"sync"
 	"time"
 
@@ -237,9 +239,28 @@ type wireFuncCall struct {
 }
 
 type cliPayload struct {
-	V       int           `json:"v"`
-	History []wireMessage `json:"history"`
-	Tools   string        `json:"tools"`
+	V        int           `json:"v"`
+	History  []wireMessage `json:"history"`
+	Tools    string        `json:"tools"`
+	Timezone string        `json:"timezone,omitempty"` // IANA zone, e.g. "America/New_York"; empty if undetectable
+}
+
+// localTimezoneName returns the machine's IANA timezone identifier, or "" if
+// it can't be determined. time.Local.String() is not useable for this: Go
+// reports it as the literal string "Local", not an IANA name.
+func localTimezoneName() string {
+	if tz := os.Getenv("TZ"); tz != "" {
+		return tz
+	}
+	link, err := os.Readlink("/etc/localtime")
+	if err != nil {
+		return ""
+	}
+	const zoneinfo = "zoneinfo/"
+	if idx := strings.Index(link, zoneinfo); idx != -1 {
+		return link[idx+len(zoneinfo):]
+	}
+	return ""
 }
 
 func toWire(msgs []Message) []wireMessage {
@@ -262,7 +283,7 @@ func toWire(msgs []Message) []wireMessage {
 }
 
 func buildRequest(chatID, model, toolSchemas string, history []Message, isNew bool) *pb.ChatRequest {
-	payload := cliPayload{V: cliPayloadVersion, History: toWire(history), Tools: toolSchemas}
+	payload := cliPayload{V: cliPayloadVersion, History: toWire(history), Tools: toolSchemas, Timezone: localTimezoneName()}
 	payloadJSON, _ := json.Marshal(payload)
 	return &pb.ChatRequest{
 		ChatId:    chatID,

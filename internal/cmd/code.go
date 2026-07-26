@@ -102,9 +102,28 @@ const cliPayloadVersion = 1
 // cliCodePayload is encoded in Prompt to work around proto fields 8+ being stripped
 // by the load balancer between cli.bluefunda.com:443 and the BFF gRPC endpoint.
 type cliCodePayload struct {
-	V       int           `json:"v"` // payload format version — must match cliPayloadVersion in cai-llm-router
-	History []codeMessage `json:"history"`
-	Tools   string        `json:"tools"`
+	V        int           `json:"v"` // payload format version — must match cliPayloadVersion in cai-llm-router
+	History  []codeMessage `json:"history"`
+	Tools    string        `json:"tools"`
+	Timezone string        `json:"timezone,omitempty"` // IANA zone, e.g. "America/New_York"; empty if undetectable
+}
+
+// localTimezoneName returns the machine's IANA timezone identifier, or "" if
+// it can't be determined. time.Local.String() is not useable for this: Go
+// reports it as the literal string "Local", not an IANA name.
+func localTimezoneName() string {
+	if tz := os.Getenv("TZ"); tz != "" {
+		return tz
+	}
+	link, err := os.Readlink("/etc/localtime")
+	if err != nil {
+		return ""
+	}
+	const zoneinfo = "zoneinfo/"
+	if idx := strings.Index(link, zoneinfo); idx != -1 {
+		return link[idx+len(zoneinfo):]
+	}
+	return ""
 }
 
 func runAgenticSession(args []string) error {
@@ -1392,7 +1411,7 @@ func executeWithApprovalTUI(
 // model is prefixed with "cli/" so cai-llm-router can decode them. This works around
 // the load balancer stripping proto fields 8+ (local_tools, code_messages) in transit.
 func buildCodeRequest(chatID, model, toolSchemas string, history []codeMessage, isNewChat bool) *pb.ChatRequest {
-	payload := cliCodePayload{V: cliPayloadVersion, History: history, Tools: toolSchemas}
+	payload := cliCodePayload{V: cliPayloadVersion, History: history, Tools: toolSchemas, Timezone: localTimezoneName()}
 	payloadJSON, _ := json.Marshal(payload)
 	return &pb.ChatRequest{
 		ChatId:    chatID,

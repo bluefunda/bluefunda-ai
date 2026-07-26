@@ -7,6 +7,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	tipcatalog "github.com/bluefunda/tipcatalog"
 )
 
 // withHome points $HOME (and thus statePath) at a temp dir for the duration
@@ -21,6 +23,7 @@ func withHome(t *testing.T) string {
 func TestDecay_HalvesAtOneHalfLife(t *testing.T) {
 	start := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	s := State{LastDecay: start}
+	s.ensureVectorSized()
 	s.InterestVector[0] = 100
 
 	s.decay(start.Add(halfLife))
@@ -34,6 +37,7 @@ func TestDecay_HalvesAtOneHalfLife(t *testing.T) {
 func TestDecay_QuartersAtTwoHalfLives(t *testing.T) {
 	start := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	s := State{LastDecay: start}
+	s.ensureVectorSized()
 	s.InterestVector[0] = 100
 
 	s.decay(start.Add(2 * halfLife))
@@ -46,6 +50,7 @@ func TestDecay_QuartersAtTwoHalfLives(t *testing.T) {
 
 func TestDecay_NoOpOnFreshState(t *testing.T) {
 	s := State{}
+	s.ensureVectorSized()
 	s.InterestVector[0] = 42
 	s.decay(time.Now())
 	if s.InterestVector[0] != 42 {
@@ -56,6 +61,7 @@ func TestDecay_NoOpOnFreshState(t *testing.T) {
 func TestDecay_NoOpOnNonPositiveElapsed(t *testing.T) {
 	at := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	s := State{LastDecay: at}
+	s.ensureVectorSized()
 	s.InterestVector[0] = 42
 	s.decay(at) // elapsed == 0
 	if s.InterestVector[0] != 42 {
@@ -84,27 +90,87 @@ func TestRecord_CapsHistoryAt500(t *testing.T) {
 func TestRecord_NonZeroExitWeightsMore(t *testing.T) {
 	withHome(t)
 
-	if err := Record(Invocation{Command: "ok-cmd", ExitCode: 0}); err != nil {
+	if err := Record(Invocation{Command: "login", ExitCode: 0}); err != nil {
 		t.Fatalf("Record: %v", err)
 	}
 	okState, err := Load()
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	okWeight := okState.InterestVector[bucket("cmd:ok-cmd")]
+	authIdx := topicIndex("auth")
+	if authIdx < 0 {
+		t.Fatal("expected 'auth' to be a known topic")
+	}
+	okWeight := okState.InterestVector[authIdx]
 
 	withHome(t)
-	if err := Record(Invocation{Command: "fail-cmd", ExitCode: 1}); err != nil {
+	if err := Record(Invocation{Command: "login", ExitCode: 1}); err != nil {
 		t.Fatalf("Record: %v", err)
 	}
 	failState, err := Load()
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	failWeight := failState.InterestVector[bucket("cmd:fail-cmd")]
+	failWeight := failState.InterestVector[authIdx]
 
 	if failWeight != nonZeroExitWeight*okWeight {
 		t.Fatalf("failWeight = %v, want %v", failWeight, nonZeroExitWeight*okWeight)
+	}
+}
+
+func TestApply_MapsCommandAndFlagsToTopics(t *testing.T) {
+	withHome(t)
+	if err := Record(Invocation{Command: "bai mcp list", Flags: []string{"auto"}, ExitCode: 0}); err != nil {
+		t.Fatalf("Record: %v", err)
+	}
+	state, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if state.InterestVector[topicIndex("mcp")] != 1 {
+		t.Fatalf("expected 'mcp' topic incremented, vector = %v", state.InterestVector)
+	}
+	if state.InterestVector[topicIndex("automation")] != 1 {
+		t.Fatalf("expected 'automation' topic incremented, vector = %v", state.InterestVector)
+	}
+}
+
+func TestApply_NonZeroExitAlwaysCountsErrors(t *testing.T) {
+	withHome(t)
+	// "totally-unmapped-command" matches nothing in commandTopics, but a
+	// failing exit must still count toward "errors" regardless.
+	if err := Record(Invocation{Command: "totally-unmapped-command", ExitCode: 1}); err != nil {
+		t.Fatalf("Record: %v", err)
+	}
+	state, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if state.InterestVector[topicIndex("errors")] != nonZeroExitWeight {
+		t.Fatalf("expected 'errors' topic at weight %v, vector = %v", nonZeroExitWeight, state.InterestVector)
+	}
+}
+
+func TestEnsureVectorSized_ResetsOnMismatch(t *testing.T) {
+	s := State{InterestVector: []float64{1, 2, 3}} // wrong length vs. tipcatalog.Topics
+	s.ensureVectorSized()
+	if len(s.InterestVector) != len(tipcatalog.Topics) {
+		t.Fatalf("len = %d, want %d", len(s.InterestVector), len(tipcatalog.Topics))
+	}
+	for i, v := range s.InterestVector {
+		if v != 0 {
+			t.Fatalf("expected a reset zero vector, got %v at %d", v, i)
+		}
+	}
+}
+
+func TestEnsureVectorSized_NoOpWhenAlreadyCorrect(t *testing.T) {
+	want := make([]float64, len(tipcatalog.Topics))
+	want[0] = 42
+	s := State{InterestVector: want}
+	s.ensureVectorSized()
+	if s.InterestVector[0] != 42 {
+		t.Fatal("expected ensureVectorSized to leave a correctly-sized vector untouched")
 	}
 }
 

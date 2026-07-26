@@ -128,7 +128,7 @@ func (RulesRanker) Rank(candidates []Candidate, ctx EligibilityContext) []Candid
 
 // Select runs the full eligibility -> candidates -> rank pipeline and
 // returns the top tip, if any is eligible.
-func Select(tips []tipcatalog.Tip, interest [interestVectorDim]float64, states map[string]TipState, ctx EligibilityContext, ranker Ranker) (tipcatalog.Tip, bool) {
+func Select(tips []tipcatalog.Tip, interest []float64, states map[string]TipState, ctx EligibilityContext, ranker Ranker) (tipcatalog.Tip, bool) {
 	var eligible []tipcatalog.Tip
 	for _, t := range tips {
 		if Eligible(t, states[t.ID], ctx) {
@@ -162,7 +162,7 @@ func hasSurface(tip tipcatalog.Tip, surface string) bool {
 
 // cosineSimilarity returns the cosine similarity between a and b, or 0 if
 // their lengths differ or either is a zero vector.
-func cosineSimilarity(a [interestVectorDim]float64, b []float64) float64 {
+func cosineSimilarity(a, b []float64) float64 {
 	if len(b) != len(a) {
 		return 0
 	}

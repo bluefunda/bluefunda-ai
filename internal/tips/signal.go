@@ -11,7 +11,10 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
+
+	tipcatalog "github.com/bluefunda/tipcatalog"
 )
 
 // now is overridable in tests, matching this repo's execCommand/httpClient
@@ -19,12 +22,6 @@ import (
 var now = time.Now
 
 const (
-	// interestVectorDim must match tipcatalog.EmbeddingDim. Kept as a local
-	// constant rather than an import of github.com/bluefunda/tipcatalog
-	// because this phase is scoped to stay independent of the catalog client
-	// (Phase 2); Phase 2/3 assert the two stay equal.
-	interestVectorDim = 32
-
 	// maxHistory caps how many invocations are retained; older entries are
 	// dropped FIFO.
 	maxHistory = 500
@@ -37,6 +34,69 @@ const (
 	// interest signal available.
 	nonZeroExitWeight = 3.0
 )
+
+// commandTopics maps a word appearing in an invoked command's path (e.g.
+// "mcp" in "bai mcp list") to the tipcatalog.Topics it signals interest in.
+var commandTopics = map[string][]string{
+	"login":     {"auth"},
+	"logout":    {"auth"},
+	"code":      {"sessions"},
+	"chat":      {"sessions"},
+	"sessions":  {"sessions"},
+	"mcp":       {"mcp"},
+	"memory":    {"memory"},
+	"plugins":   {"plugins"},
+	"config":    {"config"},
+	"doctor":    {"diagnostics"},
+	"update":    {"updates"},
+	"billing":   {"cost-budget"},
+	"ratelimit": {"cost-budget"},
+	"tips":      {"onboarding"},
+}
+
+// flagTopics maps a flag name (without leading dashes) to the
+// tipcatalog.Topics it signals interest in.
+var flagTopics = map[string][]string{
+	"worktree":       {"worktree"},
+	"w":              {"worktree"},
+	"auto":           {"automation"},
+	"auto-apply":     {"automation"},
+	"max-budget-usd": {"cost-budget"},
+	"model":          {"model-selection"},
+	"m":              {"model-selection"},
+	"fast":           {"model-selection"},
+	"think":          {"model-selection"},
+	"output":         {"output-format"},
+	"o":              {"output-format"},
+	"output-format":  {"output-format"},
+	"print":          {"output-format"},
+	"p":              {"output-format"},
+	"continue":       {"sessions"},
+	"c":              {"sessions"},
+	"resume":         {"sessions"},
+}
+
+// topicIndex returns topic's position in tipcatalog.Topics, or -1 if
+// unrecognized.
+func topicIndex(topic string) int {
+	for i, t := range tipcatalog.Topics {
+		if t == topic {
+			return i
+		}
+	}
+	return -1
+}
+
+// topicsForCommand returns the topics signaled by cmdPath (e.g.
+// "bai mcp list"), matching each whitespace-separated word against
+// commandTopics.
+func topicsForCommand(cmdPath string) []string {
+	var topics []string
+	for _, word := range strings.Fields(cmdPath) {
+		topics = append(topics, commandTopics[word]...)
+	}
+	return topics
+}
 
 // Invocation is one recorded bai command run.
 type Invocation struct {
@@ -51,9 +111,22 @@ type Invocation struct {
 // State is the persisted signal store: recent invocation history plus the
 // decayed interest vector derived from it.
 type State struct {
-	History        []Invocation               `json:"history"`
-	InterestVector [interestVectorDim]float64 `json:"interest_vector"`
-	LastDecay      time.Time                  `json:"last_decay"`
+	History        []Invocation `json:"history"`
+	InterestVector []float64    `json:"interest_vector"`
+	LastDecay      time.Time    `json:"last_decay"`
+}
+
+// ensureVectorSized resets InterestVector to a zero vector matching
+// tipcatalog.Topics' current length if it's missing or the wrong length —
+// e.g. after Topics gains/loses an entry, or on a fresh State. A length
+// mismatch would otherwise make every cosine similarity against it silently
+// score 0 (cosineSimilarity's length guard) rather than error, so this
+// keeps the vector usable instead of quietly dead.
+func (s *State) ensureVectorSized() {
+	want := len(tipcatalog.Topics)
+	if len(s.InterestVector) != want {
+		s.InterestVector = make([]float64, want)
+	}
 }
 
 // DurationBucket classifies d into one of a small number of coarse buckets.
@@ -91,15 +164,6 @@ func fnvHex(v uint64) string {
 		v >>= 4
 	}
 	return string(b)
-}
-
-// bucket deterministically maps key into a [0, interestVectorDim) index via
-// feature hashing — a stand-in for a real embedding model (see the
-// EmbeddingDim placeholder comment in tipcatalog).
-func bucket(key string) int {
-	h := fnv.New32a()
-	_, _ = h.Write([]byte(key))
-	return int(h.Sum32() % interestVectorDim)
 }
 
 // tipsDir returns ~/.bai/tips, creating it if needed. Shared by signal.go
@@ -146,6 +210,7 @@ func Record(inv Invocation) error {
 	if err != nil {
 		return err
 	}
+	state.ensureVectorSized()
 
 	t := now()
 	inv.Timestamp = t
@@ -167,7 +232,12 @@ func Load() (State, error) {
 	if err != nil {
 		return State{}, err
 	}
-	return loadState(path)
+	s, err := loadState(path)
+	if err != nil {
+		return State{}, err
+	}
+	s.ensureVectorSized()
+	return s, nil
 }
 
 // decay applies EWMA half-life decay to the interest vector based on elapsed
@@ -188,16 +258,31 @@ func (s *State) decay(at time.Time) {
 }
 
 // apply folds inv into the interest vector (weighted 3x on non-zero exit)
-// and appends it to history.
+// and appends it to history. Topics come from commandTopics/flagTopics; a
+// non-zero exit also always counts toward "errors", regardless of whether
+// the command/flags themselves mapped to anything.
 func (s *State) apply(inv Invocation) {
 	weight := 1.0
 	if inv.ExitCode != 0 {
 		weight = nonZeroExitWeight
 	}
 
-	s.InterestVector[bucket("cmd:"+inv.Command)] += weight
+	add := func(topic string) {
+		if i := topicIndex(topic); i >= 0 {
+			s.InterestVector[i] += weight
+		}
+	}
+
+	for _, topic := range topicsForCommand(inv.Command) {
+		add(topic)
+	}
 	for _, f := range inv.Flags {
-		s.InterestVector[bucket("flag:"+f)] += weight
+		for _, topic := range flagTopics[f] {
+			add(topic)
+		}
+	}
+	if inv.ExitCode != 0 {
+		add("errors")
 	}
 
 	s.History = append(s.History, inv)

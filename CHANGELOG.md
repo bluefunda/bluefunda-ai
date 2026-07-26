@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.43.0](https://github.com/bluefunda/bluefunda-ai/compare/v1.42.0...v1.43.0) (2026-07-26)
+
+
+### Features
+
+* **chat:** send local timezone in bai chat requests ([#249](https://github.com/bluefunda/bluefunda-ai/issues/249)) ([efe39c1](https://github.com/bluefunda/bluefunda-ai/commit/efe39c169b79f4ae88c05d73d9dcd476f2bf7458))
+
 ## [1.42.0](https://github.com/bluefunda/bluefunda-ai/compare/v1.41.0...v1.42.0) (2026-07-26)
 
 

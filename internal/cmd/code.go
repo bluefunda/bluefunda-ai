@@ -400,6 +400,19 @@ func runAgenticSession(args []string) error {
 		InitialPrompt:  initialPrompt,
 		RepoName:       gitRepoName(),
 		CustomCommands: loadCustomSlashCommands("."),
+		AccountFn: func() (*tui.AccountInfo, error) {
+			ctx, cancel := caigrpc.ContextWithTimeout()
+			defer cancel()
+			resp, err := conn.Client.GetUserInfo(ctx, &pb.GetUserInfoRequest{})
+			if err != nil {
+				return nil, err
+			}
+			return &tui.AccountInfo{
+				Name:     resp.GetName(),
+				Email:    resp.GetEmail(),
+				Username: resp.GetPreferredUsername(),
+			}, nil
+		},
 		UsageFn: func() (*tui.UsageInfo, error) {
 			ctx, cancel := caigrpc.ContextWithTimeout()
 			defer cancel()

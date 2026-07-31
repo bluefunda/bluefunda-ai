@@ -339,6 +339,13 @@ func pumpStream(
 		case "error", "stream_error":
 			return toolCalls, streamUsage{}, fmt.Errorf("%s", ev.GetError())
 
+		case "rate_limited":
+			msg := ev.GetContent()
+			if msg == "" {
+				msg = ev.GetError()
+			}
+			return toolCalls, streamUsage{}, fmt.Errorf("rate limited: %s", msg)
+
 		case "tool_call":
 			data := ev.GetData()
 			if data == "" {

@@ -74,7 +74,10 @@ message CodeToolCall {
 }
 
 message ChatEvent {
-  string type = 1;        // "content", "tool_call", "tool_result", "error", "done"
+  // "content"/"stream_chunk", "tool_call", "tool_result", "error"/"stream_error",
+  // "done"/"stream_end", "rate_limited", "usage_warning", "live_usage_pct",
+  // "stream_progress", "stream_tool_execution", "stream_heartbeat"
+  string type = 1;
   string content = 2;     // Text content for "content" events
   string data = 3;        // JSON data for tool calls etc.
   string error = 4;       // Error message for "error" events

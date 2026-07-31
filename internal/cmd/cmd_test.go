@@ -1007,6 +1007,41 @@ func TestDrainPrintStream_TextMode_Error(t *testing.T) {
 	}
 }
 
+// Regression test: a rate_limited StreamEvent (forwarded by pumpCodeStream
+// when the backend rejects a request) used to match no case in
+// drainPrintStream's switch, so it was silently dropped — exit code stayed 0
+// and headless callers (`bai code`, `bai <prompt>`) saw a blank, "successful"
+// response with no indication the request was ever rejected.
+func TestDrainPrintStream_TextMode_RateLimited(t *testing.T) {
+	ch := feedEvents([]tui.StreamEvent{
+		{Kind: "rate_limited", ErrMsg: "daily limit reached"},
+		{Kind: "done"},
+	})
+	var out, errOut bytes.Buffer
+	code := drainPrintStream(ch, "text", &out, &errOut)
+	if code != 1 {
+		t.Errorf("expected exit code 1 on rate_limited, got %d", code)
+	}
+	if !strings.Contains(errOut.String(), "daily limit reached") {
+		t.Errorf("expected rate-limit message in stderr, got: %s", errOut.String())
+	}
+}
+
+func TestDrainPrintStream_StreamJSONMode_RateLimited(t *testing.T) {
+	ch := feedEvents([]tui.StreamEvent{
+		{Kind: "rate_limited", ErrMsg: "daily limit reached"},
+		{Kind: "done"},
+	})
+	var out, errOut bytes.Buffer
+	code := drainPrintStream(ch, "stream-json", &out, &errOut)
+	if code != 1 {
+		t.Errorf("expected exit code 1 on rate_limited, got %d", code)
+	}
+	if !strings.Contains(out.String(), `"type":"error"`) || !strings.Contains(out.String(), "daily limit reached") {
+		t.Errorf("expected error-typed stream-json line, got: %s", out.String())
+	}
+}
+
 func TestDrainPrintStream_JSONMode(t *testing.T) {
 	ch := feedEvents([]tui.StreamEvent{
 		{Kind: "chunk", Chunk: "The answer is 42."},

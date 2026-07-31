@@ -399,11 +399,15 @@ func (x *CodeToolCall) GetArguments() string {
 }
 
 type ChatEvent struct {
-	state   protoimpl.MessageState `protogen:"open.v1"`
-	Type    string                 `protobuf:"bytes,1,opt,name=type,proto3" json:"type,omitempty"`       // "content", "tool_call", "tool_result", "error", "done"
-	Content string                 `protobuf:"bytes,2,opt,name=content,proto3" json:"content,omitempty"` // Text content for "content" events
-	Data    string                 `protobuf:"bytes,3,opt,name=data,proto3" json:"data,omitempty"`       // JSON data for tool calls etc.
-	Error   string                 `protobuf:"bytes,4,opt,name=error,proto3" json:"error,omitempty"`     // Error message for "error" events
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// "content"/"stream_chunk", "tool_call", "tool_result", "error"/"stream_error",
+	// "done"/"stream_end", "rate_limited", "usage_warning", "live_usage_pct",
+	// "stream_progress", "stream_tool_execution", "stream_heartbeat"
+	Type string `protobuf:"bytes,1,opt,name=type,proto3" json:"type,omitempty"`
+
+	Content string `protobuf:"bytes,2,opt,name=content,proto3" json:"content,omitempty"` // Text content for "content" events
+	Data    string `protobuf:"bytes,3,opt,name=data,proto3" json:"data,omitempty"`       // JSON data for tool calls etc.
+	Error   string `protobuf:"bytes,4,opt,name=error,proto3" json:"error,omitempty"`     // Error message for "error" events
 	// Token usage — populated on stream_end / done events; zero for all other event types.
 	UsagePromptTokens     int32 `protobuf:"varint,5,opt,name=usage_prompt_tokens,json=usagePromptTokens,proto3" json:"usage_prompt_tokens,omitempty"`
 	UsageCompletionTokens int32 `protobuf:"varint,6,opt,name=usage_completion_tokens,json=usageCompletionTokens,proto3" json:"usage_completion_tokens,omitempty"`

@@ -585,6 +585,14 @@ func drainPrintStream(ch <-chan tui.StreamEvent, outputFormat string, w, errW io
 			} else {
 				fmt.Fprintln(errW, "error:", ev.ErrMsg)
 			}
+		case "rate_limited":
+			exitCode = 1
+			if outputFormat == "stream-json" {
+				enc := json.NewEncoder(w)
+				enc.Encode(map[string]any{"type": "error", "error": ev.ErrMsg}) //nolint:errcheck
+			} else {
+				fmt.Fprintln(errW, "error:", ev.ErrMsg)
+			}
 		case "done":
 			result := map[string]any{"type": "result", "stop_reason": "end_turn"}
 			switch outputFormat {

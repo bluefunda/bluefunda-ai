@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.43.1](https://github.com/bluefunda/bluefunda-ai/compare/v1.43.0...v1.43.1) (2026-08-01)
+
+
+### Bug Fixes
+
+* surface rate_limited chat events as errors instead of silent success ([#254](https://github.com/bluefunda/bluefunda-ai/issues/254)) ([c30ee38](https://github.com/bluefunda/bluefunda-ai/commit/c30ee38c04277727b3dbb585372d77f22801cc85))
+* wire up /account in the bare bai / bai code TUI ([#255](https://github.com/bluefunda/bluefunda-ai/issues/255)) ([e87eea3](https://github.com/bluefunda/bluefunda-ai/commit/e87eea348f9c15c7ba880786af51b9e0a91de81c))
+
 ## [1.43.0](https://github.com/bluefunda/bluefunda-ai/compare/v1.42.0...v1.43.0) (2026-07-26)
 
 

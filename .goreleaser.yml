@@ -88,6 +88,29 @@ checksum:
   name_template: "checksums.txt"
   algorithm: sha256
 
+# Software Bill of Materials for every release archive, using syft.
+sboms:
+  - id: archive-sboms
+    artifacts: archive
+
+# Keyless signing (Sigstore/Fulcio via GitHub OIDC) of the checksum manifest.
+# Verifying the signed checksums.txt is sufficient to trust every archive:
+#   cosign verify-blob --certificate-identity-regexp='.*' \
+#     --certificate-oidc-issuer=https://token.actions.githubusercontent.com \
+#     --certificate checksums.txt.pem --signature checksums.txt.sig checksums.txt
+signs:
+  - id: checksum-sign
+    cmd: cosign
+    certificate: "${artifact}.pem"
+    args:
+      - sign-blob
+      - "--yes"
+      - "--output-signature=${signature}"
+      - "--output-certificate=${certificate}"
+      - "${artifact}"
+    artifacts: checksum
+    output: true
+
 changelog:
   sort: asc
   filters:

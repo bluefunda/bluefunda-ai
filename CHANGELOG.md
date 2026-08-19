@@ -7,6 +7,13 @@
 
 * anchor checksum grep in install.sh to avoid matching SBOM entry ([#262](https://github.com/bluefunda/bluefunda-ai/issues/262)) ([e7f7bf7](https://github.com/bluefunda/bluefunda-ai/commit/e7f7bf78641ea9113a2f1629c5f288b5634f54d8))
 
+## [1.43.2](https://github.com/bluefunda/bluefunda-ai/compare/v1.43.1...v1.43.2) (2026-08-19)
+
+
+### Bug Fixes
+
+* anchor checksum grep in install.sh to avoid matching SBOM entry ([#262](https://github.com/bluefunda/bluefunda-ai/issues/262)) ([e7f7bf7](https://github.com/bluefunda/bluefunda-ai/commit/e7f7bf78641ea9113a2f1629c5f288b5634f54d8))
+
 ## [1.43.1](https://github.com/bluefunda/bluefunda-ai/compare/v1.43.0...v1.43.1) (2026-08-01)
 
 

@@ -69,7 +69,7 @@ VERSION=$(curl -fsSL "https://api.github.com/repos/${REPO}/releases/latest" \
 ARCHIVE="${BINARY}_${VERSION}_${OS}_${ARCH}.${EXT}"
 BASE_URL="https://github.com/${REPO}/releases/download/v${VERSION}"
 
-info "Installing ${BOLD}${BINARY}${RESET} v${VERSION} (${OS}/${ARCH})..."
+info "Installing ${BINARY} v${VERSION} (${OS}/${ARCH})..."
 
 # Download archive and checksums
 TMPDIR=$(mktemp -d)
@@ -81,9 +81,9 @@ curl -fsSL "${BASE_URL}/checksums.txt"  -o "${TMPDIR}/checksums.txt"
 # Verify checksum
 cd "$TMPDIR"
 if [ "$OS" = "darwin" ]; then
-  grep "${ARCHIVE}" checksums.txt | shasum -a 256 -c --quiet || die "Checksum verification failed"
+  grep "  ${ARCHIVE}\$" checksums.txt | shasum -a 256 -c --quiet || die "Checksum verification failed"
 else
-  grep "${ARCHIVE}" checksums.txt | sha256sum -c --quiet || die "Checksum verification failed"
+  grep "  ${ARCHIVE}\$" checksums.txt | sha256sum -c --quiet || die "Checksum verification failed"
 fi
 ok "Checksum verified"
 

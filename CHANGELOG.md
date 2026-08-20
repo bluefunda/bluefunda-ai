@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.44.0](https://github.com/bluefunda/bluefunda-ai/compare/v1.43.2...v1.44.0) (2026-08-20)
+
+
+### Features
+
+* **cli:** add --no-color flag ([#271](https://github.com/bluefunda/bluefunda-ai/issues/271)) ([c6397c1](https://github.com/bluefunda/bluefunda-ai/commit/c6397c1438ed5bcf7156dafbe8beed833c756854))
+
 ## [1.43.2](https://github.com/bluefunda/bluefunda-ai/compare/v1.43.1...v1.43.2) (2026-08-19)
 
 

@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.46.0](https://github.com/bluefunda/bluefunda-ai/compare/v1.45.0...v1.46.0) (2026-08-20)
+
+
+### Features
+
+* **tools:** add read_notebook/edit_notebook for Jupyter .ipynb files ([#276](https://github.com/bluefunda/bluefunda-ai/issues/276)) ([a0e3b26](https://github.com/bluefunda/bluefunda-ai/commit/a0e3b26512509a556a61d588731b2c91bb2adede))
+
 ## [1.45.0](https://github.com/bluefunda/bluefunda-ai/compare/v1.44.0...v1.45.0) (2026-08-20)
 
 

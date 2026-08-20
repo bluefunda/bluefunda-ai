@@ -5,6 +5,9 @@ import (
 	"os"
 	"time"
 
+	"github.com/charmbracelet/lipgloss"
+	"github.com/fatih/color"
+	"github.com/muesli/termenv"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 
@@ -35,6 +38,7 @@ var (
 	rootNoTools          bool
 	rootOutFormat        string
 	rootWorktree         bool
+	rootNoColor          bool
 
 	// Captured by PersistentPostRunE for Execute's post-run signal
 	// recording — PersistentPostRunE sees the actually-invoked (leaf)
@@ -132,10 +136,19 @@ func init() {
 	rootCmd.Flags().StringVar(&rootOutFormat, "output-format", "text", "Output format for --print: text, json, stream-json")
 	rootCmd.Flags().BoolVar(&rootNoTools, "no-tools", false, "Disable local tools (pure chat mode)")
 	rootCmd.Flags().BoolVarP(&rootWorktree, "worktree", "w", false, "Run agent in an isolated git worktree; prompt to apply/discard on exit")
+	rootCmd.PersistentFlags().BoolVar(&rootNoColor, "no-color", false, "Disable colored output")
+	_ = rootCmd.PersistentFlags().MarkHidden("no-color")
 	rootCmd.PersistentPreRunE = func(cmd *cobra.Command, args []string) error {
 		if v, _ := cmd.Flags().GetBool("version"); v {
 			fmt.Println("bai version " + Version)
 			os.Exit(0)
+		}
+		// NO_COLOR, TERM=dumb, and non-terminal stdout are already respected
+		// automatically by fatih/color and lipgloss's own detection. --no-color
+		// forces it off explicitly, e.g. for a color-capable terminal in CI.
+		if rootNoColor {
+			color.NoColor = true
+			lipgloss.SetColorProfile(termenv.Ascii)
 		}
 		return nil
 	}

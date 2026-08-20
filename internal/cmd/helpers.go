@@ -46,6 +46,23 @@ func loadMemoryIndex(cwd string) string {
 	return idx
 }
 
+// buildContextHistory returns the leading system messages for a new agentic
+// session: project/user context first, then the persistent-memory index.
+// Order is the precedence invariant from #273 — non-memory context must
+// always precede memory in history, so an agent's own past notes can never
+// gain positional precedence over the user's current instructions or repo
+// context.
+func buildContextHistory(cwd string) []codeMessage {
+	var history []codeMessage
+	if ctx := loadContextFiles(cwd); ctx != "" {
+		history = append(history, codeMessage{Role: "system", Content: ctx})
+	}
+	if idx := loadMemoryIndex(cwd); idx != "" {
+		history = append(history, codeMessage{Role: "system", Content: idx})
+	}
+	return history
+}
+
 // findContextFile walks upward from dir until a git root, returning the contents
 // of the first .bai/context.md or AGENTS.md it finds, or "" if none exist.
 func findContextFile(dir string) string {

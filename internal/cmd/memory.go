@@ -13,7 +13,10 @@ import (
 	"github.com/bluefunda/bluefunda-ai/internal/ui"
 )
 
-var memoryDeleteForce bool
+var (
+	memoryDeleteForce bool
+	memoryListAll     bool
+)
 
 var memoryCmd = &cobra.Command{
 	Use:   "memory",
@@ -22,7 +25,7 @@ var memoryCmd = &cobra.Command{
 
 var memoryListCmd = &cobra.Command{
 	Use:   "list",
-	Short: "List all memory keys with a one-line preview",
+	Short: "List memory keys with a one-line preview",
 	RunE:  runMemoryList,
 }
 
@@ -42,6 +45,7 @@ var memoryDeleteCmd = &cobra.Command{
 
 func init() {
 	memoryDeleteCmd.Flags().BoolVarP(&memoryDeleteForce, "force", "f", false, "Skip the confirmation prompt")
+	memoryListCmd.Flags().BoolVar(&memoryListAll, "all", false, "Include superseded entries")
 	memoryCmd.AddCommand(memoryListCmd, memoryShowCmd, memoryDeleteCmd)
 }
 
@@ -50,11 +54,15 @@ func runMemoryList(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	return listMemory(memory.New(cwd), printer(loadConfig()))
+	return listMemory(memory.New(cwd), printer(loadConfig()), memoryListAll)
 }
 
-func listMemory(mgr *memory.Manager, p *ui.Printer) error {
-	entries, err := mgr.List()
+func listMemory(mgr *memory.Manager, p *ui.Printer, all bool) error {
+	list := mgr.List
+	if all {
+		list = mgr.ListAll
+	}
+	entries, err := list()
 	if err != nil {
 		return fmt.Errorf("list memory: %w", err)
 	}
@@ -63,10 +71,10 @@ func listMemory(mgr *memory.Manager, p *ui.Printer) error {
 		return nil
 	}
 
-	headers := []string{"KEY", "SCOPE", "PREVIEW"}
+	headers := []string{"KEY", "SCOPE", "STATUS", "PREVIEW"}
 	rows := make([][]string, 0, len(entries))
 	for _, e := range entries {
-		rows = append(rows, []string{e.Key, e.Scope, e.Preview()})
+		rows = append(rows, []string{e.Key, e.Scope, e.Status, e.Preview()})
 	}
 	p.Table(headers, rows)
 	return nil

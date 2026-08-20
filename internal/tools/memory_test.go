@@ -30,7 +30,7 @@ func chdirTemp(t *testing.T) string {
 func TestMemoryWriteReadDelete(t *testing.T) {
 	chdirTemp(t)
 
-	msg, err := MemoryWrite("conventions", "run golangci-lint before committing")
+	msg, err := MemoryWrite("conventions", "run golangci-lint before committing", "")
 	if err != nil {
 		t.Fatalf("MemoryWrite: %v", err)
 	}
@@ -61,6 +61,42 @@ func TestMemoryWriteReadDelete(t *testing.T) {
 	}
 }
 
+func TestMemoryWrite_Supersedes(t *testing.T) {
+	chdirTemp(t)
+
+	if _, err := MemoryWrite("old-stack", "Go 1.20", ""); err != nil {
+		t.Fatalf("MemoryWrite: %v", err)
+	}
+	msg, err := MemoryWrite("new-stack", "Go 1.26", "old-stack")
+	if err != nil {
+		t.Fatalf("MemoryWrite with supersedes: %v", err)
+	}
+	if !strings.Contains(msg, "old-stack") || !strings.Contains(msg, "superseded") {
+		t.Errorf("MemoryWrite result = %q, want it to mention the superseded key", msg)
+	}
+
+	list, err := MemoryList()
+	if err != nil {
+		t.Fatalf("MemoryList: %v", err)
+	}
+	if strings.Contains(list, "old-stack") {
+		t.Errorf("MemoryList = %q, want superseded key excluded", list)
+	}
+	if !strings.Contains(list, "new-stack") {
+		t.Errorf("MemoryList = %q, want new-stack present", list)
+	}
+}
+
+func TestMemoryWrite_RefusesSecretLikeContent(t *testing.T) {
+	chdirTemp(t)
+	if _, err := MemoryWrite("leak", "api_key: sk-live-abcdefghijklmnopqrstuvwx", ""); err == nil {
+		t.Error("expected error writing secret-like content, got nil")
+	}
+	if _, err := MemoryRead("leak"); err == nil {
+		t.Error("expected no file written after refused secret-like content")
+	}
+}
+
 func TestMemoryRead_NotFound(t *testing.T) {
 	chdirTemp(t)
 	if _, err := MemoryRead("nonexistent"); err == nil {
@@ -75,10 +111,10 @@ func TestMemoryList(t *testing.T) {
 		t.Errorf("MemoryList (empty) = %q, %v", got, err)
 	}
 
-	if _, err := MemoryWrite("alpha", "first note"); err != nil {
+	if _, err := MemoryWrite("alpha", "first note", ""); err != nil {
 		t.Fatalf("MemoryWrite: %v", err)
 	}
-	if _, err := MemoryWrite("beta", "second note"); err != nil {
+	if _, err := MemoryWrite("beta", "second note", ""); err != nil {
 		t.Fatalf("MemoryWrite: %v", err)
 	}
 
@@ -125,6 +161,27 @@ func TestExecute_MemoryTools(t *testing.T) {
 	}
 	if _, err := Execute("memory_read", string(readArgs)); err == nil {
 		t.Error("expected error reading deleted key via Execute, got nil")
+	}
+}
+
+func TestExecute_MemoryWriteSupersedesArgDispatch(t *testing.T) {
+	chdirTemp(t)
+
+	writeOld, _ := json.Marshal(map[string]string{"key": "old-stack", "content": "Go 1.20"})
+	if _, err := Execute("memory_write", string(writeOld)); err != nil {
+		t.Fatalf("Execute memory_write: %v", err)
+	}
+	writeNew, _ := json.Marshal(map[string]string{"key": "new-stack", "content": "Go 1.26", "supersedes": "old-stack"})
+	if _, err := Execute("memory_write", string(writeNew)); err != nil {
+		t.Fatalf("Execute memory_write with supersedes: %v", err)
+	}
+
+	listOut, err := Execute("memory_list", "{}")
+	if err != nil {
+		t.Fatalf("Execute memory_list: %v", err)
+	}
+	if strings.Contains(listOut, "old-stack") {
+		t.Errorf("Execute memory_list = %q, want superseded key excluded", listOut)
 	}
 }
 

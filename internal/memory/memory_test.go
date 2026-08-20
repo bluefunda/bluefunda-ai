@@ -337,3 +337,164 @@ func TestPreview_Empty(t *testing.T) {
 		t.Errorf("preview(\"\") = %q, want \"(empty)\"", got)
 	}
 }
+
+func TestWrite_SetsDefaultFrontmatter(t *testing.T) {
+	m, _, _ := testManager(t)
+	e, err := m.Write("conventions", "run lint first")
+	if err != nil {
+		t.Fatalf("Write: %v", err)
+	}
+	if e.Source != SourceAgent {
+		t.Errorf("Write Source = %q, want %q", e.Source, SourceAgent)
+	}
+	if e.Status != StatusActive {
+		t.Errorf("Write Status = %q, want %q", e.Status, StatusActive)
+	}
+	if e.CreatedAt == "" {
+		t.Error("Write CreatedAt is empty, want an RFC3339 timestamp")
+	}
+
+	raw, err := os.ReadFile(e.Path)
+	if err != nil {
+		t.Fatalf("read backing file: %v", err)
+	}
+	if !strings.HasPrefix(string(raw), "---\n") {
+		t.Errorf("backing file = %q, want a leading frontmatter block", raw)
+	}
+}
+
+func TestWrite_RefusesSecretLikeContent(t *testing.T) {
+	cases := []struct {
+		name    string
+		content string
+	}{
+		{"AWS key", "our staging key is AKIAABCDEFGHIJKLMNOP, do not share it"},
+		{"private key block", "-----BEGIN RSA PRIVATE KEY-----\nMIIBogIBAAJ...\n-----END RSA PRIVATE KEY-----"},
+		{"GitHub token", "auth with ghp_abcdefghijklmnopqrstuvwxyz0123456789"},
+		{"credential assignment", "api_key: sk-live-abcdefghijklmnopqrstuvwx"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			m, _, _ := testManager(t)
+			if _, err := m.Write("leak", c.content); err == nil {
+				t.Errorf("Write(%q) = nil error, want refusal", c.content)
+			}
+			if _, err := m.Read("leak"); err == nil {
+				t.Error("expected no file written after refused secret-like content")
+			}
+		})
+	}
+}
+
+func TestWrite_OrdinaryContentNotFlaggedAsSecret(t *testing.T) {
+	m, _, _ := testManager(t)
+	content := "The access token is refreshed automatically; see auth.go for the retry policy."
+	if _, err := m.Write("notes", content); err != nil {
+		t.Fatalf("Write: %v", err)
+	}
+}
+
+func TestReadEntry_PreFrontmatterFileDefaultsToActiveAgent(t *testing.T) {
+	m, _, _ := testManager(t)
+	if err := os.MkdirAll(m.ProjectDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(m.ProjectDir, "legacy.md")
+	if err := os.WriteFile(path, []byte("written before frontmatter existed"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	e, err := m.Read("legacy")
+	if err != nil {
+		t.Fatalf("Read: %v", err)
+	}
+	if e.Content != "written before frontmatter existed" {
+		t.Errorf("Read Content = %q, want the raw body unchanged", e.Content)
+	}
+	if e.Source != SourceAgent || e.Status != StatusActive {
+		t.Errorf("Read = %+v, want default Source=agent Status=active", e)
+	}
+}
+
+func TestReadEntry_IncidentalLeadingDashesNotMistakenForFrontmatter(t *testing.T) {
+	m, _, _ := testManager(t)
+	if err := os.MkdirAll(m.ProjectDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// A Markdown horizontal-rule-style note that happens to start with "---"
+	// but isn't a YAML mapping with any known frontmatter field.
+	body := "---\nnote: just a title line, not real frontmatter\n---\nactual content"
+	path := filepath.Join(m.ProjectDir, "odd.md")
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	e, err := m.Read("odd")
+	if err != nil {
+		t.Fatalf("Read: %v", err)
+	}
+	if e.Content != body {
+		t.Errorf("Read Content = %q, want the whole file treated as body (no known frontmatter fields)", e.Content)
+	}
+}
+
+func TestSupersede_ExcludedFromListAndIndexButReadable(t *testing.T) {
+	m, _, _ := testManager(t)
+	if _, err := m.Write("old-stack", "Go 1.20, gRPC"); err != nil {
+		t.Fatalf("Write: %v", err)
+	}
+	if _, err := m.Write("new-stack", "Go 1.26, gRPC"); err != nil {
+		t.Fatalf("Write: %v", err)
+	}
+	if err := m.Supersede("old-stack"); err != nil {
+		t.Fatalf("Supersede: %v", err)
+	}
+
+	entries, err := m.List()
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	for _, e := range entries {
+		if e.Key == "old-stack" {
+			t.Errorf("List() includes superseded key %q, want it excluded", e.Key)
+		}
+	}
+
+	idx, err := m.Index()
+	if err != nil {
+		t.Fatalf("Index: %v", err)
+	}
+	if strings.Contains(idx, "old-stack") {
+		t.Errorf("Index() = %q, want superseded key excluded", idx)
+	}
+
+	// Still readable directly, and still present in ListAll.
+	e, err := m.Read("old-stack")
+	if err != nil {
+		t.Fatalf("Read superseded entry: %v", err)
+	}
+	if e.Status != StatusSuperseded || e.Content != "Go 1.20, gRPC" {
+		t.Errorf("Read(old-stack) = %+v, want Status=superseded with content preserved", e)
+	}
+
+	all, err := m.ListAll()
+	if err != nil {
+		t.Fatalf("ListAll: %v", err)
+	}
+	found := false
+	for _, e := range all {
+		if e.Key == "old-stack" {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("ListAll() does not include superseded key 'old-stack'")
+	}
+}
+
+func TestSupersede_NotFound(t *testing.T) {
+	m, _, _ := testManager(t)
+	if err := m.Supersede("nonexistent"); err == nil {
+		t.Error("expected error superseding nonexistent key, got nil")
+	}
+}

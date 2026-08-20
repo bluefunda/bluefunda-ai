@@ -40,13 +40,23 @@ func MemoryList() (string, error) {
 	return sb.String(), nil
 }
 
-// MemoryWrite creates or overwrites a project-scoped memory entry.
-func MemoryWrite(key, content string) (string, error) {
-	e, err := memoryManager().Write(key, content)
+// MemoryWrite creates or overwrites a project-scoped memory entry. When
+// supersedes is non-empty, that key's entry is marked superseded after the
+// write succeeds — it stays on disk but drops out of recall.
+func MemoryWrite(key, content, supersedes string) (string, error) {
+	mgr := memoryManager()
+	e, err := mgr.Write(key, content)
 	if err != nil {
 		return "", err
 	}
-	return fmt.Sprintf("wrote memory %q (%d bytes) to %s", e.Key, len(content), e.Path), nil
+	msg := fmt.Sprintf("wrote memory %q (%d bytes) to %s", e.Key, len(content), e.Path)
+	if supersedes != "" {
+		if err := mgr.Supersede(supersedes); err != nil {
+			return "", fmt.Errorf("wrote %q but failed to mark %q superseded: %w", key, supersedes, err)
+		}
+		msg += fmt.Sprintf("; marked %q superseded", supersedes)
+	}
+	return msg, nil
 }
 
 // MemoryDelete removes a project-scoped memory entry.

@@ -733,6 +733,66 @@ func TestLoadMemoryIndex_ListsKeyAndPreviewNotFullContent(t *testing.T) {
 	}
 }
 
+// --- BuildContextHistory Tests ---
+
+// TestBuildContextHistory_ContextPrecedesMemory locks in the precedence
+// invariant from #273: project/user context must always come before the
+// memory index in session history, so memory can never gain positional
+// precedence over the user's current instructions or repo context.
+func TestBuildContextHistory_ContextPrecedesMemory(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("HOME", t.TempDir())
+
+	baiDir := filepath.Join(dir, ".bai")
+	if err := os.MkdirAll(baiDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(baiDir, "context.md"), []byte("project ctx"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	memDir := filepath.Join(baiDir, "memory")
+	if err := os.MkdirAll(memDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(memDir, "conventions.md"), []byte("run lint first"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	history := buildContextHistory(dir)
+	if len(history) != 2 {
+		t.Fatalf("buildContextHistory returned %d messages, want 2 (context, memory index): %+v", len(history), history)
+	}
+	if !strings.Contains(history[0].Content, "project ctx") {
+		t.Errorf("history[0] = %q, want project context first", history[0].Content)
+	}
+	if !strings.Contains(history[1].Content, "conventions") {
+		t.Errorf("history[1] = %q, want memory index second", history[1].Content)
+	}
+}
+
+// TestBuildContextHistory_MemoryOnly confirms the memory index still lands
+// (as the only message) when there's no project/user context to prepend.
+func TestBuildContextHistory_MemoryOnly(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("HOME", t.TempDir())
+
+	memDir := filepath.Join(dir, ".bai", "memory")
+	if err := os.MkdirAll(memDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(memDir, "conventions.md"), []byte("run lint first"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	history := buildContextHistory(dir)
+	if len(history) != 1 {
+		t.Fatalf("buildContextHistory returned %d messages, want 1: %+v", len(history), history)
+	}
+	if !strings.Contains(history[0].Content, "conventions") {
+		t.Errorf("history[0] = %q, want memory index", history[0].Content)
+	}
+}
+
 func TestFindRecentSession_NoChats(t *testing.T) {
 	// Use a testBFF that returns no chats.
 	srv, conn := startTestServerRaw(t, &emptyBFF{})

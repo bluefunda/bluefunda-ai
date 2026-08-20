@@ -218,12 +218,13 @@ func LocalToolSchemas() (string, error) {
 			Type: "function",
 			Function: FunctionDef{
 				Name:        "memory_write",
-				Description: "Create or overwrite a project-level persistent memory note at .bai/memory/<key>.md. Use for facts worth recalling in future sessions (architecture, conventions, known bugs) — not for task-scoped or ephemeral details.",
+				Description: "Create or overwrite a project-level persistent memory note at .bai/memory/<key>.md. Use for facts worth recalling in future sessions (architecture, conventions, known bugs) — not for task-scoped or ephemeral details. Refuses to write content that looks like it contains a credential.",
 				Parameters: json.RawMessage(`{
 					"type": "object",
 					"properties": {
-						"key":     {"type": "string", "description": "Memory key (filename without extension, no path separators)"},
-						"content": {"type": "string", "description": "Full Markdown content to store"}
+						"key":        {"type": "string", "description": "Memory key (filename without extension, no path separators)"},
+						"content":    {"type": "string", "description": "Full Markdown content to store"},
+						"supersedes": {"type": "string", "description": "Optional: key of an existing memory entry this one replaces. That entry is marked superseded (kept on disk, dropped from recall) once this write succeeds."}
 					},
 					"required": ["key", "content"]
 				}`),

@@ -122,6 +122,38 @@ func LocalToolSchemas() (string, error) {
 		{
 			Type: "function",
 			Function: FunctionDef{
+				Name:        "read_notebook",
+				Description: "Read a Jupyter notebook (.ipynb) as structured text: each cell's index, type, execution state, source, and a short output summary. Non-text outputs (images, HTML, widgets) are named, not reproduced.",
+				Parameters: json.RawMessage(`{
+					"type": "object",
+					"properties": {
+						"path": {"type": "string", "description": "Path to the .ipynb file"}
+					},
+					"required": ["path"]
+				}`),
+			},
+		},
+		{
+			Type: "function",
+			Function: FunctionDef{
+				Name:        "edit_notebook",
+				Description: "Edit one cell of an existing Jupyter notebook (.ipynb) by index. Use read_notebook first to see current cell indices.",
+				Parameters: json.RawMessage(`{
+					"type": "object",
+					"properties": {
+						"path":       {"type": "string", "description": "Path to the .ipynb file"},
+						"cell_index": {"type": "integer", "description": "0-based cell index. For edit_mode 'insert', the new cell is placed before this index (use the current cell count to append at the end)."},
+						"edit_mode":  {"type": "string", "enum": ["replace", "insert", "delete", "clear_outputs"], "description": "replace (default): overwrite the cell's source, clearing its outputs. insert: add a new cell. delete: remove the cell. clear_outputs: clear outputs without touching source."},
+						"new_source": {"type": "string", "description": "New cell source. Required for replace and insert."},
+						"cell_type":  {"type": "string", "enum": ["code", "markdown", "raw"], "description": "Cell type for insert (default 'code'), or to change an existing cell's type on replace."}
+					},
+					"required": ["path", "cell_index"]
+				}`),
+			},
+		},
+		{
+			Type: "function",
+			Function: FunctionDef{
 				Name:        "search_files",
 				Description: "Search for files matching a glob pattern under a directory.",
 				Parameters: json.RawMessage(`{

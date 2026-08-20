@@ -64,6 +64,16 @@ func Execute(name, argumentsJSON string) (string, error) {
 	case "list_dir":
 		path, _ := args["path"].(string)
 		return ListDir(path)
+	case "read_notebook":
+		path, _ := args["path"].(string)
+		return ReadNotebook(path)
+	case "edit_notebook":
+		path, _ := args["path"].(string)
+		editMode, _ := args["edit_mode"].(string)
+		newSource, _ := args["new_source"].(string)
+		cellType, _ := args["cell_type"].(string)
+		cellIndexF, _ := args["cell_index"].(float64)
+		return EditNotebook(path, int(cellIndexF), editMode, newSource, cellType)
 	case "search_files":
 		dir, _ := args["dir"].(string)
 		pattern, _ := args["pattern"].(string)

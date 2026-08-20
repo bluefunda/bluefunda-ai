@@ -101,7 +101,7 @@ func extractPrimaryArg(toolName, argumentsJSON string) string {
 	switch toolName {
 	case "bash":
 		return strArg(args, "command")
-	case "write_file", "edit_file", "read_file", "list_dir", "search_files":
+	case "write_file", "edit_file", "read_file", "list_dir", "search_files", "read_notebook", "edit_notebook":
 		return strArg(args, "path")
 	case "web_fetch":
 		return strArg(args, "url")

@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.45.0](https://github.com/bluefunda/bluefunda-ai/compare/v1.44.0...v1.45.0) (2026-08-20)
+
+
+### Features
+
+* **memory:** frontmatter metadata, active/superseded lifecycle, secret scan ([#274](https://github.com/bluefunda/bluefunda-ai/issues/274)) ([7b50e41](https://github.com/bluefunda/bluefunda-ai/commit/7b50e41b412f2b04a09b4714152af91e072ab42d))
+
 ## [1.44.0](https://github.com/bluefunda/bluefunda-ai/compare/v1.43.2...v1.44.0) (2026-08-20)
 
 

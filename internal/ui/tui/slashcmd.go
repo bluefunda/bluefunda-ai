@@ -33,6 +33,13 @@ var builtinCommands = []SlashCommand{
 	{"/exit", "Quit the session", "quit", ""},
 }
 
+// expandArguments substitutes every "$ARGUMENTS" placeholder in a custom
+// command's prompt with the text typed after the command name. A prompt with
+// no placeholder simply doesn't accept an argument — args are dropped.
+func expandArguments(prompt, args string) string {
+	return strings.ReplaceAll(prompt, "$ARGUMENTS", args)
+}
+
 // matchSlashCommands returns commands matching filter from both builtins and
 // custom commands. If filter is empty or just "/" all commands are returned.
 func matchSlashCommands(filter string, custom []SlashCommand) []SlashCommand {

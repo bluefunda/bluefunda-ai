@@ -3,31 +3,55 @@ package cmd
 import (
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/bluefunda/bluefunda-ai/internal/ui/tui"
 )
 
-// loadCustomSlashCommands discovers .bai/commands/*.md files by walking upward
-// from cwd to the git root. Each file becomes a slash command: the filename
-// (without .md) is the command name and the file body is the prompt sent to
-// the LLM when the command is invoked.
+// loadCustomSlashCommands discovers .bai/commands/*.md files at project level
+// (walking upward from cwd to the git root) and ~/.bai/commands/*.md at user
+// level, merging the two with project commands taking precedence on a name
+// collision. Each file becomes a slash command: the filename (without .md)
+// is the command name and the file body is the prompt sent to the LLM when
+// the command is invoked.
 //
 // Optional YAML front-matter (lines between --- delimiters) is stripped from
 // the prompt; the "description:" field is used as the autocomplete hint.
 func loadCustomSlashCommands(cwd string) []tui.SlashCommand {
-	abs, err := filepath.Abs(cwd)
-	if err != nil {
+	byName := make(map[string]tui.SlashCommand)
+
+	if home, err := os.UserHomeDir(); err == nil {
+		for _, c := range loadCommandsDir(filepath.Join(home, ".bai", "commands")) {
+			byName[c.Name] = c
+		}
+	}
+	for _, c := range loadCommandsDir(findCommandsDir(cwd)) {
+		byName[c.Name] = c // project overrides user on collision
+	}
+	if len(byName) == 0 {
 		return nil
 	}
 
-	// Walk upward to git root looking for .bai/commands/.
-	var commandsDir string
+	cmds := make([]tui.SlashCommand, 0, len(byName))
+	for _, c := range byName {
+		cmds = append(cmds, c)
+	}
+	sort.Slice(cmds, func(i, j int) bool { return cmds[i].Name < cmds[j].Name })
+	return cmds
+}
+
+// findCommandsDir walks upward from cwd to the git root looking for a
+// .bai/commands/ directory, returning "" if none exists.
+func findCommandsDir(cwd string) string {
+	abs, err := filepath.Abs(cwd)
+	if err != nil {
+		return ""
+	}
 	for {
 		candidate := filepath.Join(abs, ".bai", "commands")
 		if info, err := os.Stat(candidate); err == nil && info.IsDir() {
-			commandsDir = candidate
-			break
+			return candidate
 		}
 		if _, err := os.Stat(filepath.Join(abs, ".git")); err == nil {
 			break
@@ -38,11 +62,16 @@ func loadCustomSlashCommands(cwd string) []tui.SlashCommand {
 		}
 		abs = parent
 	}
-	if commandsDir == "" {
+	return ""
+}
+
+// loadCommandsDir loads every *.md file in dir as a slash command. Returns
+// nil if dir is "" or doesn't exist.
+func loadCommandsDir(dir string) []tui.SlashCommand {
+	if dir == "" {
 		return nil
 	}
-
-	entries, err := os.ReadDir(commandsDir)
+	entries, err := os.ReadDir(dir)
 	if err != nil {
 		return nil
 	}
@@ -52,7 +81,7 @@ func loadCustomSlashCommands(cwd string) []tui.SlashCommand {
 		if e.IsDir() || filepath.Ext(e.Name()) != ".md" {
 			continue
 		}
-		data, err := os.ReadFile(filepath.Join(commandsDir, e.Name()))
+		data, err := os.ReadFile(filepath.Join(dir, e.Name()))
 		if err != nil {
 			continue
 		}
@@ -61,13 +90,14 @@ func loadCustomSlashCommands(cwd string) []tui.SlashCommand {
 		if desc == "" {
 			desc = "custom command"
 		}
+		prompt = strings.TrimSpace(prompt)
 		if prompt == "" {
 			continue
 		}
 		cmds = append(cmds, tui.SlashCommand{
 			Name:        name,
 			Description: desc,
-			Prompt:      strings.TrimSpace(prompt),
+			Prompt:      prompt,
 		})
 	}
 	return cmds

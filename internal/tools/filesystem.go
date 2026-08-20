@@ -90,7 +90,8 @@ func Execute(name, argumentsJSON string) (string, error) {
 	case "memory_write":
 		key, _ := args["key"].(string)
 		content, _ := args["content"].(string)
-		return MemoryWrite(key, content)
+		supersedes, _ := args["supersedes"].(string)
+		return MemoryWrite(key, content, supersedes)
 	case "memory_delete":
 		key, _ := args["key"].(string)
 		return MemoryDelete(key)

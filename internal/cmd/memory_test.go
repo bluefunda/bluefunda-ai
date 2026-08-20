@@ -20,7 +20,7 @@ func TestListMemory_Empty(t *testing.T) {
 	mgr := testMemoryManager(t)
 	p, buf := testPrinter(ui.FormatTable)
 
-	if err := listMemory(mgr, p); err != nil {
+	if err := listMemory(mgr, p, false); err != nil {
 		t.Fatalf("listMemory: %v", err)
 	}
 	if !strings.Contains(buf.String(), "no memory entries") {
@@ -35,7 +35,7 @@ func TestListMemory_Table(t *testing.T) {
 	}
 	p, buf := testPrinter(ui.FormatTable)
 
-	if err := listMemory(mgr, p); err != nil {
+	if err := listMemory(mgr, p, false); err != nil {
 		t.Fatalf("listMemory: %v", err)
 	}
 	out := buf.String()
@@ -51,12 +51,38 @@ func TestListMemory_JSON(t *testing.T) {
 	}
 	p, buf := testPrinter(ui.FormatJSON)
 
-	if err := listMemory(mgr, p); err != nil {
+	if err := listMemory(mgr, p, false); err != nil {
 		t.Fatalf("listMemory: %v", err)
 	}
 	out := buf.String()
 	if !strings.Contains(out, `"KEY"`) || !strings.Contains(out, "known-bugs") {
 		t.Errorf("expected JSON with key field, got: %s", out)
+	}
+}
+
+func TestListMemory_ExcludesSupersededByDefault_AllShowsIt(t *testing.T) {
+	mgr := testMemoryManager(t)
+	if _, err := mgr.Write("old-stack", "Go 1.20"); err != nil {
+		t.Fatalf("Write: %v", err)
+	}
+	if err := mgr.Supersede("old-stack"); err != nil {
+		t.Fatalf("Supersede: %v", err)
+	}
+
+	p, buf := testPrinter(ui.FormatTable)
+	if err := listMemory(mgr, p, false); err != nil {
+		t.Fatalf("listMemory: %v", err)
+	}
+	if !strings.Contains(buf.String(), "no memory entries") {
+		t.Errorf("listMemory(all=false) = %q, want superseded-only result reported as empty", buf.String())
+	}
+
+	pAll, bufAll := testPrinter(ui.FormatTable)
+	if err := listMemory(mgr, pAll, true); err != nil {
+		t.Fatalf("listMemory(all=true): %v", err)
+	}
+	if !strings.Contains(bufAll.String(), "old-stack") || !strings.Contains(bufAll.String(), "superseded") {
+		t.Errorf("listMemory(all=true) = %q, want superseded entry listed with its status", bufAll.String())
 	}
 }
 

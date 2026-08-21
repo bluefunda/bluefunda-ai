@@ -99,7 +99,7 @@ func runDaemonStart(cmd *cobra.Command, args []string) error {
 	if err := os.WriteFile(pidFile, []byte(strconv.Itoa(os.Getpid())), 0o600); err != nil {
 		return fmt.Errorf("write pid file: %w", err)
 	}
-	defer os.Remove(pidFile)
+	defer func() { _ = os.Remove(pidFile) }()
 
 	path, err := schedule.DefaultPath()
 	if err != nil {
@@ -164,7 +164,7 @@ func runScheduledEntry(ctx context.Context, e schedule.Entry) (string, error) {
 			}
 		},
 	})
-	defer r.Close()
+	defer func() { _ = r.Close() }()
 	err := r.Run(ctx, e.Prompt)
 	return sb.String(), err
 }

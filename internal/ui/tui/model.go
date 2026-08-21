@@ -551,7 +551,10 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.streamStop = nil
 			m.streaming = false
 			m.messages = append(m.messages, newSystemMessage("Interrupted."))
-			go func(ch <-chan StreamEvent) { for range ch {} }(m.streamCh)
+			go func(ch <-chan StreamEvent) {
+				for range ch {
+				}
+			}(m.streamCh)
 			m.textarea.Focus()
 			m.refreshViewport()
 			return m, nil
@@ -979,18 +982,21 @@ func (m Model) handleSlashCommand(input string) (tea.Model, tea.Cmd) {
 		m.refreshViewport()
 
 	default:
-		// Check custom commands loaded from .bai/commands/*.md.
+		// Check custom commands loaded from .bai/commands/*.md and
+		// ~/.bai/commands/*.md.
 		cmdName := strings.Fields(input)[0] // e.g. "/review"
+		cmdArgs := strings.TrimSpace(strings.TrimPrefix(input, cmdName))
 		for _, c := range m.cfg.CustomCommands {
 			if c.Name == cmdName && c.Prompt != "" {
-				m.messages = append(m.messages, newUserMessage(c.Prompt))
+				prompt := expandArguments(c.Prompt, cmdArgs)
+				m.messages = append(m.messages, newUserMessage(prompt))
 				m.streaming = true
 				m.atBottom = true
 				m.refreshViewport()
 				m.viewport.GotoBottom()
 				isNew := m.isNewChat
 				m.isNewChat = false
-				m.streamCh = m.submitFn(m.cfg.ChatID, m.cfg.Model, c.Prompt, isNew)
+				m.streamCh = m.submitFn(m.cfg.ChatID, m.cfg.Model, prompt, isNew)
 				return m, waitForStreamEvent(m.streamCh, m.streamStop)
 			}
 		}
@@ -1139,7 +1145,7 @@ func helpText() string {
 		"  Up/Down        Navigate input history",
 		"  Ctrl+L         Clear screen",
 		"  Ctrl+C          Interrupt turn (or quit when idle)",
-	"  Ctrl+D          Quit",
+		"  Ctrl+D          Quit",
 		"  PgUp/PgDn      Scroll conversation",
 		"",
 		"  Slash commands",

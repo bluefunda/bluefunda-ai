@@ -348,6 +348,78 @@ func TestInputHistory(t *testing.T) {
 	}
 }
 
+// ── Custom slash commands ──────────────────────────────────────────────────────
+
+func TestCustomSlashCommand_SubstitutesArguments(t *testing.T) {
+	m := newTestModel("")
+	m.vpReady = true
+	m.cfg.CustomCommands = []SlashCommand{
+		{Name: "/review", Description: "Code review this file", Prompt: "Review $ARGUMENTS for correctness."},
+	}
+
+	var submitted string
+	m.submitFn = func(_, _, input string, _ bool) <-chan StreamEvent {
+		submitted = input
+		ch := make(chan StreamEvent, 1)
+		ch <- StreamEvent{Kind: "done"}
+		close(ch)
+		return ch
+	}
+
+	m.textarea.SetValue("/review internal/cmd/code.go")
+	nm, _ := m.submitInput()
+	m = nm.(Model)
+
+	want := "Review internal/cmd/code.go for correctness."
+	if submitted != want {
+		t.Errorf("submitted prompt = %q, want %q", submitted, want)
+	}
+}
+
+func TestCustomSlashCommand_NoArgumentsLeavesPlaceholderless(t *testing.T) {
+	m := newTestModel("")
+	m.vpReady = true
+	m.cfg.CustomCommands = []SlashCommand{
+		{Name: "/standup", Description: "Summarize commits", Prompt: "Summarize yesterday's commits."},
+	}
+
+	var submitted string
+	m.submitFn = func(_, _, input string, _ bool) <-chan StreamEvent {
+		submitted = input
+		ch := make(chan StreamEvent, 1)
+		ch <- StreamEvent{Kind: "done"}
+		close(ch)
+		return ch
+	}
+
+	m.textarea.SetValue("/standup")
+	nm, _ := m.submitInput()
+	m = nm.(Model)
+
+	if submitted != "Summarize yesterday's commits." {
+		t.Errorf("submitted prompt = %q", submitted)
+	}
+}
+
+func TestCustomSlashCommand_UnknownReportsError(t *testing.T) {
+	m := newTestModel("")
+	m.vpReady = true
+
+	m.textarea.SetValue("/nonexistent")
+	nm, _ := m.submitInput()
+	m = nm.(Model)
+
+	found := false
+	for _, msg := range m.messages {
+		if strings.Contains(msg.Content, "Unknown command: /nonexistent") {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("expected an 'Unknown command' message, got %+v", m.messages)
+	}
+}
+
 // ── One-shot mode (InitialPrompt auto-submit) ─────────────────────────────────
 
 func TestOneShotMode(t *testing.T) {

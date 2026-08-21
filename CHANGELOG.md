@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.47.0](https://github.com/bluefunda/bluefunda-ai/compare/v1.46.0...v1.47.0) (2026-08-21)
+
+
+### Features
+
+* **agent:** user-level commands dir and $ARGUMENTS for custom slash commands ([#278](https://github.com/bluefunda/bluefunda-ai/issues/278)) ([004160d](https://github.com/bluefunda/bluefunda-ai/commit/004160d92c0044216ca1948b728ddd88ab93e386))
+
 ## [1.46.0](https://github.com/bluefunda/bluefunda-ai/compare/v1.45.0...v1.46.0) (2026-08-20)
 
 

@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.49.0](https://github.com/bluefunda/bluefunda-ai/compare/v1.48.0...v1.49.0) (2026-08-21)
+
+
+### Features
+
+* **agent:** scheduled/recurring agent runs ([#177](https://github.com/bluefunda/bluefunda-ai/issues/177) Phase 1, client-side) ([#282](https://github.com/bluefunda/bluefunda-ai/issues/282)) ([31b5e4d](https://github.com/bluefunda/bluefunda-ai/commit/31b5e4d4dc089d06eb52af66ea706138bf0f70a0))
+
 ## [1.48.0](https://github.com/bluefunda/bluefunda-ai/compare/v1.47.0...v1.48.0) (2026-08-21)
 
 

@@ -209,7 +209,7 @@ func (r *Runner) ensureConn() error {
 	r.cfg = cfg
 
 	refreshFunc := func() (string, error) {
-		tok, err := auth.Refresh(cfg.Domain, cfg.Realm, cfg.Auth.RefreshToken)
+		tok, err := auth.Refresh(cfg.EffectiveDomain(), cfg.Realm, cfg.Auth.RefreshToken)
 		if err != nil {
 			return "", err
 		}
@@ -220,7 +220,7 @@ func (r *Runner) ensureConn() error {
 		return tok.AccessToken, nil
 	}
 	ts := caigrpc.NewTokenSource(cfg, refreshFunc)
-	conn, err := caigrpc.Dial(cfg.BFFURL, ts)
+	conn, err := caigrpc.Dial(cfg.EffectiveBFFURL(), ts)
 	if err != nil {
 		return fmt.Errorf("dial BFF: %w", err)
 	}

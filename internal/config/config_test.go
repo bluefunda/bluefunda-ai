@@ -4,10 +4,12 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/bluefunda/bluefunda-ai/internal/keychain"
+	"gopkg.in/yaml.v3"
 )
 
 func TestTokenValid_Valid(t *testing.T) {
@@ -443,5 +445,254 @@ func TestRawAccessToken_Missing(t *testing.T) {
 	got := rawAccessToken(&data)
 	if got != "" {
 		t.Errorf("rawAccessToken = %q, want empty string", got)
+	}
+}
+
+// --- Profile Tests ---
+
+// clearProfileEnv resets profile-related process state so tests don't leak
+// into each other via the package-level profileOverride var or BAI_PROFILE.
+func clearProfileEnv(t *testing.T) {
+	t.Helper()
+	SetProfileOverride("")
+	t.Cleanup(func() { SetProfileOverride("") })
+	t.Setenv("BAI_PROFILE", "")
+}
+
+func testConfigWithProfiles() *Config {
+	return &Config{
+		GatewayURL: "https://prod.example.com",
+		BFFURL:     "prod.example.com:443",
+		Domain:     "example.com",
+		Defaults:   Defaults{Model: "prod-model"},
+		Profiles: map[string]Profile{
+			"dev": {Endpoint: "dev.internal:443", Gateway: "https://dev.internal", Domain: "dev.example.com", Model: "dev-model"},
+			"ci":  {Endpoint: "ci.internal:443"}, // partial override — only endpoint set
+		},
+	}
+}
+
+func TestProfileNames_Sorted(t *testing.T) {
+	cfg := testConfigWithProfiles()
+	got := cfg.ProfileNames()
+	want := []string{"ci", "dev"}
+	if len(got) != len(want) || got[0] != want[0] || got[1] != want[1] {
+		t.Errorf("ProfileNames() = %v, want %v", got, want)
+	}
+}
+
+func TestEffective_NoActiveProfileReturnsBaseValues(t *testing.T) {
+	clearProfileEnv(t)
+	cfg := testConfigWithProfiles()
+	if got := cfg.EffectiveBFFURL(); got != "prod.example.com:443" {
+		t.Errorf("EffectiveBFFURL() = %q", got)
+	}
+	if got := cfg.EffectiveGatewayURL(); got != "https://prod.example.com" {
+		t.Errorf("EffectiveGatewayURL() = %q", got)
+	}
+	if got := cfg.EffectiveDomain(); got != "example.com" {
+		t.Errorf("EffectiveDomain() = %q", got)
+	}
+	if got := cfg.EffectiveModel(); got != "prod-model" {
+		t.Errorf("EffectiveModel() = %q", got)
+	}
+}
+
+func TestEffective_ProfileOverrideAppliesAllFields(t *testing.T) {
+	clearProfileEnv(t)
+	SetProfileOverride("dev")
+	cfg := testConfigWithProfiles()
+	if got := cfg.EffectiveBFFURL(); got != "dev.internal:443" {
+		t.Errorf("EffectiveBFFURL() = %q", got)
+	}
+	if got := cfg.EffectiveGatewayURL(); got != "https://dev.internal" {
+		t.Errorf("EffectiveGatewayURL() = %q", got)
+	}
+	if got := cfg.EffectiveDomain(); got != "dev.example.com" {
+		t.Errorf("EffectiveDomain() = %q", got)
+	}
+	if got := cfg.EffectiveModel(); got != "dev-model" {
+		t.Errorf("EffectiveModel() = %q", got)
+	}
+}
+
+func TestEffective_PartialProfileFallsBackToBaseForUnsetFields(t *testing.T) {
+	clearProfileEnv(t)
+	SetProfileOverride("ci")
+	cfg := testConfigWithProfiles()
+	if got := cfg.EffectiveBFFURL(); got != "ci.internal:443" {
+		t.Errorf("EffectiveBFFURL() = %q, want the ci profile's endpoint", got)
+	}
+	if got := cfg.EffectiveGatewayURL(); got != "https://prod.example.com" {
+		t.Errorf("EffectiveGatewayURL() = %q, want base value since ci profile doesn't set gateway", got)
+	}
+	if got := cfg.EffectiveModel(); got != "prod-model" {
+		t.Errorf("EffectiveModel() = %q, want base value since ci profile doesn't set model", got)
+	}
+}
+
+func TestEffective_ViaBAIProfileEnvVar(t *testing.T) {
+	clearProfileEnv(t)
+	t.Setenv("BAI_PROFILE", "dev")
+	cfg := testConfigWithProfiles()
+	if got := cfg.EffectiveBFFURL(); got != "dev.internal:443" {
+		t.Errorf("EffectiveBFFURL() = %q, want BAI_PROFILE=dev applied", got)
+	}
+}
+
+func TestEffective_ViaDefaultProfile(t *testing.T) {
+	clearProfileEnv(t)
+	cfg := testConfigWithProfiles()
+	cfg.DefaultProfile = "dev"
+	if got := cfg.EffectiveBFFURL(); got != "dev.internal:443" {
+		t.Errorf("EffectiveBFFURL() = %q, want default_profile applied", got)
+	}
+}
+
+func TestEffective_OverridePrecedenceOverEnvAndDefault(t *testing.T) {
+	clearProfileEnv(t)
+	t.Setenv("BAI_PROFILE", "ci")
+	SetProfileOverride("dev")
+	cfg := testConfigWithProfiles()
+	cfg.DefaultProfile = "ci"
+	if got := cfg.EffectiveBFFURL(); got != "dev.internal:443" {
+		t.Errorf("EffectiveBFFURL() = %q, want profileOverride (dev) to win over BAI_PROFILE and default_profile (both ci)", got)
+	}
+}
+
+func TestEffective_UnknownProfileFallsBackSilently(t *testing.T) {
+	// Effective* accessors never surface the "unknown profile" error directly
+	// (that's activeProfile's job, checked eagerly in Load) — they just fall
+	// back to the base value so a bad profile name doesn't panic or crash a
+	// read.
+	clearProfileEnv(t)
+	SetProfileOverride("nonexistent")
+	cfg := testConfigWithProfiles()
+	if got := cfg.EffectiveBFFURL(); got != "prod.example.com:443" {
+		t.Errorf("EffectiveBFFURL() = %q, want base value as a safe fallback", got)
+	}
+}
+
+func TestActiveProfile_UnknownNameErrors(t *testing.T) {
+	clearProfileEnv(t)
+	SetProfileOverride("nonexistent")
+	cfg := testConfigWithProfiles()
+	_, err := cfg.activeProfile()
+	if err == nil {
+		t.Fatal("expected an error for an unknown profile name, got nil")
+	}
+	if !strings.Contains(err.Error(), "dev") || !strings.Contains(err.Error(), "ci") {
+		t.Errorf("error = %q, want it to list available profile names", err.Error())
+	}
+}
+
+func TestActiveProfile_RequestedButNoneConfigured(t *testing.T) {
+	clearProfileEnv(t)
+	SetProfileOverride("dev")
+	cfg := &Config{} // no Profiles map at all
+	_, err := cfg.activeProfile()
+	if err == nil {
+		t.Fatal("expected an error, got nil")
+	}
+	if !strings.Contains(err.Error(), "no profiles are configured") {
+		t.Errorf("error = %q, want a clear \"no profiles configured\" message", err.Error())
+	}
+}
+
+func TestActiveProfile_NoneRequestedIsNotAnError(t *testing.T) {
+	clearProfileEnv(t)
+	cfg := &Config{}
+	p, err := cfg.activeProfile()
+	if err != nil {
+		t.Fatalf("activeProfile() error = %v, want nil when no profile is requested", err)
+	}
+	if p != nil {
+		t.Errorf("activeProfile() = %+v, want nil", p)
+	}
+}
+
+// TestLoad_ProfileOverrideDoesNotMutatePersistedFields is the key regression
+// guard for the correctness bug an earlier design had: applying a profile
+// directly onto Config's persisted fields meant an unrelated Save() call
+// (e.g. a token refresh) would silently bake the temporarily active
+// profile's values into ~/.bai/config.yaml. Effective* accessors must never
+// touch cfg's base fields, so a Load -> read Effective* -> Save round trip
+// leaves the base fields exactly as they were on disk.
+func TestLoad_ProfileOverrideDoesNotMutatePersistedFields(t *testing.T) {
+	withTempHome(t)
+	for _, k := range []string{"BAI_GATEWAY", "BAI_BFF", "BAI_DOMAIN", "BAI_REALM", "BAI_MODEL", "BAI_ACCESS_TOKEN", "BAI_PROFILE"} {
+		t.Setenv(k, "")
+	}
+	orig := keychain.Default
+	keychain.SetBackend(newMockKeychain(false))
+	defer keychain.SetBackend(orig)
+
+	home, _ := os.UserHomeDir()
+	baiDir := filepath.Join(home, ".bai")
+	if err := os.MkdirAll(baiDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	yamlContent := "endpoint: prod.example.com:443\n" +
+		"profiles:\n" +
+		"  dev:\n" +
+		"    endpoint: dev.internal:443\n"
+	if err := os.WriteFile(filepath.Join(baiDir, "config.yaml"), []byte(yamlContent), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	clearProfileEnv(t)
+	SetProfileOverride("dev")
+	defer SetProfileOverride("")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if got := cfg.EffectiveBFFURL(); got != "dev.internal:443" {
+		t.Fatalf("EffectiveBFFURL() = %q, want the dev profile applied", got)
+	}
+	if cfg.BFFURL != "prod.example.com:443" {
+		t.Fatalf("cfg.BFFURL = %q, want the base value untouched by the active profile", cfg.BFFURL)
+	}
+
+	// Simulate an unrelated Save (e.g. a token refresh) while the dev
+	// profile is active for this process.
+	cfg.Auth.AccessToken = "new-token"
+	if err := Save(cfg); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+
+	// Re-read the saved file directly (bypassing Load's profile resolution)
+	// to check the persisted *base* endpoint field specifically. The dev
+	// profile's endpoint legitimately still appears under profiles.dev — the
+	// bug this guards against is the base "endpoint:" field itself getting
+	// overwritten with the profile's value.
+	raw, err := os.ReadFile(filepath.Join(baiDir, "config.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var onDisk Config
+	if err := yaml.Unmarshal(raw, &onDisk); err != nil {
+		t.Fatalf("parse saved config.yaml: %v", err)
+	}
+	if onDisk.BFFURL != "prod.example.com:443" {
+		t.Errorf("saved base endpoint = %q, want %q (the dev profile must not overwrite it)", onDisk.BFFURL, "prod.example.com:443")
+	}
+	if onDisk.Profiles["dev"].Endpoint != "dev.internal:443" {
+		t.Errorf("saved profiles.dev.endpoint = %q, want %q (profiles themselves must round-trip)", onDisk.Profiles["dev"].Endpoint, "dev.internal:443")
+	}
+}
+
+func TestLoad_UnknownProfileOverrideErrors(t *testing.T) {
+	withTempHome(t)
+	for _, k := range []string{"BAI_GATEWAY", "BAI_BFF", "BAI_DOMAIN", "BAI_REALM", "BAI_MODEL", "BAI_ACCESS_TOKEN", "BAI_PROFILE"} {
+		t.Setenv(k, "")
+	}
+	clearProfileEnv(t)
+	SetProfileOverride("nonexistent")
+	defer SetProfileOverride("")
+
+	if _, err := Load(); err == nil {
+		t.Error("expected Load to error on an unknown --profile override, got nil")
 	}
 }

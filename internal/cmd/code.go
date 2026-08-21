@@ -139,7 +139,7 @@ func runAgenticSession(args []string) error {
 
 	model := codeModel
 	if model == "" {
-		model = cfg.Defaults.Model
+		model = cfg.EffectiveModel()
 	}
 	model = resolveModelAlias(model)
 

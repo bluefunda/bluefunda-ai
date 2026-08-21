@@ -174,6 +174,8 @@ func init() {
 		configCmd,
 		doctorCmd,
 		memoryCmd,
+		scheduleCmd,
+		daemonCmd,
 		mcpCmd,
 		tipsCmd,
 		updateCmd,

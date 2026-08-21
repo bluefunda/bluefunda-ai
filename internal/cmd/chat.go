@@ -188,7 +188,7 @@ func runChatSession(chatID, initialPrompt, model, mcpServer string) error {
 	defer conn.Close()
 
 	if model == "" {
-		model = cfg.Defaults.Model
+		model = cfg.EffectiveModel()
 	}
 	model = resolveModelAlias(model)
 

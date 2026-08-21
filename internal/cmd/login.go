@@ -30,7 +30,7 @@ func init() {
 func runLogin(cmd *cobra.Command, args []string) error {
 	cfg := loadConfig()
 
-	tok, err := auth.LoginWithDevice(cfg.Domain, loginRealm)
+	tok, err := auth.LoginWithDevice(cfg.EffectiveDomain(), loginRealm)
 	if err != nil {
 		ui.Error("Login failed: " + err.Error())
 		return err

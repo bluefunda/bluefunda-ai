@@ -21,6 +21,7 @@ var (
 	cfgBFF     string
 	cfgDomain  string
 	cfgOutput  string
+	cfgProfile string
 	rootNew    bool
 	// Agentic session flags — shared with the deprecated 'bai code' alias.
 	rootModel            string
@@ -117,6 +118,7 @@ func init() {
 	_ = rootCmd.PersistentFlags().MarkHidden("domain")
 
 	rootCmd.PersistentFlags().StringVarP(&cfgOutput, "output", "o", "", "Output format: table, json, quiet")
+	rootCmd.PersistentFlags().StringVar(&cfgProfile, "profile", "", "Activate a named backend profile for this session (see: bai config use-profile)")
 	rootCmd.Flags().BoolVar(&rootNew, "new", false, "Force a new session")
 	rootCmd.Flags().BoolP("version", "v", false, "Print version and exit")
 
@@ -143,6 +145,7 @@ func init() {
 			fmt.Println("bai version " + Version)
 			os.Exit(0)
 		}
+		config.SetProfileOverride(cfgProfile)
 		// NO_COLOR, TERM=dumb, and non-terminal stdout are already respected
 		// automatically by fatih/color and lipgloss's own detection. --no-color
 		// forces it off explicitly, e.g. for a color-capable terminal in CI.

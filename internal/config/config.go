@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
+	"strings"
 	"time"
 
 	"github.com/bluefunda/bluefunda-ai/internal/crypto"
@@ -30,12 +32,111 @@ func AuthURL(domain, realm string) string {
 
 // Config represents the CLI configuration stored in ~/.bai/config.yaml.
 type Config struct {
-	GatewayURL string   `yaml:"gateway"`  // was: gateway_url
-	BFFURL     string   `yaml:"endpoint"` // was: bff_url
-	Domain     string   `yaml:"domain"`
-	Realm      string   `yaml:"realm"`
-	Auth       Auth     `yaml:"auth"`
-	Defaults   Defaults `yaml:"defaults"`
+	GatewayURL     string             `yaml:"gateway"`  // was: gateway_url
+	BFFURL         string             `yaml:"endpoint"` // was: bff_url
+	Domain         string             `yaml:"domain"`
+	Realm          string             `yaml:"realm"`
+	Auth           Auth               `yaml:"auth"`
+	Defaults       Defaults           `yaml:"defaults"`
+	Profiles       map[string]Profile `yaml:"profiles,omitempty"`
+	DefaultProfile string             `yaml:"default_profile,omitempty"`
+}
+
+// Profile is one named backend environment under the top-level `profiles:`
+// map (e.g. dev / staging / prod). Any field left empty falls back to the
+// top-level Config value it would otherwise override.
+type Profile struct {
+	Endpoint string `yaml:"endpoint,omitempty"`
+	Gateway  string `yaml:"gateway,omitempty"`
+	Domain   string `yaml:"domain,omitempty"`
+	Model    string `yaml:"model,omitempty"`
+}
+
+// profileOverride activates a profile for the current process, taking
+// precedence over BAI_PROFILE and the YAML file's default_profile. Wired to
+// the --profile CLI flag; set it (via SetProfileOverride) before calling
+// Load().
+var profileOverride string
+
+// SetProfileOverride sets the profile Load will activate, overriding
+// BAI_PROFILE and default_profile. Pass "" to clear it.
+func SetProfileOverride(name string) {
+	profileOverride = name
+}
+
+// ProfileNames returns the configured profile names, sorted.
+func (cfg *Config) ProfileNames() []string {
+	names := make([]string, 0, len(cfg.Profiles))
+	for name := range cfg.Profiles {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names
+}
+
+// activeProfile resolves which profile applies — profileOverride, then
+// BAI_PROFILE, then cfg.DefaultProfile, in that order — and returns it, or
+// nil if none is active. Returns an error if an explicitly named profile
+// (from any of those three sources) doesn't exist.
+//
+// This never mutates cfg. Config's own persisted fields (GatewayURL, BFFURL,
+// Domain, Defaults.Model) are always the plain base values from
+// ~/.bai/config.yaml — Save writes them back untouched. A profile is instead
+// an overlay applied at read time by the Effective* accessors below, so that
+// an unrelated Save (e.g. a token refresh mid-session) can never bake a
+// temporarily active profile's values into the persisted base config.
+func (cfg *Config) activeProfile() (*Profile, error) {
+	name := profileOverride
+	if name == "" {
+		name = os.Getenv("BAI_PROFILE")
+	}
+	if name == "" {
+		name = cfg.DefaultProfile
+	}
+	if name == "" {
+		return nil, nil
+	}
+	p, ok := cfg.Profiles[name]
+	if !ok {
+		available := cfg.ProfileNames()
+		if len(available) == 0 {
+			return nil, fmt.Errorf("profile %q requested but no profiles are configured in ~/.bai/config.yaml", name)
+		}
+		return nil, fmt.Errorf("unknown profile %q — available: %s", name, strings.Join(available, ", "))
+	}
+	return &p, nil
+}
+
+// EffectiveBFFURL returns the active profile's endpoint if set, else BFFURL.
+func (cfg *Config) EffectiveBFFURL() string {
+	if p, err := cfg.activeProfile(); err == nil && p != nil && p.Endpoint != "" {
+		return p.Endpoint
+	}
+	return cfg.BFFURL
+}
+
+// EffectiveGatewayURL returns the active profile's gateway if set, else GatewayURL.
+func (cfg *Config) EffectiveGatewayURL() string {
+	if p, err := cfg.activeProfile(); err == nil && p != nil && p.Gateway != "" {
+		return p.Gateway
+	}
+	return cfg.GatewayURL
+}
+
+// EffectiveDomain returns the active profile's domain if set, else Domain.
+func (cfg *Config) EffectiveDomain() string {
+	if p, err := cfg.activeProfile(); err == nil && p != nil && p.Domain != "" {
+		return p.Domain
+	}
+	return cfg.Domain
+}
+
+// EffectiveModel returns the active profile's model if set, else Defaults.Model.
+func (cfg *Config) EffectiveModel() string {
+	if p, err := cfg.activeProfile(); err == nil && p != nil && p.Model != "" {
+		return p.Model
+	}
+	return cfg.Defaults.Model
 }
 
 // legacyConfig holds the old YAML field names for one-time migration.
@@ -80,8 +181,9 @@ func configPath() (string, error) {
 }
 
 // applyEnvOverrides copies BAI_* environment variables into cfg, overriding
-// values read from the YAML file. CLI flags take precedence over these.
-// Precedence order: CLI flags > BAI_* env vars > YAML file > compiled defaults.
+// values read from the YAML file (including any profile already applied).
+// CLI flags take precedence over these.
+// Precedence order: CLI flags > BAI_* env vars > active profile > YAML file > compiled defaults.
 func applyEnvOverrides(cfg *Config) {
 	if v := os.Getenv("BAI_GATEWAY"); v != "" {
 		cfg.GatewayURL = v
@@ -175,6 +277,9 @@ func Load() (*Config, error) {
 	if err != nil {
 		if os.IsNotExist(err) {
 			cfg := defaultConfig()
+			if _, err := cfg.activeProfile(); err != nil {
+				return nil, err
+			}
 			applyEnvOverrides(cfg)
 			return cfg, nil
 		}
@@ -197,6 +302,13 @@ func Load() (*Config, error) {
 			cfg.GatewayURL = legacy.GatewayOld
 			needsSave = true
 		}
+	}
+
+	// Validate the active profile (--profile / BAI_PROFILE / default_profile)
+	// exists. It's applied at read time by the Effective* accessors, not here
+	// — see activeProfile's doc comment for why.
+	if _, err := cfg.activeProfile(); err != nil {
+		return nil, err
 	}
 
 	// Backfill defaults for missing fields.

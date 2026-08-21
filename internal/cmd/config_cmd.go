@@ -7,6 +7,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/bluefunda/bluefunda-ai/internal/config"
+	"github.com/bluefunda/bluefunda-ai/internal/ui"
 )
 
 var configCmd = &cobra.Command{
@@ -34,8 +35,15 @@ var configSetCmd = &cobra.Command{
 	RunE:  runConfigSet,
 }
 
+var configUseProfileCmd = &cobra.Command{
+	Use:   "use-profile <name>",
+	Short: "Set the persistent default backend profile",
+	Args:  cobra.ExactArgs(1),
+	RunE:  runConfigUseProfile,
+}
+
 func init() {
-	configCmd.AddCommand(configListCmd, configGetCmd, configSetCmd)
+	configCmd.AddCommand(configListCmd, configGetCmd, configSetCmd, configUseProfileCmd)
 }
 
 type configKeyDef struct {
@@ -66,6 +74,14 @@ func runConfigList(cmd *cobra.Command, args []string) error {
 		{"model", cfg.Defaults.Model},
 		{"output", cfg.Defaults.Output},
 		{"endpoint", cfg.BFFURL},
+	}
+	defaultProfile := cfg.DefaultProfile
+	if defaultProfile == "" {
+		defaultProfile = "(none)"
+	}
+	rows = append(rows, []string{"default_profile", defaultProfile})
+	if names := cfg.ProfileNames(); len(names) > 0 {
+		rows = append(rows, []string{"profiles", strings.Join(names, ", ")})
 	}
 	p.Table(headers, rows)
 	return nil
@@ -103,5 +119,30 @@ func runConfigSet(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("save config: %w", err)
 	}
 	printer(cfg).Success(fmt.Sprintf("Set %s = %s", key, value))
+	return nil
+}
+
+func runConfigUseProfile(cmd *cobra.Command, args []string) error {
+	cfg := loadConfig()
+	return useProfile(cfg, args[0], printer(cfg))
+}
+
+// useProfile validates name against cfg.Profiles and, if valid, sets it as
+// the persistent default profile. Split out from runConfigUseProfile so it's
+// testable without going through cobra/loadConfig.
+func useProfile(cfg *config.Config, name string, p *ui.Printer) error {
+	if _, ok := cfg.Profiles[name]; !ok {
+		available := cfg.ProfileNames()
+		if len(available) == 0 {
+			return fmt.Errorf("no profiles are configured — add a `profiles:` block to ~/.bai/config.yaml first")
+		}
+		return fmt.Errorf("unknown profile %q — available: %s", name, strings.Join(available, ", "))
+	}
+
+	cfg.DefaultProfile = name
+	if err := config.Save(cfg); err != nil {
+		return fmt.Errorf("save config: %w", err)
+	}
+	p.Success(fmt.Sprintf("Default profile set to %q", name))
 	return nil
 }

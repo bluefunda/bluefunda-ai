@@ -104,7 +104,7 @@ func reAuthenticate(cfg *config.Config, p *ui.Printer) error {
 	p.Warn("Session expired. Starting re-authentication...")
 	p.Info("You will need to approve login in your browser.")
 
-	tok, err := auth.LoginWithDevice(cfg.Domain, cfg.Realm)
+	tok, err := auth.LoginWithDevice(cfg.EffectiveDomain(), cfg.Realm)
 	if err != nil {
 		return fmt.Errorf("re-authentication failed: %w", err)
 	}
@@ -126,7 +126,7 @@ func bffConn() (*caigrpc.Conn, *config.Config, error) {
 	}
 
 	refreshFunc := func() (string, error) {
-		tok, err := auth.Refresh(cfg.Domain, cfg.Realm, cfg.Auth.RefreshToken)
+		tok, err := auth.Refresh(cfg.EffectiveDomain(), cfg.Realm, cfg.Auth.RefreshToken)
 		if err != nil {
 			return "", fmt.Errorf("token refresh failed — run `bai login`: %w", err)
 		}
@@ -137,7 +137,7 @@ func bffConn() (*caigrpc.Conn, *config.Config, error) {
 	}
 
 	ts := caigrpc.NewTokenSource(cfg, refreshFunc)
-	conn, err := caigrpc.Dial(cfg.BFFURL, ts)
+	conn, err := caigrpc.Dial(cfg.EffectiveBFFURL(), ts)
 	if err != nil {
 		return nil, cfg, err
 	}

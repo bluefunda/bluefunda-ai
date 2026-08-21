@@ -68,12 +68,13 @@ func runDoctor(cmd *cobra.Command, args []string) error {
 
 	// 3. Backend reachable
 	start := time.Now()
-	if err := caigrpc.Ping(cfg.BFFURL); err != nil {
-		checks = append(checks, checkResult{"Backend reachable", "error", cfg.BFFURL + " — " + err.Error()})
+	bffURL := cfg.EffectiveBFFURL()
+	if err := caigrpc.Ping(bffURL); err != nil {
+		checks = append(checks, checkResult{"Backend reachable", "error", bffURL + " — " + err.Error()})
 		errors++
 	} else {
 		latency := time.Since(start).Round(time.Millisecond)
-		checks = append(checks, checkResult{"Backend reachable", "ok", fmt.Sprintf("%s  (%v)", cfg.BFFURL, latency)})
+		checks = append(checks, checkResult{"Backend reachable", "ok", fmt.Sprintf("%s  (%v)", bffURL, latency)})
 	}
 
 	// 4. Account info — validates auth end-to-end
@@ -93,11 +94,16 @@ func runDoctor(cmd *cobra.Command, args []string) error {
 	}
 
 	// 5. Default model
-	if cfg.Defaults.Model == "" || cfg.Defaults.Model == "openai" {
+	if model := cfg.EffectiveModel(); model == "" || model == "openai" {
 		checks = append(checks, checkResult{"Model default", "warn", `not configured — run: bai config set model=claude-sonnet`})
 		warnings++
 	} else {
-		checks = append(checks, checkResult{"Model default", "ok", cfg.Defaults.Model})
+		checks = append(checks, checkResult{"Model default", "ok", model})
+	}
+
+	// 5b. Active profile (#174)
+	if cfg.DefaultProfile != "" {
+		checks = append(checks, checkResult{"Profile", "ok", fmt.Sprintf("%s (endpoint: %s)", cfg.DefaultProfile, bffURL)})
 	}
 
 	// 6. ripgrep — used by search_content for fast code search

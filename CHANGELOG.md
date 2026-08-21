@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.48.0](https://github.com/bluefunda/bluefunda-ai/compare/v1.47.0...v1.48.0) (2026-08-21)
+
+
+### Features
+
+* **config:** named backend profiles (dev/staging/prod) ([#280](https://github.com/bluefunda/bluefunda-ai/issues/280)) ([eff4b31](https://github.com/bluefunda/bluefunda-ai/commit/eff4b3167f3eaddfe27cbbc7286377c021aac08b))
+
 ## [1.47.0](https://github.com/bluefunda/bluefunda-ai/compare/v1.46.0...v1.47.0) (2026-08-21)
 
 

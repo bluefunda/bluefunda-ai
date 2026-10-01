@@ -183,3 +183,24 @@ func TestPatchFileViaExecute(t *testing.T) {
 		t.Errorf("file content after Execute: %q", string(b))
 	}
 }
+
+// TestNeedsApproval_FileMutationTools guards against edit_file/patch_file
+// silently bypassing the approval dialog: previously NeedsApproval only
+// listed write_file, so edit_file and patch_file — the two tools the LLM is
+// told to *prefer* for modifying existing files — always auto-executed
+// regardless of --auto, contradicting the stated "every tool call is yours
+// to approve" safety model.
+func TestNeedsApproval_FileMutationTools(t *testing.T) {
+	cases := map[string]bool{
+		"read_file":  false,
+		"list_dir":   false,
+		"write_file": true,
+		"edit_file":  true,
+		"patch_file": true,
+	}
+	for tool, want := range cases {
+		if got := NeedsApproval(tool); got != want {
+			t.Errorf("NeedsApproval(%q) = %v, want %v", tool, got, want)
+		}
+	}
+}

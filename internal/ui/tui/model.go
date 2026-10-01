@@ -46,9 +46,15 @@ type StreamErrorMsg struct{ Msg string }
 type ApprovalRequestMsg struct {
 	ToolName string
 	Args     string
-	ReplyCh  chan bool
+	ReplyCh  chan ApprovalDecision
 }
 type ApprovalResponseMsg struct{ Approved bool }
+
+// ApprovalDecision is the user's response to a tool-approval prompt.
+type ApprovalDecision struct {
+	Approved    bool
+	AlwaysAllow bool // remember this exact tool+args for the rest of the session
+}
 
 // SessionsLoadedMsg is the async result of listing sessions for /sessions.
 type SessionsLoadedMsg struct {
@@ -185,8 +191,8 @@ type StreamEvent struct {
 	// progress
 	Iteration int
 	Tools     []string
-	// approval: reply channel (true=approved)
-	ReplyCh chan bool
+	// approval: reply channel
+	ReplyCh chan ApprovalDecision
 	// done / error
 	Err    error
 	ErrMsg string
@@ -680,7 +686,18 @@ func (m Model) handleApprovalKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		// Send approval answer (unblocks code goroutine) then resume stream pump.
 		stop := m.streamStop
 		return m, func() tea.Msg {
-			replyCh <- true
+			replyCh <- ApprovalDecision{Approved: true}
+			return waitForStreamEvent(ch, stop)()
+		}
+	case "a":
+		ch := m.streamCh
+		replyCh := m.pendingApproval.ReplyCh
+		m.pendingApproval = nil
+		m.messages = append(m.messages, newSystemMessage("  Applied. Always allowing this exact command for the rest of the session."))
+		m.refreshViewport()
+		stop := m.streamStop
+		return m, func() tea.Msg {
+			replyCh <- ApprovalDecision{Approved: true, AlwaysAllow: true}
 			return waitForStreamEvent(ch, stop)()
 		}
 	case "n", "esc":
@@ -691,13 +708,13 @@ func (m Model) handleApprovalKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.messages = append(m.messages, newSystemMessage("  Skipped."))
 		m.refreshViewport()
 		return m, func() tea.Msg {
-			replyCh <- false
+			replyCh <- ApprovalDecision{Approved: false}
 			return waitForStreamEvent(ch, stop)()
 		}
 	case "ctrl+c":
 		m.quit = true
 		if m.pendingApproval != nil {
-			m.pendingApproval.ReplyCh <- false
+			m.pendingApproval.ReplyCh <- ApprovalDecision{Approved: false}
 			m.pendingApproval = nil
 		}
 		return m, tea.Quit

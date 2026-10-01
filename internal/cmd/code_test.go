@@ -54,7 +54,7 @@ func TestExecuteTools_ParallelUnderAutoApply(t *testing.T) {
 	ch := make(chan tui.StreamEvent, n)
 
 	start := time.Now()
-	results := executeTools(toolCalls, nil, nil, true, false, auditLog, hookRunner, mcpMgr, pluginMgr, printer, ch)
+	results := executeTools(toolCalls, nil, nil, true, false, nil, auditLog, hookRunner, mcpMgr, pluginMgr, printer, ch)
 	elapsed := time.Since(start)
 
 	// Serial execution of 4 x 300ms sleeps would take ~1.2s; concurrent
@@ -97,4 +97,39 @@ func TestIsPlanModeBlocked(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestSessionAllowSet_AddAndContains(t *testing.T) {
+	s := newSessionAllowSet()
+	if s.contains("bash", `{"command":"git status"}`) {
+		t.Fatal("expected a fresh set to contain nothing")
+	}
+	s.add("bash", `{"command":"git status"}`)
+	if !s.contains("bash", `{"command":"git status"}`) {
+		t.Error("expected the added tool+args pair to be contained")
+	}
+}
+
+func TestSessionAllowSet_DifferentArgsTrackedIndependently(t *testing.T) {
+	s := newSessionAllowSet()
+	s.add("bash", `{"command":"git status"}`)
+	if s.contains("bash", `{"command":"git log"}`) {
+		t.Error("expected a different command to not be contained")
+	}
+}
+
+func TestSessionAllowSet_SameArgsDifferentToolNotMatched(t *testing.T) {
+	s := newSessionAllowSet()
+	s.add("bash", `{"path":"x"}`)
+	if s.contains("write_file", `{"path":"x"}`) {
+		t.Error("expected the same args under a different tool name to not match")
+	}
+}
+
+func TestSessionAllowSet_NilIsEmptyAndNoopAdd(t *testing.T) {
+	var s *sessionAllowSet
+	if s.contains("bash", `{"command":"git status"}`) {
+		t.Error("expected a nil set to contain nothing")
+	}
+	s.add("bash", `{"command":"git status"}`) // must not panic
 }

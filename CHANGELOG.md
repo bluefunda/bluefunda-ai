@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.53.0](https://github.com/bluefunda/bluefunda-ai/compare/v1.52.0...v1.53.0) (2026-10-01)
+
+
+### Features
+
+* **cmd:** report local MCP server health in bai doctor ([#309](https://github.com/bluefunda/bluefunda-ai/issues/309)) ([4549483](https://github.com/bluefunda/bluefunda-ai/commit/45494833dc3b93b8768faaace57e438a82a9861d))
+
 ## [1.52.0](https://github.com/bluefunda/bluefunda-ai/compare/v1.51.0...v1.52.0) (2026-10-01)
 
 

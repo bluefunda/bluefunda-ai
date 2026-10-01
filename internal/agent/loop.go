@@ -96,7 +96,7 @@ type LoopOptions struct {
 // ── Core loop ─────────────────────────────────────────────────────────────────
 
 const (
-	defaultMaxTurns        = 20
+	defaultMaxTurns        = 50
 	rateLimitInitialDelay  = 10 * time.Second
 	rateLimitMaxDelay      = 5 * time.Minute
 	rateLimitMaxRetries    = 3

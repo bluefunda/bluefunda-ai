@@ -130,7 +130,7 @@ func init() {
 	rootCmd.Flags().BoolVar(&rootThink, "think", false, "Enable extended thinking")
 	rootCmd.Flags().BoolVar(&rootAuto, "auto", false, "Auto-approve all tool calls")
 	rootCmd.Flags().BoolVar(&rootAutoApply, "auto-apply", false, "Same as --auto")
-	rootCmd.Flags().IntVar(&rootMaxTurns, "max-turns", 20, "Max agentic loop iterations")
+	rootCmd.Flags().IntVar(&rootMaxTurns, "max-turns", 50, "Max agentic loop iterations")
 	rootCmd.Flags().IntVar(&rootMaxContextTokens, "max-context-tokens", 0, "Max context tokens before auto-compaction (default 100000; env BAI_MAX_CONTEXT_TOKENS)")
 	rootCmd.Flags().Float64Var(&rootMaxBudgetUSD, "max-budget-usd", 0, "Stop session when estimated cost exceeds this USD amount (0 = no limit; env BAI_MAX_BUDGET_USD)")
 	rootCmd.Flags().StringVar(&rootDir, "dir", ".", "Working directory for file operations")

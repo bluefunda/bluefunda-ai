@@ -160,7 +160,12 @@ func TestPatchFile(t *testing.T) {
 }
 
 func TestPatchFileViaExecute(t *testing.T) {
-	f, err := os.CreateTemp(t.TempDir(), "exec-patch-*.go")
+	tmpDir := t.TempDir()
+	// Execute confines paths to the workspace root; chdir into the fixture's
+	// temp dir (outside any git repo) so it resolves as its own root.
+	t.Chdir(tmpDir)
+
+	f, err := os.CreateTemp(tmpDir, "exec-patch-*.go")
 	if err != nil {
 		t.Fatal(err)
 	}

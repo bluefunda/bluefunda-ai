@@ -28,12 +28,42 @@ type PatchEdit struct {
 	ReplaceAll bool   `json:"replace_all"`
 }
 
+// pathArgNames names which argument holds "the path" for each path-taking
+// tool, so Execute can confine it to the workspace root in one place before
+// dispatching. task's working_directory is optional (empty = use cwd).
+var pathArgNames = map[string]string{
+	"read_file":      "path",
+	"write_file":     "path",
+	"edit_file":      "path",
+	"patch_file":     "path",
+	"list_dir":       "path",
+	"read_notebook":  "path",
+	"edit_notebook":  "path",
+	"search_files":   "dir",
+	"search_content": "directory",
+	"task":           "working_directory",
+}
+
 // Execute dispatches a tool call to the appropriate local implementation.
 // Arguments is the JSON string from the LLM tool call.
 func Execute(name, argumentsJSON string) (string, error) {
 	var args map[string]any
 	if err := json.Unmarshal([]byte(argumentsJSON), &args); err != nil {
 		return "", fmt.Errorf("parse arguments: %w", err)
+	}
+
+	// Confine every path-taking tool to the workspace root before dispatch —
+	// a hard boundary with no bypass (a stepping stone toward the OS-level
+	// bash sandbox tracked separately; bash itself isn't content-confined
+	// here since arbitrary shell syntax can't be statically validated).
+	if argKey, ok := pathArgNames[name]; ok {
+		if raw, ok := args[argKey].(string); ok && raw != "" {
+			confined, err := confinePath(workspaceRoot(), raw)
+			if err != nil {
+				return "", err
+			}
+			args[argKey] = confined
+		}
 	}
 
 	switch name {
@@ -55,6 +85,12 @@ func Execute(name, argumentsJSON string) (string, error) {
 		}
 		if err := json.Unmarshal([]byte(argumentsJSON), &patchArgs); err != nil {
 			return "", fmt.Errorf("parse patch_file arguments: %w", err)
+		}
+		// patch_file re-parses argumentsJSON directly above, bypassing the
+		// generic args map — use the already-confined path instead of the
+		// raw one patchArgs just parsed.
+		if confined, ok := args["path"].(string); ok && confined != "" {
+			patchArgs.Path = confined
 		}
 		return PatchFile(patchArgs.Path, patchArgs.Edits)
 	case "write_file":
@@ -114,6 +150,61 @@ func Execute(name, argumentsJSON string) (string, error) {
 	default:
 		return "", fmt.Errorf("unknown tool: %s", name)
 	}
+}
+
+// workspaceRoot returns the confinement boundary for path-taking tools: the
+// nearest ancestor directory (from cwd) containing a .git entry, or cwd
+// itself if none is found (e.g. a scratch directory with no repo).
+func workspaceRoot() string {
+	cwd, err := os.Getwd()
+	if err != nil {
+		return "."
+	}
+	dir := cwd
+	for {
+		if _, err := os.Stat(filepath.Join(dir, ".git")); err == nil {
+			return dir
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			return cwd
+		}
+		dir = parent
+	}
+}
+
+// confinePath resolves path to an absolute, symlink-resolved form and
+// verifies it falls within root (including defeating symlink escapes).
+// Paths that don't exist yet (e.g. a new file write_file is about to create)
+// are handled by walking up to the nearest existing ancestor to resolve.
+func confinePath(root, path string) (string, error) {
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return "", fmt.Errorf("resolve path %q: %w", path, err)
+	}
+	resolved := resolveSymlinksBestEffort(abs)
+	rootResolved, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		rootResolved = root
+	}
+	rel, err := filepath.Rel(rootResolved, resolved)
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return "", fmt.Errorf("path %q resolves outside the workspace root %q", path, rootResolved)
+	}
+	return resolved, nil
+}
+
+// resolveSymlinksBestEffort resolves symlinks in path, walking up to the
+// nearest existing ancestor when path itself doesn't exist yet.
+func resolveSymlinksBestEffort(path string) string {
+	if resolved, err := filepath.EvalSymlinks(path); err == nil {
+		return resolved
+	}
+	dir := filepath.Dir(path)
+	if dir == path {
+		return path
+	}
+	return filepath.Join(resolveSymlinksBestEffort(dir), filepath.Base(path))
 }
 
 // ReadFile returns the contents of a file, optionally starting at line offset

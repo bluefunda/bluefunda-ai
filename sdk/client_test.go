@@ -10,8 +10,8 @@ func TestNewClient_defaults(t *testing.T) {
 	if c.opts.BinaryPath != "bai" {
 		t.Errorf("BinaryPath = %q, want %q", c.opts.BinaryPath, "bai")
 	}
-	if c.opts.MaxTurns != 20 {
-		t.Errorf("MaxTurns = %d, want 20", c.opts.MaxTurns)
+	if c.opts.MaxTurns != 50 {
+		t.Errorf("MaxTurns = %d, want 50", c.opts.MaxTurns)
 	}
 }
 

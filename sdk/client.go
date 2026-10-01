@@ -24,7 +24,7 @@ func NewClient(opts Options) *Client {
 		opts.BinaryPath = "bai"
 	}
 	if opts.MaxTurns == 0 {
-		opts.MaxTurns = 20
+		opts.MaxTurns = 50
 	}
 	return &Client{opts: opts}
 }

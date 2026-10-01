@@ -66,7 +66,7 @@ func init() {
 	codeCmd.Flags().StringVar(&codeDir, "dir", ".", "Working directory for file operations")
 	codeCmd.Flags().BoolVar(&codeAutoApply, "auto-apply", false, "Execute write/bash tools without prompting")
 	codeCmd.Flags().BoolVar(&codeAuto, "auto", false, "Same as --auto-apply")
-	codeCmd.Flags().IntVar(&codeMaxTurns, "max-turns", 20, "Maximum agentic loop iterations before stopping")
+	codeCmd.Flags().IntVar(&codeMaxTurns, "max-turns", 50, "Maximum agentic loop iterations before stopping")
 	codeCmd.Flags().IntVar(&codeMaxContextTokens, "max-context-tokens", 0, "Max context tokens before auto-compaction (default 100000; env BAI_MAX_CONTEXT_TOKENS)")
 	codeCmd.Flags().Float64Var(&codeMaxBudgetUSD, "max-budget-usd", 0, "Stop session when estimated cost exceeds this USD amount (0 = no limit; env BAI_MAX_BUDGET_USD)")
 	codeCmd.Flags().BoolVarP(&codePrint, "print", "p", false, "Non-interactive mode: print output to stdout")
@@ -717,7 +717,7 @@ func agenticLoopTUI(
 	ch chan<- tui.StreamEvent,
 ) ([]codeMessage, error) {
 	if maxTurns <= 0 {
-		maxTurns = 20
+		maxTurns = 50
 	}
 	if maxContextTokens <= 0 {
 		maxContextTokens = defaultCompactionThreshold

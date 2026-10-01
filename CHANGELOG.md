@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.57.0](https://github.com/bluefunda/bluefunda-ai/compare/v1.56.0...v1.57.0) (2026-10-01)
+
+
+### Features
+
+* **tools:** confine path-taking tools to the workspace root ([#323](https://github.com/bluefunda/bluefunda-ai/issues/323)) ([fa8dc90](https://github.com/bluefunda/bluefunda-ai/commit/fa8dc90fae6be7eb6d7e5b550899ea9869122134))
+
 ## [1.56.0](https://github.com/bluefunda/bluefunda-ai/compare/v1.55.0...v1.56.0) (2026-10-01)
 
 

@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.54.1](https://github.com/bluefunda/bluefunda-ai/compare/v1.54.0...v1.54.1) (2026-10-01)
+
+
+### Bug Fixes
+
+* edit_file/patch_file/edit_notebook silently bypass tool approval ([#313](https://github.com/bluefunda/bluefunda-ai/issues/313)) ([ad6d4fd](https://github.com/bluefunda/bluefunda-ai/commit/ad6d4fd32b233cd0869cbd6c82a37440d329b89a))
+
 ## [1.54.0](https://github.com/bluefunda/bluefunda-ai/compare/v1.53.0...v1.54.0) (2026-10-01)
 
 

@@ -308,6 +308,75 @@ func TestMergeProject_EmptyDoesNotOverride(t *testing.T) {
 	}
 }
 
+// --- MCPServerConfig Tests ---
+
+func TestEffectiveTransport_ExplicitType(t *testing.T) {
+	srv := MCPServerConfig{Type: "http", Command: "ignored", URL: "https://example.com/mcp"}
+	if got := srv.EffectiveTransport(); got != "http" {
+		t.Errorf("expected http, got %q", got)
+	}
+}
+
+func TestEffectiveTransport_InferredHTTPFromURL(t *testing.T) {
+	srv := MCPServerConfig{URL: "https://example.com/mcp"}
+	if got := srv.EffectiveTransport(); got != "http" {
+		t.Errorf("expected http (inferred from URL), got %q", got)
+	}
+}
+
+func TestEffectiveTransport_DefaultsToStdio(t *testing.T) {
+	srv := MCPServerConfig{Command: "my-server"}
+	if got := srv.EffectiveTransport(); got != "stdio" {
+		t.Errorf("expected stdio, got %q", got)
+	}
+}
+
+func TestEffectiveTransport_ExplicitStdioOverridesURL(t *testing.T) {
+	srv := MCPServerConfig{Type: "stdio", URL: "https://example.com/mcp"}
+	if got := srv.EffectiveTransport(); got != "stdio" {
+		t.Errorf("expected explicit stdio to win over a bare URL, got %q", got)
+	}
+}
+
+func TestMCPServerConfig_YAMLRoundTrip(t *testing.T) {
+	src := `
+mcp_servers:
+  local:
+    command: my-server
+    args: ["--flag"]
+    env:
+      FOO: bar
+  remote:
+    type: http
+    url: https://example.com/mcp
+    headers:
+      Authorization: "Bearer xyz"
+`
+	var p ProjectConfig
+	if err := yaml.Unmarshal([]byte(src), &p); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+
+	local, ok := p.MCPServers["local"]
+	if !ok {
+		t.Fatal("expected 'local' server entry")
+	}
+	if local.Command != "my-server" || local.EffectiveTransport() != "stdio" {
+		t.Errorf("unexpected local server config: %+v", local)
+	}
+
+	remote, ok := p.MCPServers["remote"]
+	if !ok {
+		t.Fatal("expected 'remote' server entry")
+	}
+	if remote.URL != "https://example.com/mcp" || remote.EffectiveTransport() != "http" {
+		t.Errorf("unexpected remote server config: %+v", remote)
+	}
+	if remote.Headers["Authorization"] != "Bearer xyz" {
+		t.Errorf("expected Authorization header, got %+v", remote.Headers)
+	}
+}
+
 // --- FindProjectConfig Tests ---
 
 func TestFindProjectConfig_Found(t *testing.T) {

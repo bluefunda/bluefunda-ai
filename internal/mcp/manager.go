@@ -12,24 +12,45 @@ import (
 
 const namespacePrefix = "mcp__"
 
+// mcpClient is satisfied by both the stdio Client and the Streamable HTTP
+// httpClient, letting Manager hold either transport uniformly.
+type mcpClient interface {
+	Tools() []Tool
+	Call(ctx context.Context, toolName, argsJSON string) (string, error)
+	Stop()
+}
+
 // Manager starts and owns a set of MCP server clients for one bai code session.
 type Manager struct {
-	clients map[string]*Client // keyed by server name
+	clients map[string]mcpClient // keyed by server name
 }
 
 // NewManager starts all MCP servers defined in cfg.MCPServers.
 // Servers that fail to start are skipped with a warning printed to stderr.
 func NewManager(ctx context.Context, cfg *config.ProjectConfig) *Manager {
-	m := &Manager{clients: make(map[string]*Client)}
+	m := &Manager{clients: make(map[string]mcpClient)}
 	if cfg == nil {
 		return m
 	}
 	for name, srv := range cfg.MCPServers {
-		if srv.Command == "" {
-			fmt.Printf("[bai] mcp %s: missing command — skipping\n", name)
-			continue
+		var (
+			c   mcpClient
+			err error
+		)
+		switch srv.EffectiveTransport() {
+		case "http":
+			if srv.URL == "" {
+				fmt.Printf("[bai] mcp %s: missing url for type http — skipping\n", name)
+				continue
+			}
+			c, err = StartHTTP(ctx, name, srv.URL, srv.Headers)
+		default:
+			if srv.Command == "" {
+				fmt.Printf("[bai] mcp %s: missing command — skipping\n", name)
+				continue
+			}
+			c, err = Start(ctx, name, srv.Command, srv.Args, srv.Env)
 		}
-		c, err := Start(ctx, name, srv.Command, srv.Args, srv.Env)
 		if err != nil {
 			fmt.Printf("[bai] mcp %s: failed to start: %v\n", name, err)
 			continue

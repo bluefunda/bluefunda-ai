@@ -1,6 +1,7 @@
-// Package mcp implements a minimal MCP (Model Context Protocol) client using
-// the stdio transport. It speaks JSON-RPC 2.0 and supports the initialize,
-// tools/list, and tools/call methods sufficient for bai code tool integration.
+// Package mcp implements a minimal MCP (Model Context Protocol) client over
+// the stdio and Streamable HTTP transports. It speaks JSON-RPC 2.0 and
+// supports the initialize, tools/list, and tools/call methods sufficient for
+// bai code tool integration.
 package mcp
 
 import (
@@ -168,7 +169,13 @@ func (c *Client) Call(ctx context.Context, toolName, argsJSON string) (string, e
 	if err != nil {
 		return "", err
 	}
+	return parseToolCallResult(raw)
+}
 
+// parseToolCallResult decodes a tools/call JSON-RPC result — shared between
+// the stdio and HTTP transports, since the result shape is transport-agnostic —
+// into the joined text content, surfacing isError as a Go error.
+func parseToolCallResult(raw json.RawMessage) (string, error) {
 	var result struct {
 		Content []struct {
 			Type string `json:"type"`

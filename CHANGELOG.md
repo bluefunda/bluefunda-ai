@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.55.0](https://github.com/bluefunda/bluefunda-ai/compare/v1.54.1...v1.55.0) (2026-10-01)
+
+
+### Features
+
+* **agent:** add plan mode — read-only tools until /plan allows changes ([#315](https://github.com/bluefunda/bluefunda-ai/issues/315)) ([6675930](https://github.com/bluefunda/bluefunda-ai/commit/6675930063b1952031d915d8c7419a6ade19d9ba))
+
 ## [1.54.1](https://github.com/bluefunda/bluefunda-ai/compare/v1.54.0...v1.54.1) (2026-10-01)
 
 

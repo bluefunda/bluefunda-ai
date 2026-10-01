@@ -20,11 +20,13 @@ const mcpSessionHeader = "Mcp-Session-Id"
 // transport (a single URL; each JSON-RPC call is one POST, whose response is
 // either a plain JSON body or a text/event-stream carrying one JSON-RPC event).
 type httpClient struct {
-	name    string
-	url     string
-	headers map[string]string
-	hc      *http.Client
-	tools   []Tool
+	name      string
+	url       string
+	headers   map[string]string
+	hc        *http.Client
+	tools     []Tool
+	resources []Resource
+	prompts   []Prompt
 
 	nextID    atomic.Int64
 	sessionID atomic.Value // string
@@ -53,7 +55,7 @@ func StartHTTP(ctx context.Context, name, url string, headers map[string]string)
 	if err != nil {
 		return nil, fmt.Errorf("mcp %s: initialize: %w", name, err)
 	}
-	_ = initResult
+	caps := parseCapabilities(initResult)
 
 	if err := c.notify(initCtx, "notifications/initialized", nil); err != nil {
 		return nil, fmt.Errorf("mcp %s: initialized notification: %w", name, err)
@@ -71,12 +73,70 @@ func StartHTTP(ctx context.Context, name, url string, headers map[string]string)
 	}
 	c.tools = toolsResp.Tools
 
+	if caps.Resources != nil {
+		raw, err := c.call(initCtx, resourcesListMethod, map[string]any{})
+		if err != nil {
+			return nil, fmt.Errorf("mcp %s: resources/list: %w", name, err)
+		}
+		resources, err := parseResourcesListResult(raw)
+		if err != nil {
+			return nil, fmt.Errorf("mcp %s: parse resources/list: %w", name, err)
+		}
+		c.resources = resources
+	}
+
+	if caps.Prompts != nil {
+		raw, err := c.call(initCtx, promptsListMethod, map[string]any{})
+		if err != nil {
+			return nil, fmt.Errorf("mcp %s: prompts/list: %w", name, err)
+		}
+		prompts, err := parsePromptsListResult(raw)
+		if err != nil {
+			return nil, fmt.Errorf("mcp %s: parse prompts/list: %w", name, err)
+		}
+		c.prompts = prompts
+	}
+
 	return c, nil
 }
 
 // Tools returns the tools this server exposes.
 func (c *httpClient) Tools() []Tool {
 	return c.tools
+}
+
+// Resources returns the resources this server exposes (empty if it did not
+// declare the resources capability during initialize).
+func (c *httpClient) Resources() []Resource {
+	return c.resources
+}
+
+// Prompts returns the prompts this server exposes (empty if it did not
+// declare the prompts capability during initialize).
+func (c *httpClient) Prompts() []Prompt {
+	return c.prompts
+}
+
+// ReadResource fetches a resource's content by URI.
+func (c *httpClient) ReadResource(ctx context.Context, uri string) (string, error) {
+	callCtx, cancel := context.WithTimeout(ctx, callTimeout)
+	defer cancel()
+	raw, err := c.call(callCtx, resourcesReadMethod, map[string]any{"uri": uri})
+	if err != nil {
+		return "", err
+	}
+	return parseResourceReadResult(raw)
+}
+
+// GetPrompt renders a prompt template by name with the given arguments.
+func (c *httpClient) GetPrompt(ctx context.Context, name string, args map[string]string) (string, error) {
+	callCtx, cancel := context.WithTimeout(ctx, callTimeout)
+	defer cancel()
+	raw, err := c.call(callCtx, promptsGetMethod, map[string]any{"name": name, "arguments": args})
+	if err != nil {
+		return "", err
+	}
+	return parsePromptGetResult(raw)
 }
 
 // Call invokes a tool by name with the given JSON arguments and returns the

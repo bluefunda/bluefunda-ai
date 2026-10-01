@@ -133,9 +133,10 @@ func runDoctor(cmd *cobra.Command, args []string) error {
 	}
 	mcpStatus, mcpDetail := summarizeMCPStatus(mcpStatuses)
 	checks = append(checks, checkResult{"MCP servers", mcpStatus, mcpDetail})
-	if mcpStatus == "warn" {
+	switch mcpStatus {
+	case "warn":
 		warnings++
-	} else if mcpStatus == "error" {
+	case "error":
 		errors++
 	}
 

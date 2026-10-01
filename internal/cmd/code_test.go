@@ -133,3 +133,24 @@ func TestSessionAllowSet_NilIsEmptyAndNoopAdd(t *testing.T) {
 	}
 	s.add("bash", `{"command":"git status"}`) // must not panic
 }
+
+func TestResolveMaxTurns(t *testing.T) {
+	cases := []struct {
+		name            string
+		flagValue       int
+		projectMaxTurns int
+		want            int
+	}{
+		{"flag left at default, project set — project wins", defaultMaxTurnsFlag, 10, 10},
+		{"flag left at default, no project value — stays default", defaultMaxTurnsFlag, 0, defaultMaxTurnsFlag},
+		{"flag explicitly set to something else — flag wins", 5, 10, 5},
+		{"project value non-positive — ignored", defaultMaxTurnsFlag, -1, defaultMaxTurnsFlag},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := resolveMaxTurns(c.flagValue, c.projectMaxTurns); got != c.want {
+				t.Errorf("resolveMaxTurns(%d, %d) = %d, want %d", c.flagValue, c.projectMaxTurns, got, c.want)
+			}
+		})
+	}
+}

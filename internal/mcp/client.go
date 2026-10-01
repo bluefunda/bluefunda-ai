@@ -1,7 +1,8 @@
 // Package mcp implements a minimal MCP (Model Context Protocol) client over
 // the stdio and Streamable HTTP transports. It speaks JSON-RPC 2.0 and
-// supports the initialize, tools/list, and tools/call methods sufficient for
-// bai code tool integration.
+// supports initialize, tools/list, tools/call, and — when a server declares
+// the capability during initialize — resources/list, resources/read,
+// prompts/list, and prompts/get.
 package mcp
 
 import (
@@ -19,12 +20,16 @@ import (
 )
 
 const (
-	protocolVersion  = "2024-11-05"
-	initializeMethod = "initialize"
-	toolsListMethod  = "tools/list"
-	toolsCallMethod  = "tools/call"
-	startupTimeout   = 10 * time.Second
-	callTimeout      = 60 * time.Second
+	protocolVersion     = "2024-11-05"
+	initializeMethod    = "initialize"
+	toolsListMethod     = "tools/list"
+	toolsCallMethod     = "tools/call"
+	resourcesListMethod = "resources/list"
+	resourcesReadMethod = "resources/read"
+	promptsListMethod   = "prompts/list"
+	promptsGetMethod    = "prompts/get"
+	startupTimeout      = 10 * time.Second
+	callTimeout         = 60 * time.Second
 )
 
 // Tool describes a capability exposed by an MCP server.
@@ -34,13 +39,58 @@ type Tool struct {
 	InputSchema json.RawMessage `json:"inputSchema"`
 }
 
+// Resource describes a piece of readable content an MCP server exposes.
+type Resource struct {
+	URI         string `json:"uri"`
+	Name        string `json:"name"`
+	Description string `json:"description"`
+	MimeType    string `json:"mimeType"`
+}
+
+// Prompt describes a reusable prompt template an MCP server exposes.
+type Prompt struct {
+	Name        string           `json:"name"`
+	Description string           `json:"description"`
+	Arguments   []PromptArgument `json:"arguments"`
+}
+
+// PromptArgument describes one named input a Prompt accepts.
+type PromptArgument struct {
+	Name        string `json:"name"`
+	Description string `json:"description"`
+	Required    bool   `json:"required"`
+}
+
+// serverCapabilities is the subset of the initialize response's capabilities
+// object this client interprets. A non-nil field means the server declares
+// that capability, per the MCP spec; this client does not otherwise inspect
+// capability contents.
+type serverCapabilities struct {
+	Resources json.RawMessage `json:"resources"`
+	Prompts   json.RawMessage `json:"prompts"`
+}
+
+// parseCapabilities extracts serverCapabilities from a raw initialize result.
+// A malformed or missing capabilities object simply yields a zero value
+// (no resources/prompts support assumed), matching the tolerant handling the
+// existing tools/list parsing already applies to unexpected server responses.
+func parseCapabilities(initResult json.RawMessage) serverCapabilities {
+	var resp struct {
+		Capabilities serverCapabilities `json:"capabilities"`
+	}
+	_ = json.Unmarshal(initResult, &resp)
+	return resp.Capabilities
+}
+
 // Client manages one MCP server subprocess over stdio.
 type Client struct {
-	name    string
-	cmd     *exec.Cmd
-	stdin   io.WriteCloser
-	scanner *bufio.Scanner
-	tools   []Tool
+	name      string
+	cmd       *exec.Cmd
+	stdin     io.WriteCloser
+	scanner   *bufio.Scanner
+	tools     []Tool
+	resources []Resource
+	prompts   []Prompt
 
 	mu      sync.Mutex
 	nextID  atomic.Int64
@@ -119,7 +169,7 @@ func Start(ctx context.Context, name, command string, args []string, env map[str
 		c.Stop()
 		return nil, fmt.Errorf("mcp %s: initialize: %w", name, err)
 	}
-	_ = initResult
+	caps := parseCapabilities(initResult)
 
 	// Send initialized notification (no response expected).
 	if err := c.notify("notifications/initialized", nil); err != nil {
@@ -143,12 +193,74 @@ func Start(ctx context.Context, name, command string, args []string, env map[str
 	}
 	c.tools = toolsResp.Tools
 
+	if caps.Resources != nil {
+		raw, err := c.call(initCtx, resourcesListMethod, map[string]any{})
+		if err != nil {
+			c.Stop()
+			return nil, fmt.Errorf("mcp %s: resources/list: %w", name, err)
+		}
+		resources, err := parseResourcesListResult(raw)
+		if err != nil {
+			c.Stop()
+			return nil, fmt.Errorf("mcp %s: parse resources/list: %w", name, err)
+		}
+		c.resources = resources
+	}
+
+	if caps.Prompts != nil {
+		raw, err := c.call(initCtx, promptsListMethod, map[string]any{})
+		if err != nil {
+			c.Stop()
+			return nil, fmt.Errorf("mcp %s: prompts/list: %w", name, err)
+		}
+		prompts, err := parsePromptsListResult(raw)
+		if err != nil {
+			c.Stop()
+			return nil, fmt.Errorf("mcp %s: parse prompts/list: %w", name, err)
+		}
+		c.prompts = prompts
+	}
+
 	return c, nil
 }
 
 // Tools returns the tools this server exposes.
 func (c *Client) Tools() []Tool {
 	return c.tools
+}
+
+// Resources returns the resources this server exposes (empty if it did not
+// declare the resources capability during initialize).
+func (c *Client) Resources() []Resource {
+	return c.resources
+}
+
+// Prompts returns the prompts this server exposes (empty if it did not
+// declare the prompts capability during initialize).
+func (c *Client) Prompts() []Prompt {
+	return c.prompts
+}
+
+// ReadResource fetches a resource's content by URI.
+func (c *Client) ReadResource(ctx context.Context, uri string) (string, error) {
+	callCtx, cancel := context.WithTimeout(ctx, callTimeout)
+	defer cancel()
+	raw, err := c.call(callCtx, resourcesReadMethod, map[string]any{"uri": uri})
+	if err != nil {
+		return "", err
+	}
+	return parseResourceReadResult(raw)
+}
+
+// GetPrompt renders a prompt template by name with the given arguments.
+func (c *Client) GetPrompt(ctx context.Context, name string, args map[string]string) (string, error) {
+	callCtx, cancel := context.WithTimeout(ctx, callTimeout)
+	defer cancel()
+	raw, err := c.call(callCtx, promptsGetMethod, map[string]any{"name": name, "arguments": args})
+	if err != nil {
+		return "", err
+	}
+	return parsePromptGetResult(raw)
 }
 
 // Call invokes a tool by name with the given JSON arguments and returns the
@@ -200,6 +312,82 @@ func parseToolCallResult(raw json.RawMessage) (string, error) {
 	for _, c := range result.Content {
 		if c.Type == "text" && c.Text != "" {
 			parts = append(parts, c.Text)
+		}
+	}
+	return strings.Join(parts, "\n"), nil
+}
+
+// parseResourcesListResult decodes a resources/list JSON-RPC result.
+func parseResourcesListResult(raw json.RawMessage) ([]Resource, error) {
+	var resp struct {
+		Resources []Resource `json:"resources"`
+	}
+	if err := json.Unmarshal(raw, &resp); err != nil {
+		return nil, fmt.Errorf("parse result: %w", err)
+	}
+	return resp.Resources, nil
+}
+
+// parsePromptsListResult decodes a prompts/list JSON-RPC result.
+func parsePromptsListResult(raw json.RawMessage) ([]Prompt, error) {
+	var resp struct {
+		Prompts []Prompt `json:"prompts"`
+	}
+	if err := json.Unmarshal(raw, &resp); err != nil {
+		return nil, fmt.Errorf("parse result: %w", err)
+	}
+	return resp.Prompts, nil
+}
+
+// parseResourceReadResult decodes a resources/read JSON-RPC result into
+// joined text content. A content entry carrying only a base64 blob (no text)
+// becomes a one-line placeholder rather than being decoded into the LLM's
+// context — this client has no use for arbitrary binary resource content.
+func parseResourceReadResult(raw json.RawMessage) (string, error) {
+	var result struct {
+		Contents []struct {
+			URI      string `json:"uri"`
+			MimeType string `json:"mimeType"`
+			Text     string `json:"text"`
+			Blob     string `json:"blob"`
+		} `json:"contents"`
+	}
+	if err := json.Unmarshal(raw, &result); err != nil {
+		return "", fmt.Errorf("parse result: %w", err)
+	}
+	var parts []string
+	for _, c := range result.Contents {
+		switch {
+		case c.Text != "":
+			parts = append(parts, c.Text)
+		case c.Blob != "":
+			parts = append(parts, fmt.Sprintf("[binary resource: %s, base64, %d bytes]", c.MimeType, len(c.Blob)))
+		}
+	}
+	return strings.Join(parts, "\n\n"), nil
+}
+
+// parsePromptGetResult decodes a prompts/get JSON-RPC result into a joined,
+// role-prefixed transcript of its messages. Non-text content parts (e.g.
+// embedded images) are skipped, matching parseToolCallResult's convention.
+func parsePromptGetResult(raw json.RawMessage) (string, error) {
+	var result struct {
+		Description string `json:"description"`
+		Messages    []struct {
+			Role    string `json:"role"`
+			Content struct {
+				Type string `json:"type"`
+				Text string `json:"text"`
+			} `json:"content"`
+		} `json:"messages"`
+	}
+	if err := json.Unmarshal(raw, &result); err != nil {
+		return "", fmt.Errorf("parse result: %w", err)
+	}
+	var parts []string
+	for _, m := range result.Messages {
+		if m.Content.Type == "text" && m.Content.Text != "" {
+			parts = append(parts, fmt.Sprintf("%s: %s", m.Role, m.Content.Text))
 		}
 	}
 	return strings.Join(parts, "\n"), nil

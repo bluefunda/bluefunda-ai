@@ -12,11 +12,26 @@ import (
 
 const namespacePrefix = "mcp__"
 
+// Reserved per-server tool-name suffixes synthesized for resources/prompts
+// support. An MCP server whose actual tool happens to be named one of these
+// would be shadowed — an accepted edge case, same tradeoff the mcp__/__
+// namespacing scheme already makes.
+const (
+	listResourcesTool = "list_resources"
+	readResourceTool  = "read_resource"
+	listPromptsTool   = "list_prompts"
+	getPromptTool     = "get_prompt"
+)
+
 // mcpClient is satisfied by both the stdio Client and the Streamable HTTP
 // httpClient, letting Manager hold either transport uniformly.
 type mcpClient interface {
 	Tools() []Tool
+	Resources() []Resource
+	Prompts() []Prompt
 	Call(ctx context.Context, toolName, argsJSON string) (string, error)
+	ReadResource(ctx context.Context, uri string) (string, error)
+	GetPrompt(ctx context.Context, name string, args map[string]string) (string, error)
 	Stop()
 }
 
@@ -92,8 +107,95 @@ func (m *Manager) ToolSchemas() []tools.ToolSchema {
 				},
 			})
 		}
+		if len(c.Resources()) > 0 {
+			schemas = append(schemas, resourceToolSchemas(name)...)
+		}
+		if len(c.Prompts()) > 0 {
+			schemas = append(schemas, promptToolSchemas(name)...)
+		}
 	}
 	return schemas
+}
+
+// resourceToolSchemas returns the synthetic list_resources/read_resource tool
+// pair for a server that declared the resources capability.
+func resourceToolSchemas(server string) []tools.ToolSchema {
+	return []tools.ToolSchema{
+		{
+			Type: "function",
+			Function: tools.FunctionDef{
+				Name:        namespacePrefix + server + "__" + listResourcesTool,
+				Description: fmt.Sprintf("[%s] List available MCP resources (URI, name, description).", server),
+				Parameters:  json.RawMessage(`{"type":"object","properties":{}}`),
+			},
+		},
+		{
+			Type: "function",
+			Function: tools.FunctionDef{
+				Name:        namespacePrefix + server + "__" + readResourceTool,
+				Description: fmt.Sprintf("[%s] Read an MCP resource's content by URI (see list_resources).", server),
+				Parameters: json.RawMessage(`{
+					"type": "object",
+					"properties": {"uri": {"type": "string", "description": "Resource URI from list_resources"}},
+					"required": ["uri"]
+				}`),
+			},
+		},
+	}
+}
+
+// promptToolSchemas returns the synthetic list_prompts/get_prompt tool pair
+// for a server that declared the prompts capability.
+func promptToolSchemas(server string) []tools.ToolSchema {
+	return []tools.ToolSchema{
+		{
+			Type: "function",
+			Function: tools.FunctionDef{
+				Name:        namespacePrefix + server + "__" + listPromptsTool,
+				Description: fmt.Sprintf("[%s] List available MCP prompt templates (name, description, arguments).", server),
+				Parameters:  json.RawMessage(`{"type":"object","properties":{}}`),
+			},
+		},
+		{
+			Type: "function",
+			Function: tools.FunctionDef{
+				Name:        namespacePrefix + server + "__" + getPromptTool,
+				Description: fmt.Sprintf("[%s] Render an MCP prompt template by name (see list_prompts).", server),
+				Parameters: json.RawMessage(`{
+					"type": "object",
+					"properties": {
+						"name": {"type": "string", "description": "Prompt name from list_prompts"},
+						"arguments": {"type": "object", "description": "Named arguments the prompt template expects", "additionalProperties": {"type": "string"}}
+					},
+					"required": ["name"]
+				}`),
+			},
+		},
+	}
+}
+
+// formatResources renders a resource list as readable text for the LLM.
+func formatResources(resources []Resource) string {
+	if len(resources) == 0 {
+		return "(no resources)"
+	}
+	lines := make([]string, len(resources))
+	for i, r := range resources {
+		lines[i] = fmt.Sprintf("- %s (%s): %s", r.URI, r.Name, r.Description)
+	}
+	return strings.Join(lines, "\n")
+}
+
+// formatPrompts renders a prompt list as readable text for the LLM.
+func formatPrompts(prompts []Prompt) string {
+	if len(prompts) == 0 {
+		return "(no prompts)"
+	}
+	lines := make([]string, len(prompts))
+	for i, p := range prompts {
+		lines[i] = fmt.Sprintf("- %s: %s", p.Name, p.Description)
+	}
+	return strings.Join(lines, "\n")
 }
 
 // Execute routes a namespaced tool call to the correct MCP server and returns
@@ -112,6 +214,31 @@ func (m *Manager) Execute(ctx context.Context, qualifiedName, argsJSON string) (
 	if !ok {
 		return "", fmt.Errorf("mcp server %q not running", serverName)
 	}
+
+	switch toolName {
+	case listResourcesTool:
+		return formatResources(c.Resources()), nil
+	case readResourceTool:
+		var args struct {
+			URI string `json:"uri"`
+		}
+		if err := json.Unmarshal([]byte(argsJSON), &args); err != nil {
+			return "", fmt.Errorf("parse args: %w", err)
+		}
+		return c.ReadResource(ctx, args.URI)
+	case listPromptsTool:
+		return formatPrompts(c.Prompts()), nil
+	case getPromptTool:
+		var args struct {
+			Name      string            `json:"name"`
+			Arguments map[string]string `json:"arguments"`
+		}
+		if err := json.Unmarshal([]byte(argsJSON), &args); err != nil {
+			return "", fmt.Errorf("parse args: %w", err)
+		}
+		return c.GetPrompt(ctx, args.Name, args.Arguments)
+	}
+
 	return c.Call(ctx, toolName, argsJSON)
 }
 

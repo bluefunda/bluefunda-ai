@@ -18,6 +18,8 @@ import (
 type fakeMCPServer struct {
 	sse          bool
 	sessionID    string
+	resourcesCap bool // declare the resources capability and serve one fake resource
+	promptsCap   bool // declare the prompts capability and serve one fake prompt
 	requestCount atomic.Int64
 	sawSession   atomic.Bool // true once a non-initialize request carried the session header
 }
@@ -52,9 +54,50 @@ func (f *fakeMCPServer) handler(w http.ResponseWriter, r *http.Request) {
 		if f.sessionID != "" {
 			w.Header().Set(mcpSessionHeader, f.sessionID)
 		}
-		result = map[string]any{"protocolVersion": protocolVersion}
+		caps := map[string]any{}
+		if f.resourcesCap {
+			caps["resources"] = map[string]any{}
+		}
+		if f.promptsCap {
+			caps["prompts"] = map[string]any{}
+		}
+		result = map[string]any{"protocolVersion": protocolVersion, "capabilities": caps}
 	case toolsListMethod:
 		result = map[string]any{"tools": []Tool{{Name: "echo", Description: "echoes input"}}}
+	case resourcesListMethod:
+		result = map[string]any{"resources": []Resource{
+			{URI: "file:///readme.md", Name: "readme", Description: "the readme", MimeType: "text/markdown"},
+		}}
+	case resourcesReadMethod:
+		var params struct {
+			URI string `json:"uri"`
+		}
+		_ = json.Unmarshal(mustMarshal(req.Params), &params)
+		if params.URI == "blob://image.png" {
+			result = map[string]any{"contents": []map[string]any{
+				{"uri": params.URI, "mimeType": "image/png", "blob": "YmFzZTY0ZGF0YQ=="},
+			}}
+		} else {
+			result = map[string]any{"contents": []map[string]any{
+				{"uri": params.URI, "mimeType": "text/plain", "text": "resource content for " + params.URI},
+			}}
+		}
+	case promptsListMethod:
+		result = map[string]any{"prompts": []Prompt{
+			{Name: "greet", Description: "a greeting prompt", Arguments: []PromptArgument{{Name: "who", Required: true}}},
+		}}
+	case promptsGetMethod:
+		var params struct {
+			Name      string            `json:"name"`
+			Arguments map[string]string `json:"arguments"`
+		}
+		_ = json.Unmarshal(mustMarshal(req.Params), &params)
+		result = map[string]any{
+			"description": "rendered prompt",
+			"messages": []map[string]any{
+				{"role": "user", "content": map[string]any{"type": "text", "text": "Hello, " + params.Arguments["who"] + "!"}},
+			},
+		}
 	case toolsCallMethod:
 		var params struct {
 			Name      string `json:"name"`
@@ -212,5 +255,94 @@ func TestStartHTTP_CustomHeadersSent(t *testing.T) {
 	}
 	if gotAuth != "Bearer xyz" {
 		t.Errorf("expected Authorization header to be forwarded, got %q", gotAuth)
+	}
+}
+
+func TestStartHTTP_NoCapabilities_ResourcesAndPromptsEmpty(t *testing.T) {
+	fake := &fakeMCPServer{}
+	srv := httptest.NewServer(http.HandlerFunc(fake.handler))
+	defer srv.Close()
+
+	c, err := StartHTTP(context.Background(), "test", srv.URL, nil)
+	if err != nil {
+		t.Fatalf("StartHTTP: %v", err)
+	}
+	defer c.Stop()
+
+	if len(c.Resources()) != 0 {
+		t.Errorf("expected no resources without the capability, got %+v", c.Resources())
+	}
+	if len(c.Prompts()) != 0 {
+		t.Errorf("expected no prompts without the capability, got %+v", c.Prompts())
+	}
+}
+
+func TestStartHTTP_ResourcesCapability_ListAndRead(t *testing.T) {
+	fake := &fakeMCPServer{resourcesCap: true}
+	srv := httptest.NewServer(http.HandlerFunc(fake.handler))
+	defer srv.Close()
+
+	c, err := StartHTTP(context.Background(), "test", srv.URL, nil)
+	if err != nil {
+		t.Fatalf("StartHTTP: %v", err)
+	}
+	defer c.Stop()
+
+	resources := c.Resources()
+	if len(resources) != 1 || resources[0].URI != "file:///readme.md" {
+		t.Fatalf("expected one 'readme' resource, got %+v", resources)
+	}
+
+	out, err := c.ReadResource(context.Background(), "file:///readme.md")
+	if err != nil {
+		t.Fatalf("ReadResource: %v", err)
+	}
+	if out != "resource content for file:///readme.md" {
+		t.Errorf("unexpected resource content: %q", out)
+	}
+}
+
+func TestStartHTTP_ResourcesCapability_BlobBecomesPlaceholder(t *testing.T) {
+	fake := &fakeMCPServer{resourcesCap: true}
+	srv := httptest.NewServer(http.HandlerFunc(fake.handler))
+	defer srv.Close()
+
+	c, err := StartHTTP(context.Background(), "test", srv.URL, nil)
+	if err != nil {
+		t.Fatalf("StartHTTP: %v", err)
+	}
+	defer c.Stop()
+
+	out, err := c.ReadResource(context.Background(), "blob://image.png")
+	if err != nil {
+		t.Fatalf("ReadResource: %v", err)
+	}
+	if !strings.Contains(out, "binary resource") || !strings.Contains(out, "image/png") {
+		t.Errorf("expected a binary placeholder mentioning image/png, got %q", out)
+	}
+}
+
+func TestStartHTTP_PromptsCapability_ListAndGet(t *testing.T) {
+	fake := &fakeMCPServer{promptsCap: true}
+	srv := httptest.NewServer(http.HandlerFunc(fake.handler))
+	defer srv.Close()
+
+	c, err := StartHTTP(context.Background(), "test", srv.URL, nil)
+	if err != nil {
+		t.Fatalf("StartHTTP: %v", err)
+	}
+	defer c.Stop()
+
+	prompts := c.Prompts()
+	if len(prompts) != 1 || prompts[0].Name != "greet" {
+		t.Fatalf("expected one 'greet' prompt, got %+v", prompts)
+	}
+
+	out, err := c.GetPrompt(context.Background(), "greet", map[string]string{"who": "world"})
+	if err != nil {
+		t.Fatalf("GetPrompt: %v", err)
+	}
+	if out != "user: Hello, world!" {
+		t.Errorf("expected 'user: Hello, world!', got %q", out)
 	}
 }

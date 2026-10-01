@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/bluefunda/bluefunda-ai/internal/config"
@@ -103,5 +104,92 @@ func TestExecute_RoutesToHTTPClient(t *testing.T) {
 	}
 	if out != "echoed: world" {
 		t.Errorf("expected 'echoed: world', got %q", out)
+	}
+}
+
+func TestToolSchemas_ExcludesResourceAndPromptToolsWhenNotCapable(t *testing.T) {
+	fake := &fakeMCPServer{} // no resources/prompts capability
+	srv := httptest.NewServer(http.HandlerFunc(fake.handler))
+	defer srv.Close()
+
+	cfg := &config.ProjectConfig{
+		MCPServers: map[string]config.MCPServerConfig{
+			"remote": {Type: "http", URL: srv.URL},
+		},
+	}
+	m := NewManager(context.Background(), cfg)
+	defer m.Close()
+
+	schemas := m.ToolSchemas()
+	if len(schemas) != 1 {
+		t.Fatalf("expected only the 'echo' tool schema, got %d: %+v", len(schemas), schemas)
+	}
+}
+
+func TestToolSchemas_IncludesResourceAndPromptToolsWhenCapable(t *testing.T) {
+	fake := &fakeMCPServer{resourcesCap: true, promptsCap: true}
+	srv := httptest.NewServer(http.HandlerFunc(fake.handler))
+	defer srv.Close()
+
+	cfg := &config.ProjectConfig{
+		MCPServers: map[string]config.MCPServerConfig{
+			"remote": {Type: "http", URL: srv.URL},
+		},
+	}
+	m := NewManager(context.Background(), cfg)
+	defer m.Close()
+
+	names := make(map[string]bool)
+	for _, s := range m.ToolSchemas() {
+		names[s.Function.Name] = true
+	}
+	for _, want := range []string{
+		"mcp__remote__echo",
+		"mcp__remote__list_resources",
+		"mcp__remote__read_resource",
+		"mcp__remote__list_prompts",
+		"mcp__remote__get_prompt",
+	} {
+		if !names[want] {
+			t.Errorf("expected tool schema %q, got %+v", want, names)
+		}
+	}
+}
+
+func TestExecute_RoutesResourceAndPromptCalls(t *testing.T) {
+	fake := &fakeMCPServer{resourcesCap: true, promptsCap: true}
+	srv := httptest.NewServer(http.HandlerFunc(fake.handler))
+	defer srv.Close()
+
+	cfg := &config.ProjectConfig{
+		MCPServers: map[string]config.MCPServerConfig{
+			"remote": {Type: "http", URL: srv.URL},
+		},
+	}
+	m := NewManager(context.Background(), cfg)
+	defer m.Close()
+
+	if out, err := m.Execute(context.Background(), "mcp__remote__list_resources", `{}`); err != nil {
+		t.Fatalf("list_resources: %v", err)
+	} else if !strings.Contains(out, "file:///readme.md") {
+		t.Errorf("expected list_resources output to mention the readme, got %q", out)
+	}
+
+	if out, err := m.Execute(context.Background(), "mcp__remote__read_resource", `{"uri":"file:///readme.md"}`); err != nil {
+		t.Fatalf("read_resource: %v", err)
+	} else if out != "resource content for file:///readme.md" {
+		t.Errorf("unexpected read_resource output: %q", out)
+	}
+
+	if out, err := m.Execute(context.Background(), "mcp__remote__list_prompts", `{}`); err != nil {
+		t.Fatalf("list_prompts: %v", err)
+	} else if !strings.Contains(out, "greet") {
+		t.Errorf("expected list_prompts output to mention 'greet', got %q", out)
+	}
+
+	if out, err := m.Execute(context.Background(), "mcp__remote__get_prompt", `{"name":"greet","arguments":{"who":"bai"}}`); err != nil {
+		t.Fatalf("get_prompt: %v", err)
+	} else if out != "user: Hello, bai!" {
+		t.Errorf("unexpected get_prompt output: %q", out)
 	}
 }

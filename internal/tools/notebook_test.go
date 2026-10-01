@@ -237,6 +237,9 @@ func TestEditNotebook_NotFound(t *testing.T) {
 
 func TestExecute_NotebookTools(t *testing.T) {
 	path := writeSampleNotebook(t)
+	// Execute confines paths to the workspace root; chdir into the fixture's
+	// temp dir (outside any git repo) so it resolves as its own root.
+	t.Chdir(filepath.Dir(path))
 
 	readArgs, _ := json.Marshal(map[string]any{"path": path})
 	got, err := Execute("read_notebook", string(readArgs))

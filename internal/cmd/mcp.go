@@ -3,6 +3,7 @@ package cmd
 import (
 	"fmt"
 	"strconv"
+	"strings"
 
 	"github.com/spf13/cobra"
 
@@ -63,35 +64,91 @@ func runMCPList(cmd *cobra.Command, args []string) error {
 // --- mcp add ---
 
 var mcpAddCmd = &cobra.Command{
-	Use:   "add <name>",
-	Short: "Activate an MCP server integration",
-	Args:  cobra.ExactArgs(1),
+	Use:   "add <name> [name...]",
+	Short: "Activate one or more MCP server integrations",
+	Args:  cobra.MinimumNArgs(1),
 	RunE:  runMCPAdd,
 }
 
 func runMCPAdd(cmd *cobra.Command, args []string) error {
+	return runMCPSelect(args, true, "Activated")
+}
+
+// --- mcp remove ---
+
+var mcpRemoveCmd = &cobra.Command{
+	Use:   "remove <name> [name...]",
+	Short: "Deactivate one or more MCP server integrations",
+	Args:  cobra.MinimumNArgs(1),
+	RunE:  runMCPRemove,
+}
+
+func runMCPRemove(cmd *cobra.Command, args []string) error {
+	return runMCPSelect(args, false, "Removed")
+}
+
+// mcpSelectResult is the outcome of toggling one server's subscription.
+type mcpSelectResult struct {
+	name    string
+	success bool
+	err     error
+}
+
+// selectMcpServers toggles subscribe for each name via selectFn, continuing
+// past individual failures so one bad name doesn't block the rest. Extracted
+// from runMCPSelect so the aggregation/continue-on-error behavior is
+// independently testable without a gRPC connection.
+func selectMcpServers(names []string, subscribe bool, selectFn func(name string, subscribe bool) error) []mcpSelectResult {
+	results := make([]mcpSelectResult, 0, len(names))
+	for _, name := range names {
+		err := selectFn(name, subscribe)
+		results = append(results, mcpSelectResult{name: name, success: err == nil, err: err})
+	}
+	return results
+}
+
+// runMCPSelect activates or deactivates each named MCP server integration.
+// Each name is an independent SelectMcp call (the backend already models a
+// user's subscriptions as a set — repeated calls toggle individual members
+// rather than replacing the whole set), so selecting multiple servers in one
+// invocation is just multiple calls, same as a multi-select UI would issue.
+func runMCPSelect(names []string, subscribe bool, verb string) error {
 	conn, cfg, err := bffConn()
 	if err != nil {
 		return err
 	}
 	defer conn.Close()
 
-	ctx, cancel := caigrpc.ContextWithTimeout()
-	defer cancel()
-
-	resp, err := conn.Client.SelectMcp(ctx, &pb.SelectMcpRequest{
-		McpInfo: &pb.MCPInfo{Name: args[0]},
-	})
-	if err != nil {
-		return fmt.Errorf("activate mcp: %w", err)
-	}
-
 	p := printer(cfg)
-	if resp.GetError() != "" {
-		return fmt.Errorf("activate mcp: %s", resp.GetError())
+	results := selectMcpServers(names, subscribe, func(name string, sub bool) error {
+		ctx, cancel := caigrpc.ContextWithTimeout()
+		defer cancel()
+		resp, err := conn.Client.SelectMcp(ctx, &pb.SelectMcpRequest{
+			McpInfo: &pb.MCPInfo{Name: name, Subscribe: sub},
+		})
+		if err != nil {
+			return err
+		}
+		if resp.GetError() != "" {
+			return fmt.Errorf("%s", resp.GetError())
+		}
+		if !resp.GetSuccess() {
+			return fmt.Errorf("server did not confirm success")
+		}
+		return nil
+	})
+
+	var failed []string
+	for _, r := range results {
+		if r.success {
+			p.Success(fmt.Sprintf("%s MCP server: %s", verb, r.name))
+		} else {
+			p.Error(fmt.Sprintf("%s failed for %s: %v", verb, r.name, r.err))
+			failed = append(failed, r.name)
+		}
 	}
-	if resp.GetSuccess() {
-		p.Success(fmt.Sprintf("Activated MCP server: %s", args[0]))
+	if len(failed) > 0 {
+		return fmt.Errorf("%d of %d server(s) failed: %s", len(failed), len(names), strings.Join(failed, ", "))
 	}
 	return nil
 }
@@ -143,13 +200,13 @@ func runMCPUser(cmd *cobra.Command, args []string) error {
 // --- mcp select (hidden alias for mcp add) ---
 
 var mcpSelectCmd = &cobra.Command{
-	Use:    "select <name>",
-	Short:  "Select an MCP server (use `mcp add` instead)",
-	Args:   cobra.ExactArgs(1),
+	Use:    "select <name> [name...]",
+	Short:  "Select one or more MCP servers (use `mcp add` instead)",
+	Args:   cobra.MinimumNArgs(1),
 	Hidden: true,
 	RunE:   runMCPAdd,
 }
 
 func init() {
-	mcpCmd.AddCommand(mcpListCmd, mcpAddCmd, mcpUserCmd, mcpSelectCmd)
+	mcpCmd.AddCommand(mcpListCmd, mcpAddCmd, mcpRemoveCmd, mcpUserCmd, mcpSelectCmd)
 }

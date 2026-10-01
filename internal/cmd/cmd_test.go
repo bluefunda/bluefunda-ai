@@ -102,6 +102,13 @@ func (t *testBFF) GetMcpInfo(_ context.Context, _ *pb.GetMcpInfoRequest) (*pb.Ge
 	}, nil
 }
 
+func (t *testBFF) SelectMcp(_ context.Context, req *pb.SelectMcpRequest) (*pb.SelectMcpResponse, error) {
+	if req.GetMcpInfo().GetName() == "bad-server" {
+		return &pb.SelectMcpResponse{Success: false, Error: "server not found"}, nil
+	}
+	return &pb.SelectMcpResponse{Success: true}, nil
+}
+
 func (t *testBFF) GetStripeSubscription(_ context.Context, _ *pb.GetStripeSubscriptionRequest) (*pb.GetStripeSubscriptionResponse, error) {
 	return &pb.GetStripeSubscriptionResponse{
 		HasSubscription:    true,

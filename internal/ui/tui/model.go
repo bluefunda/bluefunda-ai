@@ -13,6 +13,8 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/google/uuid"
+
+	"github.com/bluefunda/bluefunda-ai/internal/memory"
 )
 
 // ──────────────────────────────────────────────
@@ -981,6 +983,10 @@ func (m Model) handleSlashCommand(input string) (tea.Model, tea.Cmd) {
 			fmt.Sprintf("Chat ID: %s  ·  Messages: %d", m.cfg.ChatID, len(m.messages))))
 		m.refreshViewport()
 
+	case input == "/memory" || strings.HasPrefix(input, "/memory "):
+		m.messages = append(m.messages, newSystemMessage(runMemoryCommand(strings.TrimSpace(strings.TrimPrefix(input, "/memory")))))
+		m.refreshViewport()
+
 	default:
 		// Check custom commands loaded from .bai/commands/*.md and
 		// ~/.bai/commands/*.md.
@@ -1015,6 +1021,52 @@ var slashCommandNeedsArg = map[string]bool{
 	"/model":  true,
 	"/resume": true,
 	"/mcp":    true,
+	"/memory": true,
+}
+
+// runMemoryCommand handles the /memory slash command: bare lists active
+// entries, a key shows one, and "delete <key>" removes one. All memory I/O is
+// local-filesystem-only (no network), so this runs synchronously like /tools
+// and /context rather than needing the async cfg.XxxFn + tea.Cmd pattern
+// /mcp, /account, and /usage use for backend calls.
+func runMemoryCommand(arg string) string {
+	mgr := memory.New(".")
+
+	switch {
+	case arg == "":
+		entries, err := mgr.List()
+		if err != nil {
+			return "Error listing memory: " + err.Error()
+		}
+		if len(entries) == 0 {
+			return "No memory entries — see docs for memory_write, or `bai memory list`"
+		}
+		noun := "entries"
+		if len(entries) == 1 {
+			noun = "entry"
+		}
+		lines := make([]string, 0, len(entries)+1)
+		lines = append(lines, fmt.Sprintf("%d memory %s:", len(entries), noun))
+		for _, e := range entries {
+			lines = append(lines, fmt.Sprintf("  %s [%s] — %s", e.Key, e.Scope, e.Preview()))
+		}
+		return strings.Join(lines, "\n")
+
+	case strings.HasPrefix(arg, "delete "):
+		key := strings.TrimSpace(strings.TrimPrefix(arg, "delete "))
+		if err := mgr.Delete(key); err != nil {
+			return fmt.Sprintf("Error deleting %s: %v", key, err)
+		}
+		return "Deleted memory entry: " + key
+
+	default:
+		key := arg
+		entry, err := mgr.Read(key)
+		if err != nil {
+			return fmt.Sprintf("Error reading %s: %v", key, err)
+		}
+		return fmt.Sprintf("%s [%s]\n\n%s", entry.Key, entry.Scope, entry.Content)
+	}
 }
 
 func (m *Model) acceptSlashCommand() (tea.Model, tea.Cmd) {
@@ -1158,6 +1210,7 @@ func helpText() string {
 		"  /chat            Switch to chat mode (no tools)",
 		"  /auto            Toggle auto-apply for code tools",
 		"  /mcp [name]      List or activate MCP servers",
+		"  /memory [key]    List, show, or `delete <key>` a memory entry",
 		"  /account         Show account info",
 		"  /usage           Show token usage",
 		"  /update          Check for a newer version and upgrade",

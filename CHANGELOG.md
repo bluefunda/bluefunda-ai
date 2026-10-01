@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.51.0](https://github.com/bluefunda/bluefunda-ai/compare/v1.50.0...v1.51.0) (2026-10-01)
+
+
+### Features
+
+* **hooks:** add SessionStart, SessionEnd, Stop, and PreCompact lifecycle events ([#301](https://github.com/bluefunda/bluefunda-ai/issues/301)) ([6947464](https://github.com/bluefunda/bluefunda-ai/commit/694746476bdda7d40e5660f1266906d64b34f92d))
+
 ## [1.50.0](https://github.com/bluefunda/bluefunda-ai/compare/v1.49.0...v1.50.0) (2026-10-01)
 
 

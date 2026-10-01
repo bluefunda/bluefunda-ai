@@ -320,7 +320,7 @@ func MergeSchemas(base string, extra []ToolSchema) (string, error) {
 // NeedsApproval returns true for tools that modify state and require user confirmation.
 func NeedsApproval(toolName string) bool {
 	switch toolName {
-	case "write_file", "bash", "task", "memory_write", "memory_delete":
+	case "write_file", "edit_file", "patch_file", "edit_notebook", "bash", "task", "memory_write", "memory_delete":
 		return true
 	}
 	return false

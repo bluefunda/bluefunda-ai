@@ -6,7 +6,46 @@ import (
 	"testing"
 
 	"github.com/bluefunda/bluefunda-ai/internal/hooks"
+	"github.com/bluefunda/bluefunda-ai/internal/mcp"
 )
+
+func TestSummarizeMCPStatus_NoneConfigured(t *testing.T) {
+	status, detail := summarizeMCPStatus(nil)
+	if status != "info" {
+		t.Errorf("expected info, got %q", status)
+	}
+	if detail != "none configured — add mcp_servers to .bai/settings.yaml" {
+		t.Errorf("unexpected detail: %q", detail)
+	}
+}
+
+func TestSummarizeMCPStatus_AllStarted(t *testing.T) {
+	statuses := []mcp.ServerStatus{
+		{Name: "a", Started: true, Tools: 2, Resources: 1, Prompts: 0},
+		{Name: "b", Started: true, Tools: 1, Resources: 0, Prompts: 3},
+	}
+	status, detail := summarizeMCPStatus(statuses)
+	if status != "ok" {
+		t.Errorf("expected ok, got %q", status)
+	}
+	if detail != "2 server(s) connected (3 tools, 1 resources, 3 prompts)" {
+		t.Errorf("unexpected detail: %q", detail)
+	}
+}
+
+func TestSummarizeMCPStatus_SomeFailed(t *testing.T) {
+	statuses := []mcp.ServerStatus{
+		{Name: "good", Started: true, Tools: 2},
+		{Name: "bad", Started: false, Err: "missing url for type http"},
+	}
+	status, detail := summarizeMCPStatus(statuses)
+	if status != "warn" {
+		t.Errorf("expected warn, got %q", status)
+	}
+	if detail != "1/2 server(s) failed to start: bad" {
+		t.Errorf("unexpected detail: %q", detail)
+	}
+}
 
 func TestCountHookScripts_NoHooksDir(t *testing.T) {
 	if got := countHookScripts(filepath.Join(t.TempDir(), "missing"), hooks.Phases); got != 0 {

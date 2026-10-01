@@ -266,8 +266,8 @@ func TestNeedsApproval_NotebookTools(t *testing.T) {
 	if NeedsApproval("read_notebook") {
 		t.Error("read_notebook should not need approval")
 	}
-	if NeedsApproval("edit_notebook") {
-		t.Error("edit_notebook should not need approval, matching edit_file/patch_file")
+	if !NeedsApproval("edit_notebook") {
+		t.Error("edit_notebook should need approval, matching edit_file/patch_file")
 	}
 }
 

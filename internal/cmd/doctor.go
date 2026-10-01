@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -18,6 +19,7 @@ import (
 	"github.com/bluefunda/bluefunda-ai/internal/config"
 	caigrpc "github.com/bluefunda/bluefunda-ai/internal/grpc"
 	"github.com/bluefunda/bluefunda-ai/internal/hooks"
+	"github.com/bluefunda/bluefunda-ai/internal/mcp"
 	"github.com/bluefunda/bluefunda-ai/internal/memory"
 	"github.com/bluefunda/bluefunda-ai/internal/plugins"
 	"github.com/bluefunda/bluefunda-ai/internal/session"
@@ -116,8 +118,26 @@ func runDoctor(cmd *cobra.Command, args []string) error {
 		checks = append(checks, checkResult{"ripgrep (rg)", "ok", "available"})
 	}
 
-	// 7. MCP servers (informational)
-	checks = append(checks, checkResult{"MCP servers", "info", "run `bai mcp list` to view available integrations"})
+	// 7. Local MCP servers (.bai/settings.yaml mcp_servers) — distinct from the
+	// remote/hosted catalog `bai mcp list`/`add`/`remove` manage over the BFF;
+	// this is the local stdio/Streamable-HTTP subsystem `bai code` starts via
+	// internal/mcp.Manager.
+	cwd, _ := os.Getwd()
+	var mcpStatuses []mcp.ServerStatus
+	if projCfg := config.FindProjectConfig(cwd); projCfg != nil && len(projCfg.MCPServers) > 0 {
+		mcpCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		mgr := mcp.NewManager(mcpCtx, projCfg)
+		cancel()
+		mcpStatuses = mgr.Status()
+		mgr.Close()
+	}
+	mcpStatus, mcpDetail := summarizeMCPStatus(mcpStatuses)
+	checks = append(checks, checkResult{"MCP servers", mcpStatus, mcpDetail})
+	if mcpStatus == "warn" {
+		warnings++
+	} else if mcpStatus == "error" {
+		errors++
+	}
 
 	// 8. Context limit (auto-compaction threshold)
 	contextLimit := defaultCompactionThreshold
@@ -149,7 +169,6 @@ func runDoctor(cmd *cobra.Command, args []string) error {
 	}
 
 	// 11. Project context files
-	cwd, _ := os.Getwd()
 	hasContext := false
 	for _, name := range []string{".bai/context.md", "AGENTS.md", "CLAUDE.md"} {
 		if _, err := os.Stat(filepath.Join(cwd, name)); err == nil {
@@ -349,6 +368,32 @@ func printChecks(out interface{ Write([]byte) (int, error) }, checks []checkResu
 		_, _ = okStyle.Fprintln(out, "  All checks passed")
 	}
 	fmt.Fprintln(out)
+}
+
+// summarizeMCPStatus reduces per-server MCP statuses into one doctor check
+// result. Extracted so the aggregation logic is independently testable
+// without actually starting any MCP server.
+func summarizeMCPStatus(statuses []mcp.ServerStatus) (status, detail string) {
+	if len(statuses) == 0 {
+		return "info", "none configured — add mcp_servers to .bai/settings.yaml"
+	}
+	var failed []string
+	totalTools, totalResources, totalPrompts := 0, 0, 0
+	for _, s := range statuses {
+		if s.Started {
+			totalTools += s.Tools
+			totalResources += s.Resources
+			totalPrompts += s.Prompts
+		} else {
+			failed = append(failed, s.Name)
+		}
+	}
+	if len(failed) == 0 {
+		return "ok", fmt.Sprintf("%d server(s) connected (%d tools, %d resources, %d prompts)",
+			len(statuses), totalTools, totalResources, totalPrompts)
+	}
+	return "warn", fmt.Sprintf("%d/%d server(s) failed to start: %s",
+		len(failed), len(statuses), strings.Join(failed, ", "))
 }
 
 // countHookScripts sums the number of script files across each phase

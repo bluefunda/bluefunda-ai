@@ -300,6 +300,10 @@ func runAgenticSession(args []string) error {
 	hooksDir := hooks.FindHooksDir(".")
 	hookRunner := hooks.New(hooksDir, sessionID, workDir)
 
+	// Tools approved via "always allow for this session" (the 'a' key in the
+	// approval dialog) — exact tool+args match, session-scoped only.
+	sessionAllow := newSessionAllowSet()
+
 	// --- History: context + memory + optional resume (#82, #144, #273) ---
 	history := buildContextHistory(".")
 	if ctx := hookRunner.SessionStart(model, Version); ctx != "" {
@@ -330,7 +334,7 @@ func runAgenticSession(args []string) error {
 			return fmt.Errorf("prompt required in --print mode (pass as argument or pipe via stdin)")
 		}
 		return runCodePrint(conn, cfg, sessionID, model, toolSchemas, initialPrompt, history,
-			codeMaxTurns, maxContextTokens, maxBudgetUSD, permAllow, permDeny, codeAutoApply, codePlanMode, codeOutputFormat, sessPath, auditLog, hookRunner, mcpMgr, pluginMgr, p)
+			codeMaxTurns, maxContextTokens, maxBudgetUSD, permAllow, permDeny, codeAutoApply, codePlanMode, sessionAllow, codeOutputFormat, sessPath, auditLog, hookRunner, mcpMgr, pluginMgr, p)
 	}
 
 	// --- Interactive TUI mode ---
@@ -371,7 +375,7 @@ func runAgenticSession(args []string) error {
 			defer close(ch)
 			newHistory, loopErr := agenticLoopTUI(
 				conn, cfg, cid, mdl, currentSchemas,
-				history, isFirstTurn && isNew, permAllow, permDeny, currentAutoApply, currentPlanMode,
+				history, isFirstTurn && isNew, permAllow, permDeny, currentAutoApply, currentPlanMode, sessionAllow,
 				maxTurnsState, maxContextTokens, maxBudgetUSD, sessPath, auditLog, hookRunner, mcpMgr, pluginMgr, p, ch,
 			)
 			history = newHistory
@@ -535,6 +539,7 @@ func runCodePrint(
 	allow, deny []string,
 	autoApply bool,
 	planMode bool,
+	sessionAllow *sessionAllowSet,
 	outputFormat string,
 	sessPath string,
 	auditLog *audit.Logger,
@@ -550,7 +555,7 @@ func runCodePrint(
 		defer close(ch)
 		newHistory, loopErr := agenticLoopTUI(
 			conn, cfg, chatID, model, toolSchemas,
-			history, true, allow, deny, autoApply, planMode,
+			history, true, allow, deny, autoApply, planMode, sessionAllow,
 			maxTurns, maxContextTokens, maxBudgetUSD, sessPath, auditLog, hookRunner, mcpMgr, pluginMgr, p, ch,
 		)
 		session.Save(sessPath, toSessionMsgs(newHistory)) //nolint:errcheck
@@ -705,6 +710,7 @@ func agenticLoopTUI(
 	allow, deny []string,
 	autoApply bool,
 	planMode bool,
+	sessionAllow *sessionAllowSet,
 	maxTurns int,
 	maxContextTokens int,
 	maxBudgetUSD float64,
@@ -908,7 +914,7 @@ func agenticLoopTUI(
 
 		// Execute tools — run concurrently when all can be auto-approved,
 		// fall back to sequential when any requires a TUI approval prompt.
-		toolResults := executeTools(toolCalls, allow, deny, autoApply, planMode, auditLog, hookRunner, mcpMgr, pluginMgr, p, ch)
+		toolResults := executeTools(toolCalls, allow, deny, autoApply, planMode, sessionAllow, auditLog, hookRunner, mcpMgr, pluginMgr, p, ch)
 		for i, tc := range toolCalls {
 			r := toolResults[i]
 			history = append(history, codeMessage{
@@ -1258,6 +1264,41 @@ type toolResult struct {
 	err    error
 }
 
+// sessionAllowSet tracks exact tool-name+arguments pairs approved via "always
+// allow for this session" (the 'a' key in the approval dialog). Deliberately
+// separate from the glob-based permissions.allow system (tools.CheckPermissions):
+// exact match means a command's own literal '*'/'?' characters are never
+// misinterpreted as wildcards, and approving one specific command never
+// silently broadens to riskier variants of it. A nil *sessionAllowSet behaves
+// as an always-empty set (contains = false) and a no-op add, so callers that
+// don't need this feature (e.g. tests) can pass nil safely.
+type sessionAllowSet struct {
+	mu    sync.Mutex
+	exact map[string]bool // key: toolName + "\x00" + argsJSON
+}
+
+func newSessionAllowSet() *sessionAllowSet {
+	return &sessionAllowSet{exact: make(map[string]bool)}
+}
+
+func (s *sessionAllowSet) add(toolName, argsJSON string) {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.exact[toolName+"\x00"+argsJSON] = true
+}
+
+func (s *sessionAllowSet) contains(toolName, argsJSON string) bool {
+	if s == nil {
+		return false
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.exact[toolName+"\x00"+argsJSON]
+}
+
 // executeTools runs toolCalls sequentially or concurrently depending on whether
 // any call requires interactive TUI approval. When all tools can be auto-approved
 // (read-only ops, safe bash prefixes, --auto-apply) they execute in parallel,
@@ -1268,6 +1309,7 @@ func executeTools(
 	allow, deny []string,
 	autoApply bool,
 	planMode bool,
+	sessionAllow *sessionAllowSet,
 	auditLog *audit.Logger,
 	hookRunner *hooks.Runner,
 	mcpMgr *mcp.Manager,
@@ -1279,7 +1321,7 @@ func executeTools(
 	if len(toolCalls) <= 1 {
 		results := make([]toolResult, len(toolCalls))
 		for i, tc := range toolCalls {
-			r, e := executeWithApprovalTUI(tc, allow, deny, autoApply, planMode, auditLog, hookRunner, mcpMgr, pluginMgr, p, ch)
+			r, e := executeWithApprovalTUI(tc, allow, deny, autoApply, planMode, sessionAllow, auditLog, hookRunner, mcpMgr, pluginMgr, p, ch)
 			results[i] = toolResult{result: r, err: e}
 		}
 		return results
@@ -1292,7 +1334,7 @@ func executeTools(
 		allAutoApproved = true
 		for _, tc := range toolCalls {
 			action := tools.CheckPermissions(allow, deny, tc.Name, tc.Arguments)
-			if action == tools.PermitDeny || action == tools.PermitAuto {
+			if action == tools.PermitDeny || action == tools.PermitAuto || sessionAllow.contains(tc.Name, tc.Arguments) {
 				continue
 			}
 			if plugins.IsPluginTool(tc.Name) && pluginMgr.ApprovalMode(tc.Name) == "never" {
@@ -1310,7 +1352,7 @@ func executeTools(
 		// Sequential: approval dialogs must not overlap.
 		results := make([]toolResult, len(toolCalls))
 		for i, tc := range toolCalls {
-			r, e := executeWithApprovalTUI(tc, allow, deny, autoApply, planMode, auditLog, hookRunner, mcpMgr, pluginMgr, p, ch)
+			r, e := executeWithApprovalTUI(tc, allow, deny, autoApply, planMode, sessionAllow, auditLog, hookRunner, mcpMgr, pluginMgr, p, ch)
 			results[i] = toolResult{result: r, err: e}
 		}
 		return results
@@ -1323,7 +1365,7 @@ func executeTools(
 		wg.Add(1)
 		go func(idx int, t ui.ToolCallEvent) {
 			defer wg.Done()
-			r, e := executeWithApprovalTUI(t, allow, deny, true, planMode, auditLog, hookRunner, mcpMgr, pluginMgr, p, ch)
+			r, e := executeWithApprovalTUI(t, allow, deny, true, planMode, sessionAllow, auditLog, hookRunner, mcpMgr, pluginMgr, p, ch)
 			results[idx] = toolResult{result: r, err: e}
 		}(i, tc)
 	}
@@ -1356,6 +1398,7 @@ func executeWithApprovalTUI(
 	allow, deny []string,
 	autoApply bool,
 	planMode bool,
+	sessionAllow *sessionAllowSet,
 	auditLog *audit.Logger,
 	hookRunner *hooks.Runner,
 	mcpMgr *mcp.Manager,
@@ -1424,16 +1467,21 @@ func executeWithApprovalTUI(
 			autoApproved = true
 		}
 	}
-	approved := !needsApproval || effectiveAutoApply
-	if needsApproval && !effectiveAutoApply {
-		replyCh := make(chan bool, 1)
+	sessionApproved := sessionAllow.contains(tc.Name, argsJSON)
+	approved := !needsApproval || effectiveAutoApply || sessionApproved
+	if needsApproval && !effectiveAutoApply && !sessionApproved {
+		replyCh := make(chan tui.ApprovalDecision, 1)
 		ch <- tui.StreamEvent{
 			Kind:     "approval",
 			ToolName: tc.Name,
 			ToolArgs: argsJSON,
 			ReplyCh:  replyCh,
 		}
-		approved = <-replyCh
+		decision := <-replyCh
+		approved = decision.Approved
+		if approved && decision.AlwaysAllow {
+			sessionAllow.add(tc.Name, argsJSON)
+		}
 		if !approved {
 			auditLog.LogToolCall(tc.Name, argsJSON, false, false)
 			auditLog.LogToolResult(tc.Name, 0, false)

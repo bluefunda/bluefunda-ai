@@ -334,7 +334,7 @@ func (m Model) renderApproval() string {
 		args = "\n     " + th.ToolArg.Render(a)
 	}
 	warnStyle := lipgloss.NewStyle().Foreground(th.Warning)
-	prompt := warnStyle.Render("  Apply? ") + th.ToolDim.Render("[y/N]")
+	prompt := warnStyle.Render("  Apply? ") + th.ToolDim.Render("[y/N/a=always allow this session]")
 
 	return lipgloss.NewStyle().
 		BorderLeft(true).

@@ -35,9 +35,28 @@ type mcpClient interface {
 	Stop()
 }
 
+// ServerStatus summarizes one configured MCP server's connection outcome —
+// used by callers (e.g. `bai doctor`) that want a structured health report
+// rather than parsing NewManager's stdout messages.
+type ServerStatus struct {
+	Name      string
+	Started   bool
+	Err       string // non-empty when Started is false
+	Tools     int
+	Resources int
+	Prompts   int
+}
+
 // Manager starts and owns a set of MCP server clients for one bai code session.
 type Manager struct {
-	clients map[string]mcpClient // keyed by server name
+	clients  map[string]mcpClient // keyed by server name
+	statuses []ServerStatus
+}
+
+// Status returns a per-server connection summary, including servers that
+// failed to start.
+func (m *Manager) Status() []ServerStatus {
+	return m.statuses
 }
 
 // NewManager starts all MCP servers defined in cfg.MCPServers.
@@ -56,21 +75,28 @@ func NewManager(ctx context.Context, cfg *config.ProjectConfig) *Manager {
 		case "http":
 			if srv.URL == "" {
 				fmt.Printf("[bai] mcp %s: missing url for type http — skipping\n", name)
+				m.statuses = append(m.statuses, ServerStatus{Name: name, Err: "missing url for type http"})
 				continue
 			}
 			c, err = StartHTTP(ctx, name, srv.URL, srv.Headers)
 		default:
 			if srv.Command == "" {
 				fmt.Printf("[bai] mcp %s: missing command — skipping\n", name)
+				m.statuses = append(m.statuses, ServerStatus{Name: name, Err: "missing command"})
 				continue
 			}
 			c, err = Start(ctx, name, srv.Command, srv.Args, srv.Env)
 		}
 		if err != nil {
 			fmt.Printf("[bai] mcp %s: failed to start: %v\n", name, err)
+			m.statuses = append(m.statuses, ServerStatus{Name: name, Err: err.Error()})
 			continue
 		}
 		m.clients[name] = c
+		m.statuses = append(m.statuses, ServerStatus{
+			Name: name, Started: true,
+			Tools: len(c.Tools()), Resources: len(c.Resources()), Prompts: len(c.Prompts()),
+		})
 		fmt.Printf("[bai] mcp %s: started (%d tools)\n", name, len(c.Tools()))
 	}
 	return m

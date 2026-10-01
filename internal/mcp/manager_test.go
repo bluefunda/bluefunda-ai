@@ -193,3 +193,45 @@ func TestExecute_RoutesResourceAndPromptCalls(t *testing.T) {
 		t.Errorf("unexpected get_prompt output: %q", out)
 	}
 }
+
+func TestStatus_ReportsStartedAndFailedServers(t *testing.T) {
+	fake := &fakeMCPServer{resourcesCap: true, promptsCap: true}
+	srv := httptest.NewServer(http.HandlerFunc(fake.handler))
+	defer srv.Close()
+
+	cfg := &config.ProjectConfig{
+		MCPServers: map[string]config.MCPServerConfig{
+			"good":   {Type: "http", URL: srv.URL},
+			"broken": {Type: "http"}, // no URL — fails to start
+		},
+	}
+	m := NewManager(context.Background(), cfg)
+	defer m.Close()
+
+	byName := make(map[string]ServerStatus)
+	for _, s := range m.Status() {
+		byName[s.Name] = s
+	}
+	if len(byName) != 2 {
+		t.Fatalf("expected 2 statuses, got %d: %+v", len(byName), byName)
+	}
+
+	good := byName["good"]
+	if !good.Started {
+		t.Errorf("expected 'good' to have started, got %+v", good)
+	}
+	if good.Tools != 1 || good.Resources != 1 || good.Prompts != 1 {
+		t.Errorf("expected 1 tool/resource/prompt for 'good', got %+v", good)
+	}
+	if good.Err != "" {
+		t.Errorf("expected no error for 'good', got %q", good.Err)
+	}
+
+	broken := byName["broken"]
+	if broken.Started {
+		t.Error("expected 'broken' to have failed to start")
+	}
+	if broken.Err == "" {
+		t.Error("expected a non-empty error for 'broken'")
+	}
+}

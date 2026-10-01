@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.50.0](https://github.com/bluefunda/bluefunda-ai/compare/v1.49.0...v1.50.0) (2026-10-01)
+
+
+### Features
+
+* **mcp:** add Streamable HTTP transport alongside stdio ([#298](https://github.com/bluefunda/bluefunda-ai/issues/298)) ([4337c5a](https://github.com/bluefunda/bluefunda-ai/commit/4337c5a4b2a8f11aa68493870364b5b9be290fe8))
+
 ## [1.49.0](https://github.com/bluefunda/bluefunda-ai/compare/v1.48.0...v1.49.0) (2026-08-21)
 
 

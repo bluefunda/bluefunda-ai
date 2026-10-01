@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.56.0](https://github.com/bluefunda/bluefunda-ai/compare/v1.55.0...v1.56.0) (2026-10-01)
+
+
+### Features
+
+* **agent:** raise default --max-turns from 20 to 50 ([#321](https://github.com/bluefunda/bluefunda-ai/issues/321)) ([c725aa3](https://github.com/bluefunda/bluefunda-ai/commit/c725aa388e5d9bbcd5a90c7986a124d4d95caa17))
+
 ## [1.55.0](https://github.com/bluefunda/bluefunda-ai/compare/v1.54.1...v1.55.0) (2026-10-01)
 
 

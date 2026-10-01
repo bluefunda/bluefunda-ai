@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.52.0](https://github.com/bluefunda/bluefunda-ai/compare/v1.51.0...v1.52.0) (2026-10-01)
+
+
+### Features
+
+* **mcp:** add resources and prompts support ([#304](https://github.com/bluefunda/bluefunda-ai/issues/304)) ([a1d8a46](https://github.com/bluefunda/bluefunda-ai/commit/a1d8a4670df106b17518dcfef92bddb0e6ce0508))
+* **mcp:** support selecting/removing multiple MCP server integrations ([#306](https://github.com/bluefunda/bluefunda-ai/issues/306)) ([08d7061](https://github.com/bluefunda/bluefunda-ai/commit/08d7061a90aec358f253eced745d2c5b89033a9c))
+
 ## [1.51.0](https://github.com/bluefunda/bluefunda-ai/compare/v1.50.0...v1.51.0) (2026-10-01)
 
 

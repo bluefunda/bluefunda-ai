@@ -2,6 +2,20 @@
 
 > Produced: 2026-06-20 | Analyst: Principal Engineer (multi-agent workflow, 17 agents, 845k tokens)
 
+> **⚠️ SUPERSEDED — this snapshot is stale.** Most items this document lists as
+> missing (MCP client, hooks, plugins, persistent memory, audit logging, token
+> encryption, headless `--print` mode, patch-based edits, layered config,
+> session persistence/`--resume`, client-side scheduling, worktree isolation,
+> subagent fan-out) have since shipped — see [CHANGELOG.md](../CHANGELOG.md)
+> and the closed issues below. Treat this file as a historical snapshot, not
+> a current gap list.
+>
+> The live backlog is tracked in GitHub issues on
+> [bluefunda/bluefunda-ai](https://github.com/bluefunda/bluefunda-ai/issues),
+> most directly under the `client-parity` label. Before starting new
+> parity work, check open issues there rather than this document's
+> "Recommended Roadmap" (§5) or "Feature Parity Matrix" (§3).
+
 ---
 
 ## 1. Architecture Overview

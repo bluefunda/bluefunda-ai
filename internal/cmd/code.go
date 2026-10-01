@@ -47,6 +47,26 @@ var (
 	codePlanMode         bool
 )
 
+// defaultMaxTurnsFlag is the --max-turns default, shared by both flag
+// registrations (root.go's primary `bai` command and this file's deprecated
+// `bai code` alias) and used as the sentinel for "the user didn't explicitly
+// pass --max-turns" when deciding whether a project config's max_turns
+// should apply instead.
+const defaultMaxTurnsFlag = 50
+
+// resolveMaxTurns returns the effective --max-turns value: the project
+// config's max_turns wins when flagValue is still at its default — a
+// sentinel-based "was it explicitly set" check, so a user who explicitly
+// passes --max-turns 50 (matching the default) is indistinguishable from one
+// who didn't pass the flag at all and will also get the project override.
+// A non-positive project value is ignored either way.
+func resolveMaxTurns(flagValue, projectMaxTurns int) int {
+	if projectMaxTurns > 0 && flagValue == defaultMaxTurnsFlag {
+		return projectMaxTurns
+	}
+	return flagValue
+}
+
 // codeCmd is a deprecated alias for the root 'bai' command.
 // It is hidden from help but preserved for backward compatibility.
 var codeCmd = &cobra.Command{
@@ -66,7 +86,7 @@ func init() {
 	codeCmd.Flags().StringVar(&codeDir, "dir", ".", "Working directory for file operations")
 	codeCmd.Flags().BoolVar(&codeAutoApply, "auto-apply", false, "Execute write/bash tools without prompting")
 	codeCmd.Flags().BoolVar(&codeAuto, "auto", false, "Same as --auto-apply")
-	codeCmd.Flags().IntVar(&codeMaxTurns, "max-turns", 50, "Maximum agentic loop iterations before stopping")
+	codeCmd.Flags().IntVar(&codeMaxTurns, "max-turns", defaultMaxTurnsFlag, "Maximum agentic loop iterations before stopping")
 	codeCmd.Flags().IntVar(&codeMaxContextTokens, "max-context-tokens", 0, "Max context tokens before auto-compaction (default 100000; env BAI_MAX_CONTEXT_TOKENS)")
 	codeCmd.Flags().Float64Var(&codeMaxBudgetUSD, "max-budget-usd", 0, "Stop session when estimated cost exceeds this USD amount (0 = no limit; env BAI_MAX_BUDGET_USD)")
 	codeCmd.Flags().BoolVarP(&codePrint, "print", "p", false, "Non-interactive mode: print output to stdout")
@@ -173,10 +193,7 @@ func runAgenticSession(args []string) error {
 
 	// Apply project-level max_turns override if the flag wasn't set explicitly.
 	if projCfgEarly := config.FindProjectConfig("."); projCfgEarly != nil {
-		if projCfgEarly.MaxTurns > 0 && codeMaxTurns == 20 {
-			// project config wins when the user hasn't explicitly set --max-turns
-			codeMaxTurns = projCfgEarly.MaxTurns
-		}
+		codeMaxTurns = resolveMaxTurns(codeMaxTurns, projCfgEarly.MaxTurns)
 	}
 
 	// Resolve effective context token limit: CLI flag > BAI_MAX_CONTEXT_TOKENS > default.

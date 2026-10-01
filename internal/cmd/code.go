@@ -44,6 +44,7 @@ var (
 	codeContinue         bool
 	codeNoTools          bool
 	codeWorktree         bool
+	codePlanMode         bool
 )
 
 // codeCmd is a deprecated alias for the root 'bai' command.
@@ -329,7 +330,7 @@ func runAgenticSession(args []string) error {
 			return fmt.Errorf("prompt required in --print mode (pass as argument or pipe via stdin)")
 		}
 		return runCodePrint(conn, cfg, sessionID, model, toolSchemas, initialPrompt, history,
-			codeMaxTurns, maxContextTokens, maxBudgetUSD, permAllow, permDeny, codeAutoApply, codeOutputFormat, sessPath, auditLog, hookRunner, mcpMgr, pluginMgr, p)
+			codeMaxTurns, maxContextTokens, maxBudgetUSD, permAllow, permDeny, codeAutoApply, codePlanMode, codeOutputFormat, sessPath, auditLog, hookRunner, mcpMgr, pluginMgr, p)
 	}
 
 	// --- Interactive TUI mode ---
@@ -342,6 +343,7 @@ func runAgenticSession(args []string) error {
 	// /chat, /code toggles) and the submit closure, so changes take effect on
 	// the very next turn.
 	autoApplyState := codeAutoApply
+	planModeState := codePlanMode
 	toolSchemasState := toolSchemas
 	maxTurnsState := codeMaxTurns
 	turns := 0
@@ -362,13 +364,14 @@ func runAgenticSession(args []string) error {
 		history = append(history, codeMessage{Role: "user", Content: input})
 		ch := make(chan tui.StreamEvent, 64)
 		currentAutoApply := autoApplyState // snapshot at turn start
+		currentPlanMode := planModeState   // snapshot at turn start
 		currentSchemas := toolSchemasState // snapshot (empty = chat mode)
 
 		go func() {
 			defer close(ch)
 			newHistory, loopErr := agenticLoopTUI(
 				conn, cfg, cid, mdl, currentSchemas,
-				history, isFirstTurn && isNew, permAllow, permDeny, currentAutoApply,
+				history, isFirstTurn && isNew, permAllow, permDeny, currentAutoApply, currentPlanMode,
 				maxTurnsState, maxContextTokens, maxBudgetUSD, sessPath, auditLog, hookRunner, mcpMgr, pluginMgr, p, ch,
 			)
 			history = newHistory
@@ -394,6 +397,7 @@ func runAgenticSession(args []string) error {
 		WorkDir:        workDir,
 		Version:        formatVersion(Version),
 		AutoApply:      codeAutoApply,
+		PlanMode:       codePlanMode,
 		InitialPrompt:  initialPrompt,
 		RepoName:       gitRepoName(),
 		CustomCommands: loadCustomSlashCommands("."),
@@ -456,6 +460,9 @@ func runAgenticSession(args []string) error {
 		},
 		SetAutoApplyFn: func(enabled bool) {
 			autoApplyState = enabled
+		},
+		SetPlanModeFn: func(enabled bool) {
+			planModeState = enabled
 		},
 		SetCodeModeFn: func(enabled bool) {
 			if enabled {
@@ -527,6 +534,7 @@ func runCodePrint(
 	maxBudgetUSD float64,
 	allow, deny []string,
 	autoApply bool,
+	planMode bool,
 	outputFormat string,
 	sessPath string,
 	auditLog *audit.Logger,
@@ -542,7 +550,7 @@ func runCodePrint(
 		defer close(ch)
 		newHistory, loopErr := agenticLoopTUI(
 			conn, cfg, chatID, model, toolSchemas,
-			history, true, allow, deny, autoApply,
+			history, true, allow, deny, autoApply, planMode,
 			maxTurns, maxContextTokens, maxBudgetUSD, sessPath, auditLog, hookRunner, mcpMgr, pluginMgr, p, ch,
 		)
 		session.Save(sessPath, toSessionMsgs(newHistory)) //nolint:errcheck
@@ -696,6 +704,7 @@ func agenticLoopTUI(
 	isFirstTurn bool,
 	allow, deny []string,
 	autoApply bool,
+	planMode bool,
 	maxTurns int,
 	maxContextTokens int,
 	maxBudgetUSD float64,
@@ -899,7 +908,7 @@ func agenticLoopTUI(
 
 		// Execute tools — run concurrently when all can be auto-approved,
 		// fall back to sequential when any requires a TUI approval prompt.
-		toolResults := executeTools(toolCalls, allow, deny, autoApply, auditLog, hookRunner, mcpMgr, pluginMgr, p, ch)
+		toolResults := executeTools(toolCalls, allow, deny, autoApply, planMode, auditLog, hookRunner, mcpMgr, pluginMgr, p, ch)
 		for i, tc := range toolCalls {
 			r := toolResults[i]
 			history = append(history, codeMessage{
@@ -1258,6 +1267,7 @@ func executeTools(
 	toolCalls []ui.ToolCallEvent,
 	allow, deny []string,
 	autoApply bool,
+	planMode bool,
 	auditLog *audit.Logger,
 	hookRunner *hooks.Runner,
 	mcpMgr *mcp.Manager,
@@ -1269,7 +1279,7 @@ func executeTools(
 	if len(toolCalls) <= 1 {
 		results := make([]toolResult, len(toolCalls))
 		for i, tc := range toolCalls {
-			r, e := executeWithApprovalTUI(tc, allow, deny, autoApply, auditLog, hookRunner, mcpMgr, pluginMgr, p, ch)
+			r, e := executeWithApprovalTUI(tc, allow, deny, autoApply, planMode, auditLog, hookRunner, mcpMgr, pluginMgr, p, ch)
 			results[i] = toolResult{result: r, err: e}
 		}
 		return results
@@ -1300,7 +1310,7 @@ func executeTools(
 		// Sequential: approval dialogs must not overlap.
 		results := make([]toolResult, len(toolCalls))
 		for i, tc := range toolCalls {
-			r, e := executeWithApprovalTUI(tc, allow, deny, autoApply, auditLog, hookRunner, mcpMgr, pluginMgr, p, ch)
+			r, e := executeWithApprovalTUI(tc, allow, deny, autoApply, planMode, auditLog, hookRunner, mcpMgr, pluginMgr, p, ch)
 			results[i] = toolResult{result: r, err: e}
 		}
 		return results
@@ -1313,12 +1323,29 @@ func executeTools(
 		wg.Add(1)
 		go func(idx int, t ui.ToolCallEvent) {
 			defer wg.Done()
-			r, e := executeWithApprovalTUI(t, allow, deny, true, auditLog, hookRunner, mcpMgr, pluginMgr, p, ch)
+			r, e := executeWithApprovalTUI(t, allow, deny, true, planMode, auditLog, hookRunner, mcpMgr, pluginMgr, p, ch)
 			results[idx] = toolResult{result: r, err: e}
 		}(i, tc)
 	}
 	wg.Wait()
 	return results
+}
+
+// isPlanModeBlocked reports whether toolName should be blocked while plan mode
+// is active. Plan mode is a hard policy, checked before hooks/permissions/
+// --auto — the only way past it is to exit plan mode via /plan.
+func isPlanModeBlocked(toolName, argsJSON string) bool {
+	if tools.IsReadOnlyTool(toolName) {
+		return false
+	}
+	if toolName == "bash" {
+		return !tools.IsSafeBashCommand(argsJSON)
+	}
+	if mcp.IsMCPTool(toolName) {
+		return !mcp.IsReadOnlyMCPTool(toolName)
+	}
+	return true // write_file, edit_file, patch_file, edit_notebook, task,
+	// memory_write, memory_delete, plugin tools, unknown tools
 }
 
 // executeWithApprovalTUI runs a tool, running hooks, audit logging, and the
@@ -1328,6 +1355,7 @@ func executeWithApprovalTUI(
 	tc ui.ToolCallEvent,
 	allow, deny []string,
 	autoApply bool,
+	planMode bool,
 	auditLog *audit.Logger,
 	hookRunner *hooks.Runner,
 	mcpMgr *mcp.Manager,
@@ -1335,6 +1363,14 @@ func executeWithApprovalTUI(
 	p *ui.Printer,
 	ch chan<- tui.StreamEvent,
 ) (string, error) {
+	// --- Plan mode (hard policy — checked before hooks/permissions/--auto) ---
+	if planMode && isPlanModeBlocked(tc.Name, tc.Arguments) {
+		msg := fmt.Sprintf("📝 Blocked by plan mode (read-only): %s — type /plan to allow changes.", tc.Name)
+		auditLog.LogToolCall(tc.Name, tc.Arguments, false, false)
+		auditLog.LogToolResult(tc.Name, 0, false)
+		return msg, nil
+	}
+
 	// --- Pre-tool hooks (#80) ---
 	hookResult := hookRunner.PreToolUse(tc.Name, tc.Arguments)
 	if hookResult.Block {

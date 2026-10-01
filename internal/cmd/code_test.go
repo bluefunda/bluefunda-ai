@@ -54,7 +54,7 @@ func TestExecuteTools_ParallelUnderAutoApply(t *testing.T) {
 	ch := make(chan tui.StreamEvent, n)
 
 	start := time.Now()
-	results := executeTools(toolCalls, nil, nil, true, auditLog, hookRunner, mcpMgr, pluginMgr, printer, ch)
+	results := executeTools(toolCalls, nil, nil, true, false, auditLog, hookRunner, mcpMgr, pluginMgr, printer, ch)
 	elapsed := time.Since(start)
 
 	// Serial execution of 4 x 300ms sleeps would take ~1.2s; concurrent
@@ -71,5 +71,30 @@ func TestExecuteTools_ParallelUnderAutoApply(t *testing.T) {
 		if !strings.Contains(r.result, want) {
 			t.Errorf("tool %d: result = %q, want it to contain %q (result order not preserved)", i, r.result, want)
 		}
+	}
+}
+
+func TestIsPlanModeBlocked(t *testing.T) {
+	cases := []struct {
+		name    string
+		tool    string
+		args    string
+		blocked bool
+	}{
+		{"read-only tool allowed", "read_file", `{"path":"x"}`, false},
+		{"safe bash allowed", "bash", `{"command":"git status"}`, false},
+		{"unsafe bash blocked", "bash", `{"command":"rm -rf /"}`, true},
+		{"write_file blocked", "write_file", `{"path":"x","content":"y"}`, true},
+		{"edit_file blocked", "edit_file", `{"path":"x"}`, true},
+		{"mcp read-only tool allowed", "mcp__github__list_resources", `{}`, false},
+		{"mcp real tool blocked", "mcp__github__create_issue", `{}`, true},
+		{"task blocked", "task", `{"prompt":"do something"}`, true},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := isPlanModeBlocked(c.tool, c.args); got != c.blocked {
+				t.Errorf("isPlanModeBlocked(%q, %q) = %v, want %v", c.tool, c.args, got, c.blocked)
+			}
+		})
 	}
 }

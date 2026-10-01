@@ -209,11 +209,35 @@ func applyEnvOverrides(cfg *Config) {
 	}
 }
 
-// MCPServerConfig configures one local MCP server started via stdio transport.
+// MCPServerConfig configures one MCP server, started via either the stdio or
+// the Streamable HTTP transport.
 type MCPServerConfig struct {
+	// Type selects the transport: "stdio" (default) or "http". If empty, the
+	// transport is inferred: URL set => "http", else "stdio".
+	Type string `yaml:"type"`
+
+	// stdio transport fields.
 	Command string            `yaml:"command"`
 	Args    []string          `yaml:"args"`
 	Env     map[string]string `yaml:"env"`
+
+	// http transport fields.
+	URL     string            `yaml:"url"`
+	Headers map[string]string `yaml:"headers"`
+}
+
+// EffectiveTransport returns the resolved transport for srv: an explicit
+// Type takes precedence, otherwise a bare URL implies "http" and anything
+// else implies "stdio" (preserving behavior for existing command-only configs).
+func (srv MCPServerConfig) EffectiveTransport() string {
+	switch srv.Type {
+	case "http", "stdio":
+		return srv.Type
+	}
+	if srv.URL != "" {
+		return "http"
+	}
+	return "stdio"
 }
 
 // ProjectConfig is the subset of Config that can be overridden per-project

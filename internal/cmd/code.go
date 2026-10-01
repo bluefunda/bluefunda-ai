@@ -301,6 +301,9 @@ func runAgenticSession(args []string) error {
 
 	// --- History: context + memory + optional resume (#82, #144, #273) ---
 	history := buildContextHistory(".")
+	if ctx := hookRunner.SessionStart(model, Version); ctx != "" {
+		history = append(history, codeMessage{Role: "system", Content: ctx})
+	}
 	if codeResume != "" || codeContinue {
 		if msgs, err := session.Load(sessPath); err == nil {
 			for _, m := range msgs {
@@ -465,6 +468,7 @@ func runAgenticSession(args []string) error {
 	m := tui.New(tuiCfg, submitFn)
 	err = tui.Run(m)
 	auditLog.LogSessionEnd(turns, "end_turn")
+	hookRunner.SessionEnd(turns, "end_turn")
 
 	// --- Worktree teardown (#126) ---
 	if worktreePath != "" {
@@ -542,9 +546,17 @@ func runCodePrint(
 			maxTurns, maxContextTokens, maxBudgetUSD, sessPath, auditLog, hookRunner, mcpMgr, pluginMgr, p, ch,
 		)
 		session.Save(sessPath, toSessionMsgs(newHistory)) //nolint:errcheck
+
+		// A --print invocation is exactly one turn. auditLog.LogSessionEnd was
+		// previously never called in this path (TUI-only) — fixed here since
+		// the hook needs the same turns/stopReason data anyway.
+		stopReason := "end_turn"
 		if loopErr != nil {
+			stopReason = "error"
 			ch <- tui.StreamEvent{Kind: "error", ErrMsg: ui.RewriteError(loopErr)}
 		}
+		auditLog.LogSessionEnd(1, stopReason)
+		hookRunner.SessionEnd(1, stopReason)
 		ch <- tui.StreamEvent{Kind: "done"}
 	}()
 
@@ -732,35 +744,43 @@ func agenticLoopTUI(
 		// (e.g. resumed history already large). Server count is a secondary signal.
 		estTokens := estimateTokens(history)
 		if estTokens >= maxContextTokens || (iteration > 0 && lastPromptTokens > int32(maxContextTokens)) {
-			fmt.Fprintf(os.Stderr, "[bai] compacting context (est. ~%dk tokens → summary)…\n", estTokens/1000)
-			ch <- tui.StreamEvent{Kind: "chunk", Chunk: fmt.Sprintf(
-				"\n⚡ Context at ~%dk tokens — compacting history...\n",
-				estTokens/1000,
-			)}
-			if compacted, compactErr := compactHistory(conn, chatID, model, history); compactErr == nil {
-				history = compacted
-				lastPromptTokens = 0
-				session.Save(sessPath, toSessionMsgs(history)) //nolint:errcheck
-				ch <- tui.StreamEvent{Kind: "chunk", Chunk: "✅ History compacted. Continuing...\n\n"}
+			if preCompact := hookRunner.PreCompact(estTokens); preCompact.Block {
+				msg := preCompact.SystemMessage
+				if msg == "" {
+					msg = "compaction blocked by hook"
+				}
+				ch <- tui.StreamEvent{Kind: "chunk", Chunk: fmt.Sprintf("\n⏸ %s — proceeding without compaction this round.\n", msg)}
 			} else {
-				fmt.Fprintf(os.Stderr, "[bai] context compaction failed, dropping oldest turns\n")
-				ch <- tui.StreamEvent{Kind: "chunk", Chunk: "\n⚠ Compaction failed — dropping oldest turns...\n"}
-				history = dropOldestTurns(history, maxContextTokens*4/5)
-				lastPromptTokens = 0
-				session.Save(sessPath, toSessionMsgs(history)) //nolint:errcheck
-				// If dropping still leaves us over the limit (e.g. large tool results
-				// from GitHub issues exceed the model's context window), bail now with
-				// a clear message rather than looping on every subsequent iteration.
-				if estimateTokens(history) >= maxContextTokens {
-					mdl := model
-					if mdl == "" {
-						mdl = "the current model"
+				fmt.Fprintf(os.Stderr, "[bai] compacting context (est. ~%dk tokens → summary)…\n", estTokens/1000)
+				ch <- tui.StreamEvent{Kind: "chunk", Chunk: fmt.Sprintf(
+					"\n⚡ Context at ~%dk tokens — compacting history...\n",
+					estTokens/1000,
+				)}
+				if compacted, compactErr := compactHistory(conn, chatID, model, history); compactErr == nil {
+					history = compacted
+					lastPromptTokens = 0
+					session.Save(sessPath, toSessionMsgs(history)) //nolint:errcheck
+					ch <- tui.StreamEvent{Kind: "chunk", Chunk: "✅ History compacted. Continuing...\n\n"}
+				} else {
+					fmt.Fprintf(os.Stderr, "[bai] context compaction failed, dropping oldest turns\n")
+					ch <- tui.StreamEvent{Kind: "chunk", Chunk: "\n⚠ Compaction failed — dropping oldest turns...\n"}
+					history = dropOldestTurns(history, maxContextTokens*4/5)
+					lastPromptTokens = 0
+					session.Save(sessPath, toSessionMsgs(history)) //nolint:errcheck
+					// If dropping still leaves us over the limit (e.g. large tool results
+					// from GitHub issues exceed the model's context window), bail now with
+					// a clear message rather than looping on every subsequent iteration.
+					if estimateTokens(history) >= maxContextTokens {
+						mdl := model
+						if mdl == "" {
+							mdl = "the current model"
+						}
+						return history, fmt.Errorf(
+							"context too large for %s (est. %dk tokens) — "+
+								"try a model with a larger context window or use --max-context-tokens",
+							mdl, estimateTokens(history)/1000,
+						)
 					}
-					return history, fmt.Errorf(
-						"context too large for %s (est. %dk tokens) — "+
-							"try a model with a larger context window or use --max-context-tokens",
-						mdl, estimateTokens(history)/1000,
-					)
 				}
 			}
 		}
@@ -854,6 +874,15 @@ func agenticLoopTUI(
 		}
 
 		if len(toolCalls) == 0 {
+			if stopRes := hookRunner.Stop(); stopRes.Block {
+				msg := stopRes.SystemMessage
+				if msg == "" {
+					msg = "Continue."
+				}
+				ch <- tui.StreamEvent{Kind: "chunk", Chunk: fmt.Sprintf("\n🔁 stop hook: %s\n", msg)}
+				history = append(history, codeMessage{Role: "user", Content: msg})
+				continue
+			}
 			return history, nil
 		}
 

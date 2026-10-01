@@ -17,6 +17,7 @@ import (
 	pb "github.com/bluefunda/bluefunda-ai/api/proto/bff"
 	"github.com/bluefunda/bluefunda-ai/internal/config"
 	caigrpc "github.com/bluefunda/bluefunda-ai/internal/grpc"
+	"github.com/bluefunda/bluefunda-ai/internal/hooks"
 	"github.com/bluefunda/bluefunda-ai/internal/memory"
 	"github.com/bluefunda/bluefunda-ai/internal/plugins"
 	"github.com/bluefunda/bluefunda-ai/internal/session"
@@ -177,15 +178,9 @@ func runDoctor(cmd *cobra.Command, args []string) error {
 
 	// 12. Hooks
 	hooksDir := filepath.Join(cwd, ".bai", "hooks")
-	hookEntries, _ := os.ReadDir(hooksDir)
-	var hookCount int
-	for _, e := range hookEntries {
-		if !e.IsDir() {
-			hookCount++
-		}
-	}
+	hookCount := countHookScripts(hooksDir, hooks.Phases)
 	if hookCount == 0 {
-		checks = append(checks, checkResult{"Hooks", "info", "none configured — see docs for PreToolUse/PostToolUse hooks"})
+		checks = append(checks, checkResult{"Hooks", "info", "none configured — see docs for session/tool hooks"})
 	} else {
 		checks = append(checks, checkResult{"Hooks", "ok", fmt.Sprintf("%d hook script(s) in .bai/hooks/", hookCount)})
 	}
@@ -354,4 +349,24 @@ func printChecks(out interface{ Write([]byte) (int, error) }, checks []checkResu
 		_, _ = okStyle.Fprintln(out, "  All checks passed")
 	}
 	fmt.Fprintln(out)
+}
+
+// countHookScripts sums the number of script files across each phase
+// subdirectory of hooksDir (e.g. hooksDir/pre-tool/, hooksDir/stop/).
+// Extracted so the recursion-into-subdirectories behavior is independently
+// testable without the rest of runDoctor's backend/gRPC dependencies.
+func countHookScripts(hooksDir string, phases []string) int {
+	var count int
+	for _, phase := range phases {
+		entries, err := os.ReadDir(filepath.Join(hooksDir, phase))
+		if err != nil {
+			continue
+		}
+		for _, e := range entries {
+			if !e.IsDir() {
+				count++
+			}
+		}
+	}
+	return count
 }

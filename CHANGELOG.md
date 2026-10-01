@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.54.0](https://github.com/bluefunda/bluefunda-ai/compare/v1.53.0...v1.54.0) (2026-10-01)
+
+
+### Features
+
+* **tui:** add /memory slash command to browse and prune persistent memory ([#311](https://github.com/bluefunda/bluefunda-ai/issues/311)) ([edfea80](https://github.com/bluefunda/bluefunda-ai/commit/edfea807d41c47b899faf6b89475a4f2de54f2b1))
+
 ## [1.53.0](https://github.com/bluefunda/bluefunda-ai/compare/v1.52.0...v1.53.0) (2026-10-01)
 
 

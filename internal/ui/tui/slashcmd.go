@@ -24,6 +24,7 @@ var builtinCommands = []SlashCommand{
 	{"/code", "Switch to code mode and load file system tools", "", ""},
 	{"/chat", "Switch to chat mode and unload file tools", "", ""},
 	{"/auto", "Toggle auto-apply for code tools (code sessions only)", "", ""},
+	{"/plan", "Toggle plan mode — read-only tools until you exit it", "", ""},
 	{"/mcp", "List or activate MCP servers  /mcp github", "", ""},
 	{"/memory", "List, show, or delete memory entries  /memory <key> | /memory delete <key>", "", ""},
 	{"/account", "Show account info (name, email)", "", ""},

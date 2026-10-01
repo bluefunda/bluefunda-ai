@@ -272,3 +272,19 @@ func (m *Manager) Execute(ctx context.Context, qualifiedName, argsJSON string) (
 func IsMCPTool(name string) bool {
 	return strings.HasPrefix(name, namespacePrefix)
 }
+
+// IsReadOnlyMCPTool reports whether a qualified MCP tool name is one of the
+// synthetic read-only tools (list_resources/read_resource/list_prompts/
+// get_prompt) rather than an actual, unknown-risk MCP server tool — used by
+// plan mode to decide which MCP calls are safe to allow.
+func IsReadOnlyMCPTool(name string) bool {
+	if !IsMCPTool(name) {
+		return false
+	}
+	for _, suffix := range []string{listResourcesTool, readResourceTool, listPromptsTool, getPromptTool} {
+		if strings.HasSuffix(name, "__"+suffix) {
+			return true
+		}
+	}
+	return false
+}

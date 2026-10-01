@@ -109,6 +109,7 @@ type SessionConfig struct {
 	WorkDir        string // working directory shown in header
 	Version        string // bai version shown in header
 	AutoApply      bool
+	PlanMode       bool
 	InitialPrompt  string                        // auto-submitted as the first message
 	RepoName       string                        // git repo name shown in header
 	ResumeTitle    string                        // set when auto-resuming a past session
@@ -120,6 +121,7 @@ type SessionConfig struct {
 	MCPActivateFn  func(name string) error       // nil = MCP activation not available
 	ListModelsFn   func() ([]ModelInfo, error)   // nil = model listing not available
 	SetAutoApplyFn func(enabled bool)            // nil = auto-apply not available (non-code sessions)
+	SetPlanModeFn  func(enabled bool)            // nil = plan mode not available (non-code sessions)
 	SetCodeModeFn  func(enabled bool)            // nil = mode switch not supported in this session
 	CustomCommands []SlashCommand                // loaded from .bai/commands/*.md
 }
@@ -944,6 +946,23 @@ func (m Model) handleSlashCommand(input string) (tea.Model, tea.Cmd) {
 		m.messages = append(m.messages, newSystemMessage("Auto-apply "+state))
 		m.refreshViewport()
 
+	case input == "/plan":
+		if !m.cfg.IsCode {
+			m.messages = append(m.messages, newSystemMessage("/plan is only available in code sessions (bai code)"))
+			m.refreshViewport()
+			break
+		}
+		m.cfg.PlanMode = !m.cfg.PlanMode
+		if m.cfg.SetPlanModeFn != nil {
+			m.cfg.SetPlanModeFn(m.cfg.PlanMode)
+		}
+		state := "disabled — tools can modify files and run commands again"
+		if m.cfg.PlanMode {
+			state = "enabled — read-only tools only until you type /plan again"
+		}
+		m.messages = append(m.messages, newSystemMessage("Plan mode "+state))
+		m.refreshViewport()
+
 	case input == "/account":
 		if m.cfg.AccountFn != nil {
 			m.messages = append(m.messages, newSystemMessage("Loading account…"))
@@ -1209,6 +1228,7 @@ func helpText() string {
 		"  /code            Switch to code mode (file tools)",
 		"  /chat            Switch to chat mode (no tools)",
 		"  /auto            Toggle auto-apply for code tools",
+		"  /plan            Toggle plan mode (read-only tools until exited)",
 		"  /mcp [name]      List or activate MCP servers",
 		"  /memory [key]    List, show, or `delete <key>` a memory entry",
 		"  /account         Show account info",

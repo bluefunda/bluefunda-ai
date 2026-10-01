@@ -326,6 +326,17 @@ func NeedsApproval(toolName string) bool {
 	return false
 }
 
+// IsReadOnlyTool reports whether a tool only reads/inspects state, never
+// mutates it — the baseline tool set permitted while plan mode is active.
+func IsReadOnlyTool(toolName string) bool {
+	switch toolName {
+	case "read_file", "list_dir", "search_files", "search_content", "read_notebook",
+		"web_fetch", "web_search", "memory_read", "memory_list":
+		return true
+	}
+	return false
+}
+
 // safeBashPrefixes lists command prefixes that are safe to auto-approve without a
 // TUI confirmation prompt. Commands that mutate shared state (rm, git push, git reset)
 // are deliberately excluded.

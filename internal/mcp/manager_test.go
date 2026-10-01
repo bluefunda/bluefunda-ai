@@ -194,6 +194,22 @@ func TestExecute_RoutesResourceAndPromptCalls(t *testing.T) {
 	}
 }
 
+func TestIsReadOnlyMCPTool(t *testing.T) {
+	cases := map[string]bool{
+		"mcp__github__list_resources": true,
+		"mcp__github__read_resource":  true,
+		"mcp__github__list_prompts":   true,
+		"mcp__github__get_prompt":     true,
+		"mcp__github__create_issue":   false, // a real, unknown-risk server tool
+		"read_file":                   false, // not an MCP tool at all
+	}
+	for name, want := range cases {
+		if got := IsReadOnlyMCPTool(name); got != want {
+			t.Errorf("IsReadOnlyMCPTool(%q) = %v, want %v", name, got, want)
+		}
+	}
+}
+
 func TestStatus_ReportsStartedAndFailedServers(t *testing.T) {
 	fake := &fakeMCPServer{resourcesCap: true, promptsCap: true}
 	srv := httptest.NewServer(http.HandlerFunc(fake.handler))

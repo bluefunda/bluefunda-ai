@@ -61,6 +61,10 @@ func (t *testBFF) GetChatHistory(_ context.Context, req *pb.GetChatHistoryReques
 		Messages: []*pb.ChatMessage{
 			{Role: "user", Content: "Hello", CreatedAt: "2025-01-01T00:00:00Z"},
 			{Role: "assistant", Content: "Hi there!", CreatedAt: "2025-01-01T00:00:01Z"},
+			// A bai code session's smuggled cliCodePayload (buildCodeRequest's
+			// Prompt-field workaround — see #84, #332): chatHistoryRPC's table
+			// view must unwrap this, not show the raw JSON.
+			{Role: "user", Content: `{"v":1,"history":[{"role":"user","content":"draft the release notes"}],"tools":"[]"}`, CreatedAt: "2025-01-01T00:00:02Z"},
 		},
 	}, nil
 }
@@ -275,8 +279,8 @@ func TestChatHistory(t *testing.T) {
 		t.Fatalf("GetChatHistory: %v", err)
 	}
 
-	if len(resp.GetMessages()) != 2 {
-		t.Fatalf("expected 2 messages, got %d", len(resp.GetMessages()))
+	if len(resp.GetMessages()) != 3 {
+		t.Fatalf("expected 3 messages, got %d", len(resp.GetMessages()))
 	}
 	if resp.GetMessages()[0].GetRole() != "user" {
 		t.Errorf("expected role 'user', got %q", resp.GetMessages()[0].GetRole())
@@ -901,6 +905,82 @@ func TestChatHistoryRPC_Table(t *testing.T) {
 	}
 	if !strings.Contains(out, "Hello") {
 		t.Errorf("expected 'Hello' in output, got: %s", out)
+	}
+}
+
+func TestChatHistoryRPC_Table_UnwrapsCodeSessionContent(t *testing.T) {
+	client := startTestServer(t)
+	conn := &caigrpc.Conn{Client: client}
+	p, buf := testPrinter(ui.FormatTable)
+
+	if err := chatHistoryRPC(conn, "chat-1", p); err != nil {
+		t.Fatalf("chatHistoryRPC: %v", err)
+	}
+
+	out := buf.String()
+	if !strings.Contains(out, "draft the release notes") {
+		t.Errorf("expected the unwrapped user message in output, got: %s", out)
+	}
+	if strings.Contains(out, `"tools"`) || strings.Contains(out, `{"v":1`) {
+		t.Errorf("expected raw JSON payload to not leak into the table, got: %s", out)
+	}
+}
+
+func TestUnwrapCodeSessionContent_PlainTextUnchanged(t *testing.T) {
+	if _, ok := unwrapCodeSessionContent("hello, how are you?"); ok {
+		t.Error("expected plain text to not be treated as a code-session payload")
+	}
+}
+
+func TestUnwrapCodeSessionContent_UnrelatedJSONUnchanged(t *testing.T) {
+	if _, ok := unwrapCodeSessionContent(`{"foo":"bar"}`); ok {
+		t.Error("expected an unrelated JSON object (no history field) to not be unwrapped")
+	}
+}
+
+func TestUnwrapCodeSessionContent_UnwrapsLastUserMessage(t *testing.T) {
+	payload := cliCodePayload{
+		V: 1,
+		History: []codeMessage{
+			{Role: "system", Content: "project context"},
+			{Role: "user", Content: "fix the failing tests"},
+			{Role: "assistant", Content: "", ToolCalls: []codeToolCall{{ID: "1", Type: "function"}}},
+			{Role: "user", Content: "also update the README"},
+		},
+	}
+	b, err := json.Marshal(payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	summary, ok := unwrapCodeSessionContent(string(b))
+	if !ok {
+		t.Fatal("expected a code-session payload to be unwrapped")
+	}
+	if summary != "[code session] also update the README" {
+		t.Errorf("summary = %q, want the last user message", summary)
+	}
+}
+
+func TestUnwrapCodeSessionContent_NoUserMessageFallsBackToLabel(t *testing.T) {
+	payload := cliCodePayload{
+		V: 1,
+		History: []codeMessage{
+			{Role: "system", Content: "project context"},
+			{Role: "assistant", Content: "", ToolCalls: []codeToolCall{{ID: "1", Type: "function"}}},
+		},
+	}
+	b, err := json.Marshal(payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	summary, ok := unwrapCodeSessionContent(string(b))
+	if !ok {
+		t.Fatal("expected a code-session payload to be unwrapped")
+	}
+	if summary != "[code session: tool-use turn]" {
+		t.Errorf("summary = %q, want the generic fallback label", summary)
 	}
 }
 

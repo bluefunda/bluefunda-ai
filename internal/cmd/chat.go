@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"strings"
@@ -429,14 +430,40 @@ func chatHistoryRPC(conn *caigrpc.Conn, chatID string, p *ui.Printer) error {
 	headers := []string{"ROLE", "CONTENT", "CREATED"}
 	rows := make([][]string, 0, len(resp.GetMessages()))
 	for _, m := range resp.GetMessages() {
+		content := m.GetContent()
+		if summary, ok := unwrapCodeSessionContent(content); ok {
+			content = summary
+		}
 		rows = append(rows, []string{
 			m.GetRole(),
-			truncate(m.GetContent(), 80),
+			truncate(content, 80),
 			m.GetCreatedAt(),
 		})
 	}
 	p.Table(headers, rows)
 	return nil
+}
+
+// unwrapCodeSessionContent detects whether content is a bai code session's
+// smuggled cliCodePayload JSON blob (buildCodeRequest's workaround for a load
+// balancer that strips proto fields 8+ — see #84, #332) and, if so, returns a
+// human-readable summary instead of the raw JSON. ok is false when content
+// isn't a recognized code-session payload, in which case the caller should
+// display it unchanged.
+func unwrapCodeSessionContent(content string) (summary string, ok bool) {
+	if !strings.HasPrefix(strings.TrimSpace(content), "{") {
+		return "", false
+	}
+	var payload cliCodePayload
+	if err := json.Unmarshal([]byte(content), &payload); err != nil || len(payload.History) == 0 {
+		return "", false // not JSON, or JSON but not shaped like a code payload
+	}
+	for i := len(payload.History) - 1; i >= 0; i-- {
+		if m := payload.History[i]; m.Role == "user" && m.Content != "" {
+			return "[code session] " + m.Content, true
+		}
+	}
+	return "[code session: tool-use turn]", true
 }
 
 // --- chat context ---

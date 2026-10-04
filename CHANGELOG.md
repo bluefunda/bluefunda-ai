@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.57.1](https://github.com/bluefunda/bluefunda-ai/compare/v1.57.0...v1.57.1) (2026-10-04)
+
+
+### Bug Fixes
+
+* project config max_turns override broken after --max-turns default bump ([#329](https://github.com/bluefunda/bluefunda-ai/issues/329)) ([9dae1f8](https://github.com/bluefunda/bluefunda-ai/commit/9dae1f8cd14492a7d951cb42167e2ae519638c3c))
+
 ## [1.57.0](https://github.com/bluefunda/bluefunda-ai/compare/v1.56.0...v1.57.0) (2026-10-01)
 
 

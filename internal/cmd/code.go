@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -257,6 +258,30 @@ func runAgenticSession(args []string) error {
 		permAllow = projCfg.Permissions.Allow
 		permDeny = projCfg.Permissions.Deny
 	}
+
+	// --- Personal, local "always allow" rules + workspace trust gate (#331) ---
+	// .bai/settings.local.yaml is gitignored and holds per-developer rules
+	// persisted via the 'a' key in the approval dialog — opt-in only (see
+	// permissions.persist_always_allow below) and never applied until the
+	// user explicitly trusts this workspace.
+	localCfg, localCfgPath := config.FindLocalConfig(".")
+	if localCfg != nil && (len(localCfg.Permissions.Allow) > 0 || len(localCfg.Permissions.Deny) > 0) {
+		if !localCfg.Trusted && !codePrint && isTerminal() {
+			n := len(localCfg.Permissions.Allow) + len(localCfg.Permissions.Deny)
+			fmt.Printf("\nThis project has %d saved permission rule(s) in .bai/settings.local.yaml.\n", n)
+			fmt.Print("Trust this workspace and apply them? [y/N] > ")
+			var choice string
+			_, _ = fmt.Scanln(&choice)
+			if strings.HasPrefix(strings.ToLower(strings.TrimSpace(choice)), "y") {
+				localCfg.Trusted = true
+				_ = config.SaveLocalConfig(localCfgPath, localCfg)
+			}
+		}
+		if localCfg.Trusted {
+			permAllow = append(permAllow, localCfg.Permissions.Allow...)
+			permDeny = append(permDeny, localCfg.Permissions.Deny...)
+		}
+	}
 	defer mcpMgr.Close()
 	if extra := mcpMgr.ToolSchemas(); len(extra) > 0 {
 		merged, mergeErr := tools.MergeSchemas(toolSchemas, extra)
@@ -318,8 +343,18 @@ func runAgenticSession(args []string) error {
 	hookRunner := hooks.New(hooksDir, sessionID, workDir)
 
 	// Tools approved via "always allow for this session" (the 'a' key in the
-	// approval dialog) — exact tool+args match, session-scoped only.
+	// approval dialog) — exact tool+args match, session-scoped only by
+	// default. If the project opted into permissions.persist_always_allow,
+	// also persist approvals to .bai/settings.local.yaml (#331) so they
+	// survive future sessions once the workspace is trusted.
 	sessionAllow := newSessionAllowSet()
+	if projCfg != nil && projCfg.Permissions.PersistAlwaysAllow {
+		sessionAllow.persistPath = localCfgPath
+		projectRoot := filepath.Dir(filepath.Dir(localCfgPath))
+		if ensureGitignoreEntry(filepath.Join(projectRoot, ".gitignore"), ".bai/settings.local.yaml") {
+			fmt.Println("[bai] added .bai/settings.local.yaml to .gitignore")
+		}
+	}
 
 	// --- History: context + memory + optional resume (#82, #144, #273) ---
 	history := buildContextHistory(".")
@@ -1292,6 +1327,13 @@ type toolResult struct {
 type sessionAllowSet struct {
 	mu    sync.Mutex
 	exact map[string]bool // key: toolName + "\x00" + argsJSON
+
+	// persistPath, when non-empty, opts this set into also writing "always
+	// allow" approvals to the local config at this path (#331) — set only
+	// when the project has explicitly enabled permissions.persist_always_allow
+	// and the workspace trust gate has been satisfied. Session-scoped
+	// behavior (the exact map above) is unconditional and unchanged either way.
+	persistPath string
 }
 
 func newSessionAllowSet() *sessionAllowSet {
@@ -1303,8 +1345,30 @@ func (s *sessionAllowSet) add(toolName, argsJSON string) {
 		return
 	}
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	s.exact[toolName+"\x00"+argsJSON] = true
+	persistPath := s.persistPath
+	s.mu.Unlock()
+	if persistPath != "" {
+		persistAlwaysAllow(persistPath, toolName, argsJSON)
+	}
+}
+
+// persistAlwaysAllow writes a literal "<tool>:<arg>" rule (or bare "<tool>"
+// when there's no meaningful argument) to the local config at path. If the
+// extracted argument contains '*' or '?', it's skipped silently — the glob
+// matcher in internal/tools/permissions.go has no escape syntax, so there is
+// no safe literal representation, and the approval simply stays session-only
+// as it would have before this feature existed.
+func persistAlwaysAllow(path, toolName, argsJSON string) {
+	arg := tools.ExtractPrimaryArg(toolName, argsJSON)
+	if strings.ContainsAny(arg, "*?") {
+		return
+	}
+	pattern := toolName
+	if arg != "" {
+		pattern = toolName + ":" + arg
+	}
+	_ = config.AddLocalAllowRule(path, pattern)
 }
 
 func (s *sessionAllowSet) contains(toolName, argsJSON string) bool {

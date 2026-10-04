@@ -442,6 +442,80 @@ func TestFindProjectConfig_WalksUp(t *testing.T) {
 	}
 }
 
+// --- LocalConfig Tests (#331) ---
+
+func TestFindLocalConfig_NotFound(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	lc, path := FindLocalConfig(root)
+	if lc != nil {
+		t.Errorf("expected nil LocalConfig, got %+v", lc)
+	}
+	if path != filepath.Join(root, ".bai", "settings.local.yaml") {
+		t.Errorf("expected path to point at the project root even when not found, got %q", path)
+	}
+}
+
+func TestSaveLocalConfig_RoundTrip(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	_, path := FindLocalConfig(root)
+
+	want := &LocalConfig{Trusted: true}
+	want.Permissions.Allow = []string{"bash:go test ./..."}
+	want.Permissions.Deny = []string{"bash:rm -rf *"}
+	if err := SaveLocalConfig(path, want); err != nil {
+		t.Fatalf("SaveLocalConfig: %v", err)
+	}
+
+	got, gotPath := FindLocalConfig(root)
+	if got == nil {
+		t.Fatal("expected non-nil LocalConfig after save")
+	}
+	if gotPath != path {
+		t.Errorf("path mismatch: got %q, want %q", gotPath, path)
+	}
+	if !got.Trusted {
+		t.Error("expected Trusted to round-trip as true")
+	}
+	if len(got.Permissions.Allow) != 1 || got.Permissions.Allow[0] != "bash:go test ./..." {
+		t.Errorf("unexpected allow list: %+v", got.Permissions.Allow)
+	}
+	if len(got.Permissions.Deny) != 1 || got.Permissions.Deny[0] != "bash:rm -rf *" {
+		t.Errorf("unexpected deny list: %+v", got.Permissions.Deny)
+	}
+}
+
+func TestAddLocalAllowRule_CreatesFileAndDedupes(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	_, path := FindLocalConfig(root)
+
+	if err := AddLocalAllowRule(path, "bash:go test ./..."); err != nil {
+		t.Fatalf("AddLocalAllowRule: %v", err)
+	}
+	if err := AddLocalAllowRule(path, "bash:go test ./..."); err != nil {
+		t.Fatalf("AddLocalAllowRule (dup): %v", err)
+	}
+
+	lc := loadLocalConfigFile(path)
+	if lc == nil {
+		t.Fatal("expected file to exist after AddLocalAllowRule")
+	}
+	if len(lc.Permissions.Allow) != 1 {
+		t.Errorf("expected dedup to keep exactly one entry, got %+v", lc.Permissions.Allow)
+	}
+	if lc.Trusted {
+		t.Error("expected AddLocalAllowRule to not implicitly trust the workspace")
+	}
+}
+
 // --- Load Tests ---
 
 func TestLoad_MissingFile_ReturnsDefaults(t *testing.T) {

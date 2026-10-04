@@ -250,7 +250,112 @@ type ProjectConfig struct {
 	Permissions struct {
 		Allow []string `yaml:"allow"`
 		Deny  []string `yaml:"deny"`
+		// PersistAlwaysAllow opts this project into writing "always allow"
+		// approvals (the 'a' key in the TUI approval dialog) to
+		// .bai/settings.local.yaml so they survive across sessions. Default
+		// false: without it, 'a' behaves exactly as before — session-scoped
+		// only, never written to disk.
+		PersistAlwaysAllow bool `yaml:"persist_always_allow"`
 	} `yaml:"permissions"`
+}
+
+// LocalConfig is the personal, local-only counterpart to ProjectConfig,
+// stored at .bai/settings.local.yaml. Unlike settings.yaml, it is meant to be
+// gitignored (see ensureGitignoreEntry in internal/cmd/init.go) — it holds
+// per-developer "always allow" rules persisted via the approval dialog, not
+// shared team configuration. Persisted rules only take effect once Trusted
+// is set, via the one-time workspace trust prompt.
+type LocalConfig struct {
+	Trusted     bool `yaml:"trusted"`
+	Permissions struct {
+		Allow []string `yaml:"allow"`
+		Deny  []string `yaml:"deny"`
+	} `yaml:"permissions"`
+}
+
+// localConfigPath walks upward from cwd until a .git directory, returning
+// the candidate path for .bai/settings.local.yaml at the first directory
+// checked that contains a .bai directory or a .git directory — i.e. the same
+// root FindProjectConfig would use.
+func localConfigPath(cwd string) (string, bool) {
+	abs, err := filepath.Abs(cwd)
+	if err != nil {
+		return "", false
+	}
+	for {
+		candidate := filepath.Join(abs, ".bai", "settings.local.yaml")
+		if _, err := os.Stat(candidate); err == nil {
+			return candidate, true
+		}
+		if _, err := os.Stat(filepath.Join(abs, ".git")); err == nil {
+			return filepath.Join(abs, ".bai", "settings.local.yaml"), false
+		}
+		parent := filepath.Dir(abs)
+		if parent == abs {
+			return filepath.Join(abs, ".bai", "settings.local.yaml"), false
+		}
+		abs = parent
+	}
+}
+
+// FindLocalConfig walks upward from cwd until a .git directory, looking for
+// .bai/settings.local.yaml. It returns the parsed config (nil if not found or
+// unparsable) and the path where it either was found, or should be created at
+// the git root if one doesn't yet exist — the path is always returned so
+// SaveLocalConfig can create the file on first write.
+func FindLocalConfig(cwd string) (*LocalConfig, string) {
+	path, found := localConfigPath(cwd)
+	if !found {
+		return nil, path
+	}
+	return loadLocalConfigFile(path), path
+}
+
+// loadLocalConfigFile reads and parses the local config at the exact path
+// given (no directory walk), returning nil if it doesn't exist or doesn't parse.
+func loadLocalConfigFile(path string) *LocalConfig {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil
+	}
+	var lc LocalConfig
+	if yaml.Unmarshal(data, &lc) != nil {
+		return nil
+	}
+	return &lc
+}
+
+// AddLocalAllowRule appends pattern to the allow list in the local config at
+// path (deduped), creating the file if it doesn't exist yet. Used to persist
+// an "always allow" approval (see LocalConfig).
+func AddLocalAllowRule(path, pattern string) error {
+	lc := loadLocalConfigFile(path)
+	if lc == nil {
+		lc = &LocalConfig{}
+	}
+	for _, existing := range lc.Permissions.Allow {
+		if existing == pattern {
+			return nil
+		}
+	}
+	lc.Permissions.Allow = append(lc.Permissions.Allow, pattern)
+	return SaveLocalConfig(path, lc)
+}
+
+// SaveLocalConfig writes cfg to path, creating .bai/ if needed. The file is
+// mode 0600 since it's personal (not meant to be shared or committed).
+func SaveLocalConfig(path string, cfg *LocalConfig) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
+		return fmt.Errorf("create .bai directory: %w", err)
+	}
+	data, err := yaml.Marshal(cfg)
+	if err != nil {
+		return fmt.Errorf("marshal local config: %w", err)
+	}
+	if err := os.WriteFile(path, data, 0600); err != nil {
+		return fmt.Errorf("write local config: %w", err)
+	}
+	return nil
 }
 
 // mergeProject applies non-zero values from p over cfg.

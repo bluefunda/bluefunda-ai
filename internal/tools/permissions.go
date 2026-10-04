@@ -59,7 +59,7 @@ func matchesPermission(pattern, toolName, argumentsJSON string) bool {
 	if !hasGlob {
 		return true
 	}
-	arg := extractPrimaryArg(toolName, argumentsJSON)
+	arg := ExtractPrimaryArg(toolName, argumentsJSON)
 	return globMatch(argGlob, arg)
 }
 
@@ -91,9 +91,10 @@ func globMatch(pattern, s string) bool {
 	return false
 }
 
-// extractPrimaryArg returns the principal string argument for a tool call,
-// used for glob matching in permission patterns.
-func extractPrimaryArg(toolName, argumentsJSON string) string {
+// ExtractPrimaryArg returns the principal string argument for a tool call,
+// used for glob matching in permission patterns and for building new
+// "<tool>:<arg>" patterns (e.g. to persist an "always allow" approval).
+func ExtractPrimaryArg(toolName, argumentsJSON string) string {
 	var args map[string]any
 	if err := json.Unmarshal([]byte(argumentsJSON), &args); err != nil {
 		return ""

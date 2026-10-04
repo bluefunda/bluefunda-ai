@@ -130,6 +130,17 @@ type SessionConfig struct {
 	SetPlanModeFn  func(enabled bool)            // nil = plan mode not available (non-code sessions)
 	SetCodeModeFn  func(enabled bool)            // nil = mode switch not supported in this session
 	CustomCommands []SlashCommand                // loaded from .bai/commands/*.md
+
+	// RetryFn resends the last user turn, dropping the prior response so the
+	// new one replaces it in place (#289). Returns the stream channel to pump
+	// (same shape submitFn returns), the retried prompt text (so the TUI can
+	// show a fresh user bubble with the exact resent content), and an error
+	// if there is no previous turn to retry. modelOverride, if non-empty, is
+	// used for this one retry instead of Model — raw passthrough, matching
+	// /model's existing behavior (no alias resolution here).
+	// nil = retry not available in this session (e.g. the legacy plain-chat
+	// path) — /retry reports that rather than silently no-op'ing.
+	RetryFn func(modelOverride string) (ch <-chan StreamEvent, prompt string, err error)
 }
 
 // SessionInfo is one entry returned by ListSessionsFn for /sessions display.
@@ -903,6 +914,43 @@ func (m Model) handleSlashCommand(input string) (tea.Model, tea.Cmd) {
 		}
 		m.refreshViewport()
 
+	case input == "/retry" || strings.HasPrefix(input, "/retry "):
+		if m.cfg.RetryFn == nil {
+			m.messages = append(m.messages, newSystemMessage("Retry is not available in this session."))
+			m.refreshViewport()
+			break
+		}
+		arg := strings.TrimSpace(strings.TrimPrefix(input, "/retry"))
+		var modelOverride string
+		if arg != "" {
+			if !strings.HasPrefix(arg, "--model ") {
+				m.messages = append(m.messages, newSystemMessage("Usage: /retry [--model <name>]"))
+				m.refreshViewport()
+				break
+			}
+			modelOverride = strings.TrimSpace(strings.TrimPrefix(arg, "--model "))
+		}
+		ch, prompt, err := m.cfg.RetryFn(modelOverride)
+		if err != nil {
+			m.messages = append(m.messages, newSystemMessage(err.Error()))
+			m.refreshViewport()
+			break
+		}
+		if idx := lastUserMessageIndex(m.messages); idx >= 0 {
+			m.messages = m.messages[:idx] // drop the old turn — new one replaces it in place
+		}
+		if modelOverride != "" {
+			m.messages = append(m.messages, newSystemMessage("Retrying with model: "+modelOverride))
+		}
+		m.messages = append(m.messages, newUserMessage(prompt))
+		m.streaming = true
+		m.atBottom = true
+		m.refreshViewport()
+		m.viewport.GotoBottom()
+		m.streamStop = make(chan struct{})
+		m.streamCh = ch
+		return m, waitForStreamEvent(m.streamCh, m.streamStop)
+
 	case input == "/sessions":
 		if m.cfg.ListSessionsFn != nil {
 			m.messages = append(m.messages, newSystemMessage("Loading sessions…"))
@@ -1294,6 +1342,7 @@ func helpText() string {
 		"  /new             Start a fresh session",
 		"  /model [name]    Show or switch model",
 		"  /copy [n|code [n]]  Copy last response, an earlier one, or a code block",
+		"  /retry [--model <name>]  Resend the last message, replacing the response",
 		"  /sessions        List recent sessions",
 		"  /resume <id|n>   Resume a session",
 		"  /code            Switch to code mode (file tools)",

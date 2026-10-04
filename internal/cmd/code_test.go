@@ -183,6 +183,32 @@ func TestSessionAllowSet_AddWithPersistPathSkipsGlobMetacharacters(t *testing.T)
 	}
 }
 
+func TestLastUserIndex(t *testing.T) {
+	cases := []struct {
+		name    string
+		history []codeMessage
+		want    int
+	}{
+		{"empty", nil, -1},
+		{"no user messages", []codeMessage{{Role: "system", Content: "ctx"}}, -1},
+		{"single user", []codeMessage{{Role: "user", Content: "a"}}, 0},
+		{"finds last of several", []codeMessage{
+			{Role: "user", Content: "a"},
+			{Role: "assistant", Content: "reply a"},
+			{Role: "user", Content: "b"},
+			{Role: "assistant", ToolCalls: []codeToolCall{{ID: "1"}}},
+			{Role: "tool", Content: "result", ToolCallID: "1"},
+		}, 2},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := lastUserIndex(c.history); got != c.want {
+				t.Errorf("lastUserIndex() = %d, want %d", got, c.want)
+			}
+		})
+	}
+}
+
 func TestResolveMaxTurns(t *testing.T) {
 	cases := []struct {
 		name            string

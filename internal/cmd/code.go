@@ -46,6 +46,9 @@ var (
 	codeNoTools          bool
 	codeWorktree         bool
 	codePlanMode         bool
+	codeRetryMode        bool // set by `bai chat retry <id>`: derive the prompt
+	// from the last turn in the resumed session instead of requiring one on
+	// the command line.
 )
 
 // defaultMaxTurnsFlag is the --max-turns default, shared by both flag
@@ -102,6 +105,19 @@ type codeMessage struct {
 	Content    string         `json:"content"`
 	ToolCallID string         `json:"tool_call_id,omitempty"`
 	ToolCalls  []codeToolCall `json:"tool_calls,omitempty"`
+}
+
+// lastUserIndex returns the index of the last Role=="user" message in
+// history, or -1 if none exists. Used by both the interactive /retry slash
+// command and the non-interactive `bai chat retry` to find and drop the
+// prior turn before resubmitting it (#289).
+func lastUserIndex(history []codeMessage) int {
+	for i := len(history) - 1; i >= 0; i-- {
+		if history[i].Role == "user" {
+			return i
+		}
+	}
+	return -1
 }
 
 // codeToolCall matches messages.ToolCall nested format in cai-llm-router.
@@ -373,6 +389,19 @@ func runAgenticSession(args []string) error {
 		}
 	}
 
+	// --- `bai chat retry <id>` (#289) ---
+	// Derive the prompt from the last turn in the resumed session instead of
+	// requiring one on the command line, and drop that turn from history so
+	// the replayed response replaces it rather than piling up as a 2nd attempt.
+	if codeRetryMode {
+		idx := lastUserIndex(history)
+		if idx < 0 {
+			return fmt.Errorf("no previous turn found to retry in session %s", sessionID)
+		}
+		initialPrompt = history[idx].Content
+		history = history[:idx]
+	}
+
 	// --- Headless print mode (#77) ---
 	if codePrint || !isTerminal() {
 		if initialPrompt == "" {
@@ -446,6 +475,25 @@ func runAgenticSession(args []string) error {
 		return ch
 	}
 
+	// retryFn resends the last user turn (#289): drop it (and everything the
+	// agentic loop produced after it) from history, then call submitFn again
+	// with that same prompt text. submitFn independently re-appends the user
+	// message, so the net effect is "replace the last turn," not "append a
+	// duplicate." modelOverride falls back to the session's current model.
+	retryFn := func(modelOverride string) (<-chan tui.StreamEvent, string, error) {
+		idx := lastUserIndex(history)
+		if idx < 0 {
+			return nil, "", fmt.Errorf("no previous turn to retry")
+		}
+		prompt := history[idx].Content
+		history = history[:idx]
+		useModel := model
+		if modelOverride != "" {
+			useModel = modelOverride
+		}
+		return submitFn(chatID, useModel, prompt, false), prompt, nil
+	}
+
 	tuiCfg := tui.SessionConfig{
 		ChatID:         chatID,
 		Model:          model,
@@ -457,6 +505,7 @@ func runAgenticSession(args []string) error {
 		InitialPrompt:  initialPrompt,
 		RepoName:       gitRepoName(),
 		CustomCommands: loadCustomSlashCommands("."),
+		RetryFn:        retryFn,
 		AccountFn: func() (*tui.AccountInfo, error) {
 			ctx, cancel := caigrpc.ContextWithTimeout()
 			defer cancel()

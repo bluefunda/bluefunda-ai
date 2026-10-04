@@ -76,6 +76,17 @@ func nthMessageFromEnd(msgs []ChatMessage, n int) (msg ChatMessage, ok bool) {
 	return ChatMessage{}, false
 }
 
+// lastUserMessageIndex returns the index of the last RoleUser message in
+// msgs, or -1 if none exists.
+func lastUserMessageIndex(msgs []ChatMessage) int {
+	for i := len(msgs) - 1; i >= 0; i-- {
+		if msgs[i].Role == RoleUser {
+			return i
+		}
+	}
+	return -1
+}
+
 // appendChunk appends streaming text to an assistant message.
 func (m *ChatMessage) appendChunk(chunk string) {
 	m.Content += chunk

@@ -20,6 +20,7 @@ var builtinCommands = []SlashCommand{
 	{"/reset", "Clear messages (keep session ID)", "", ""},
 	{"/model", "Show or switch the active model  /model gpt-4", "", ""},
 	{"/copy", "Copy the last response, /copy <n> for an earlier one, /copy code [n] for a code block", "", ""},
+	{"/retry", "Resend the last message, replacing the response  /retry --model gpt-4", "", ""},
 	{"/sessions", "List recent sessions", "", ""},
 	{"/resume", "Resume a session by ID or number  /resume 2", "", ""},
 	{"/code", "Switch to code mode and load file system tools", "", ""},

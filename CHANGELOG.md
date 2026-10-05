@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.60.0](https://github.com/bluefunda/bluefunda-ai/compare/v1.59.0...v1.60.0) (2026-10-05)
+
+
+### Features
+
+* **tui:** /retry to re-run the last prompt, with optional model switch ([#336](https://github.com/bluefunda/bluefunda-ai/issues/336)) ([08b3134](https://github.com/bluefunda/bluefunda-ai/commit/08b31345fd29eb094bf3ea8b54e399e406a4d2c6))
+
 ## [1.59.0](https://github.com/bluefunda/bluefunda-ai/compare/v1.58.0...v1.59.0) (2026-10-05)
 
 

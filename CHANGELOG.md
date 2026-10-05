@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.59.0](https://github.com/bluefunda/bluefunda-ai/compare/v1.58.0...v1.59.0) (2026-10-05)
+
+
+### Features
+
+* **tui:** /copy for responses and code blocks ([#337](https://github.com/bluefunda/bluefunda-ai/issues/337)) ([9119a21](https://github.com/bluefunda/bluefunda-ai/commit/9119a2176412ed0c687c9cbce9a926ab08f25b65))
+
 ## [1.58.0](https://github.com/bluefunda/bluefunda-ai/compare/v1.57.1...v1.58.0) (2026-10-05)
 
 

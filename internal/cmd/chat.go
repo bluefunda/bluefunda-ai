@@ -156,7 +156,7 @@ func init() {
 	chatStartCmd.Flags().StringVar(&chatMCPServer, "mcp-server", "", "MCP server name")
 	chatStartCmd.Flags().BoolVar(&chatDemo, "demo", false, "Run with a mock backend (no auth required)")
 
-	chatCmd.AddCommand(chatListCmd, chatStartCmd, chatHistoryCmd, chatContextCmd, chatTitleCmd, chatStopCmd)
+	chatCmd.AddCommand(chatListCmd, chatStartCmd, chatHistoryCmd, chatContextCmd, chatTitleCmd, chatStopCmd, chatRetryCmd)
 }
 
 func runChatStart(cmd *cobra.Command, args []string) error {
@@ -607,6 +607,40 @@ func chatStopRPC(conn *caigrpc.Conn, chatID string, p *ui.Printer) error {
 		p.Error("Failed to stop session")
 	}
 	return nil
+}
+
+// --- chat retry (#289) ---
+
+var chatRetryModel string
+
+var chatRetryCmd = &cobra.Command{
+	Use:   "retry <chatId>",
+	Short: "Re-run the last prompt in an existing session",
+	Args:  cobra.ExactArgs(1),
+	RunE:  runChatRetry,
+}
+
+func init() {
+	chatRetryCmd.Flags().StringVar(&chatRetryModel, "model", "", "Use a different model for this retry")
+}
+
+// runChatRetry resumes session args[0] exactly like `bai --resume <id> --print`,
+// but derives the prompt from the session's last turn instead of requiring
+// one on the command line — reusing runAgenticSession's full plumbing (gRPC
+// conn, tool schemas, mcpMgr, pluginMgr, hooks, audit) rather than
+// duplicating it. codeRetryMode signals runAgenticSession to drop that last
+// turn from history before replaying it, same as the TUI's /retry.
+func runChatRetry(cmd *cobra.Command, args []string) error {
+	codeResume = args[0]
+	codePrint = true
+	codeRetryMode = true
+	if codeDir == "" {
+		codeDir = "." // chatRetryCmd registers no --dir flag of its own
+	}
+	if chatRetryModel != "" {
+		codeModel = chatRetryModel
+	}
+	return runAgenticSession(nil)
 }
 
 // --- demo mode ---

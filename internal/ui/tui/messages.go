@@ -58,6 +58,24 @@ func newSystemMessage(text string) ChatMessage {
 	return ChatMessage{Role: RoleSystem, Content: text, Timestamp: time.Now()}
 }
 
+// nthMessageFromEnd returns the nth ChatMessage counting backward from the
+// end of msgs (1 = most recent), skipping RoleSystem notices — those are CLI
+// chrome, not conversation content a user would want to copy (#288). ok is
+// false if n is out of range.
+func nthMessageFromEnd(msgs []ChatMessage, n int) (msg ChatMessage, ok bool) {
+	count := 0
+	for i := len(msgs) - 1; i >= 0; i-- {
+		if msgs[i].Role == RoleSystem {
+			continue
+		}
+		count++
+		if count == n {
+			return msgs[i], true
+		}
+	}
+	return ChatMessage{}, false
+}
+
 // appendChunk appends streaming text to an assistant message.
 func (m *ChatMessage) appendChunk(chunk string) {
 	m.Content += chunk

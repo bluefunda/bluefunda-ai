@@ -4,11 +4,14 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/bluefunda/bluefunda-ai/internal/audit"
+	"github.com/bluefunda/bluefunda-ai/internal/config"
 	"github.com/bluefunda/bluefunda-ai/internal/hooks"
 	"github.com/bluefunda/bluefunda-ai/internal/mcp"
 	"github.com/bluefunda/bluefunda-ai/internal/plugins"
@@ -132,6 +135,52 @@ func TestSessionAllowSet_NilIsEmptyAndNoopAdd(t *testing.T) {
 		t.Error("expected a nil set to contain nothing")
 	}
 	s.add("bash", `{"command":"git status"}`) // must not panic
+}
+
+func TestSessionAllowSet_AddWithoutPersistPathDoesNotWriteFile(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+	s := newSessionAllowSet() // persistPath left empty — opt-in off
+	s.add("bash", `{"command":"go test ./..."}`)
+	if _, err := os.Stat(filepath.Join(dir, ".bai", "settings.local.yaml")); !os.IsNotExist(err) {
+		t.Error("expected no local config file to be written when persistence is not enabled")
+	}
+}
+
+func TestSessionAllowSet_AddWithPersistPathWritesLiteralRule(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, ".bai", "settings.local.yaml")
+	s := newSessionAllowSet()
+	s.persistPath = path
+	s.add("bash", `{"command":"go test ./..."}`)
+
+	lc, _ := config.FindLocalConfig(dir)
+	if lc == nil {
+		t.Fatal("expected local config to be created")
+	}
+	want := "bash:go test ./..."
+	if len(lc.Permissions.Allow) != 1 || lc.Permissions.Allow[0] != want {
+		t.Errorf("Permissions.Allow = %+v, want [%q]", lc.Permissions.Allow, want)
+	}
+}
+
+func TestSessionAllowSet_AddWithPersistPathSkipsGlobMetacharacters(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, ".bai", "settings.local.yaml")
+	s := newSessionAllowSet()
+	s.persistPath = path
+	// The command itself contains '*' — persisting "bash:rm -rf *" verbatim
+	// would be misread as a wildcard by globMatch, broadening far beyond what
+	// was approved. Must stay session-only instead.
+	s.add("bash", `{"command":"echo * matches everything here"}`)
+
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Error("expected no local config file to be written for a literal containing '*'")
+	}
+	// Session-scoped behavior must still work regardless.
+	if !s.contains("bash", `{"command":"echo * matches everything here"}`) {
+		t.Error("expected session-scoped contains() to still work")
+	}
 }
 
 func TestResolveMaxTurns(t *testing.T) {

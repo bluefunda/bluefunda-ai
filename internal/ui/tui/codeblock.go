@@ -142,3 +142,18 @@ func splitMarkdown(md string) []segment {
 
 	return segs
 }
+
+// codeBlocksIn returns the body of every fenced code block in content, in
+// document order, trimmed of the trailing newline splitMarkdown's line
+// accumulation leaves (same trim renderCodeBlock already applies). Used by
+// /copy code [n] (#288).
+func codeBlocksIn(content string) []string {
+	segs := splitMarkdown(content)
+	var blocks []string
+	for _, s := range segs {
+		if s.isCode {
+			blocks = append(blocks, strings.TrimRight(s.body, "\n"))
+		}
+	}
+	return blocks
+}

@@ -585,6 +585,18 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.refreshViewport()
 		return m, nil
 
+	case "ctrl+y":
+		// Copy last response (#288) — same target as bare /copy.
+		if msg, ok := nthMessageFromEnd(m.messages, 1); ok {
+			if method, err := copyToClipboardFn(msg.Content); err != nil {
+				m.messages = append(m.messages, newSystemMessage("Copy failed: "+err.Error()))
+			} else {
+				m.messages = append(m.messages, newSystemMessage(fmt.Sprintf("Copied (%s).", method)))
+			}
+			m.refreshViewport()
+		}
+		return m, nil
+
 	case "enter":
 		if m.showSlash && len(m.slashMatches) > 0 {
 			cmd := m.slashMatches[m.slashIdx]
@@ -848,6 +860,46 @@ func (m Model) handleSlashCommand(input string) (tea.Model, tea.Cmd) {
 		} else {
 			m.cfg.Model = strings.TrimSpace(arg)
 			m.messages = append(m.messages, newSystemMessage("Switched to model: "+m.cfg.Model))
+		}
+		m.refreshViewport()
+
+	case input == "/copy" || strings.HasPrefix(input, "/copy"):
+		arg := strings.TrimSpace(strings.TrimPrefix(input, "/copy"))
+		var text string
+		switch {
+		case arg == "":
+			if msg, ok := nthMessageFromEnd(m.messages, 1); ok {
+				text = msg.Content
+			}
+		case arg == "code" || strings.HasPrefix(arg, "code "):
+			if msg, ok := nthMessageFromEnd(m.messages, 1); ok {
+				blocks := codeBlocksIn(msg.Content)
+				idxArg := strings.TrimSpace(strings.TrimPrefix(arg, "code"))
+				n := len(blocks)
+				if idxArg != "" {
+					if parsed, convErr := strconv.Atoi(idxArg); convErr == nil {
+						n = parsed
+					} else {
+						n = 0 // forces the "nothing to copy" message below
+					}
+				}
+				if n >= 1 && n <= len(blocks) {
+					text = blocks[n-1]
+				}
+			}
+		default:
+			if n, convErr := strconv.Atoi(arg); convErr == nil {
+				if msg, ok := nthMessageFromEnd(m.messages, n); ok {
+					text = msg.Content
+				}
+			}
+		}
+		if text == "" {
+			m.messages = append(m.messages, newSystemMessage("Nothing to copy."))
+		} else if method, err := copyToClipboardFn(text); err != nil {
+			m.messages = append(m.messages, newSystemMessage("Copy failed: "+err.Error()))
+		} else {
+			m.messages = append(m.messages, newSystemMessage(fmt.Sprintf("Copied (%s).", method)))
 		}
 		m.refreshViewport()
 
@@ -1234,12 +1286,14 @@ func helpText() string {
 		"  Ctrl+L         Clear screen",
 		"  Ctrl+C          Interrupt turn (or quit when idle)",
 		"  Ctrl+D          Quit",
+		"  Ctrl+Y          Copy last response",
 		"  PgUp/PgDn      Scroll conversation",
 		"",
 		"  Slash commands",
 		"  ─────────────────────────────────",
 		"  /new             Start a fresh session",
 		"  /model [name]    Show or switch model",
+		"  /copy [n|code [n]]  Copy last response, an earlier one, or a code block",
 		"  /sessions        List recent sessions",
 		"  /resume <id|n>   Resume a session",
 		"  /code            Switch to code mode (file tools)",

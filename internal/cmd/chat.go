@@ -397,11 +397,21 @@ func generateTitle(conn *caigrpc.Conn, wg *sync.WaitGroup, chatID, prompt string
 
 // --- chat history ---
 
+var (
+	chatHistoryLast bool
+	chatHistoryRaw  bool
+)
+
 var chatHistoryCmd = &cobra.Command{
 	Use:   "history <chatId>",
 	Short: "Get message history for a session",
 	Args:  cobra.ExactArgs(1),
 	RunE:  runChatHistory,
+}
+
+func init() {
+	chatHistoryCmd.Flags().BoolVar(&chatHistoryLast, "last", false, "Show only the most recent message (#288)")
+	chatHistoryCmd.Flags().BoolVar(&chatHistoryRaw, "raw", false, "Print raw message content with no table formatting (#288)")
 }
 
 func runChatHistory(cmd *cobra.Command, args []string) error {
@@ -410,10 +420,14 @@ func runChatHistory(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	defer conn.Close()
-	return chatHistoryRPC(conn, args[0], printer(cfg))
+	return chatHistoryRPC(conn, args[0], printer(cfg), chatHistoryLast, chatHistoryRaw)
 }
 
-func chatHistoryRPC(conn *caigrpc.Conn, chatID string, p *ui.Printer) error {
+// chatHistoryRPC fetches and prints chatID's message history. last/raw (#288)
+// compose independently: last narrows to just the most recent message
+// (applies to every output mode), raw prints message content verbatim with
+// no table decoration, truncation, or code-session JSON unwrapping.
+func chatHistoryRPC(conn *caigrpc.Conn, chatID string, p *ui.Printer, last, raw bool) error {
 	ctx, cancel := caigrpc.ContextWithTimeout()
 	defer cancel()
 
@@ -422,14 +436,32 @@ func chatHistoryRPC(conn *caigrpc.Conn, chatID string, p *ui.Printer) error {
 		return fmt.Errorf("get history: %w", err)
 	}
 
+	msgs := resp.GetMessages()
+	if last && len(msgs) > 0 {
+		msgs = msgs[len(msgs)-1:]
+	}
+
+	if raw {
+		for i, m := range msgs {
+			if i > 0 {
+				fmt.Fprintln(p.Out)
+			}
+			fmt.Fprintln(p.Out, m.GetContent())
+		}
+		return nil
+	}
+
 	if p.Format == ui.FormatJSON {
+		// --last doesn't narrow -o json today — it always dumps the full
+		// proto response, same as without the flag. Scoped out of #288: the
+		// ask was specifically `--last --raw`, not `--last -o json`.
 		p.ProtoJSON(resp)
 		return nil
 	}
 
 	headers := []string{"ROLE", "CONTENT", "CREATED"}
-	rows := make([][]string, 0, len(resp.GetMessages()))
-	for _, m := range resp.GetMessages() {
+	rows := make([][]string, 0, len(msgs))
+	for _, m := range msgs {
 		content := m.GetContent()
 		if summary, ok := unwrapCodeSessionContent(content); ok {
 			content = summary

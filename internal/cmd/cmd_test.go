@@ -895,7 +895,7 @@ func TestChatHistoryRPC_Table(t *testing.T) {
 	conn := &caigrpc.Conn{Client: client}
 	p, buf := testPrinter(ui.FormatTable)
 
-	if err := chatHistoryRPC(conn, "chat-1", p); err != nil {
+	if err := chatHistoryRPC(conn, "chat-1", p, false, false); err != nil {
 		t.Fatalf("chatHistoryRPC: %v", err)
 	}
 
@@ -913,7 +913,7 @@ func TestChatHistoryRPC_Table_UnwrapsCodeSessionContent(t *testing.T) {
 	conn := &caigrpc.Conn{Client: client}
 	p, buf := testPrinter(ui.FormatTable)
 
-	if err := chatHistoryRPC(conn, "chat-1", p); err != nil {
+	if err := chatHistoryRPC(conn, "chat-1", p, false, false); err != nil {
 		t.Fatalf("chatHistoryRPC: %v", err)
 	}
 
@@ -989,13 +989,92 @@ func TestChatHistoryRPC_JSON(t *testing.T) {
 	conn := &caigrpc.Conn{Client: client}
 	p, buf := testPrinter(ui.FormatJSON)
 
-	if err := chatHistoryRPC(conn, "chat-1", p); err != nil {
+	if err := chatHistoryRPC(conn, "chat-1", p, false, false); err != nil {
 		t.Fatalf("chatHistoryRPC: %v", err)
 	}
 
 	out := buf.String()
 	if !strings.Contains(out, "Hello") {
 		t.Errorf("expected 'Hello' in JSON output, got: %s", out)
+	}
+}
+
+// --- ChatHistoryRPC --last/--raw Tests (#288) ---
+
+func TestChatHistoryRPC_RawLast_PrintsOnlyFinalMessageVerbatim(t *testing.T) {
+	client := startTestServer(t)
+	conn := &caigrpc.Conn{Client: client}
+	p, buf := testPrinter(ui.FormatTable)
+
+	if err := chatHistoryRPC(conn, "chat-1", p, true, true); err != nil {
+		t.Fatalf("chatHistoryRPC: %v", err)
+	}
+
+	wantRaw := `{"v":1,"history":[{"role":"user","content":"draft the release notes"}],"tools":"[]"}`
+	got := strings.TrimRight(buf.String(), "\n")
+	if got != wantRaw {
+		t.Errorf("raw+last output = %q, want %q", got, wantRaw)
+	}
+	if strings.Contains(got, "Hello") || strings.Contains(got, "Hi there!") {
+		t.Errorf("expected only the last message, got earlier messages too: %s", got)
+	}
+	if strings.Contains(got, "ROLE") || strings.Contains(got, "[code session]") {
+		t.Errorf("expected no table decoration and no code-session unwrapping in raw mode, got: %s", got)
+	}
+}
+
+func TestChatHistoryRPC_RawWithoutLast_PrintsAllMessagesVerbatim(t *testing.T) {
+	client := startTestServer(t)
+	conn := &caigrpc.Conn{Client: client}
+	p, buf := testPrinter(ui.FormatTable)
+
+	if err := chatHistoryRPC(conn, "chat-1", p, false, true); err != nil {
+		t.Fatalf("chatHistoryRPC: %v", err)
+	}
+
+	out := buf.String()
+	for _, want := range []string{"Hello", "Hi there!", `"v":1`} {
+		if !strings.Contains(out, want) {
+			t.Errorf("expected raw output to contain %q, got: %s", want, out)
+		}
+	}
+	if strings.Contains(out, "ROLE") {
+		t.Errorf("expected no table decoration in raw mode, got: %s", out)
+	}
+}
+
+func TestChatHistoryRPC_LastWithoutRaw_NarrowsTableToOneRow(t *testing.T) {
+	client := startTestServer(t)
+	conn := &caigrpc.Conn{Client: client}
+	p, buf := testPrinter(ui.FormatTable)
+
+	if err := chatHistoryRPC(conn, "chat-1", p, true, false); err != nil {
+		t.Fatalf("chatHistoryRPC: %v", err)
+	}
+
+	out := buf.String()
+	if strings.Contains(out, "Hello") || strings.Contains(out, "Hi there!") {
+		t.Errorf("expected --last to narrow the table to the final message only, got: %s", out)
+	}
+	if !strings.Contains(out, "draft the release notes") {
+		t.Errorf("expected the unwrapped final message in the table, got: %s", out)
+	}
+}
+
+func TestChatHistoryRPC_LastDoesNotNarrowJSON(t *testing.T) {
+	client := startTestServer(t)
+	conn := &caigrpc.Conn{Client: client}
+	p, buf := testPrinter(ui.FormatJSON)
+
+	if err := chatHistoryRPC(conn, "chat-1", p, true, false); err != nil {
+		t.Fatalf("chatHistoryRPC: %v", err)
+	}
+
+	// Documented scope limitation: --last doesn't narrow -o json — it always
+	// dumps the full history, same as without the flag.
+	out := buf.String()
+	if !strings.Contains(out, "Hello") {
+		t.Errorf("expected --last to leave -o json output unaffected (full history), got: %s", out)
 	}
 }
 

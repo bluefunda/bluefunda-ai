@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.58.0](https://github.com/bluefunda/bluefunda-ai/compare/v1.57.1...v1.58.0) (2026-10-05)
+
+
+### Features
+
+* **config:** opt-in persistent "always allow" with workspace trust gate ([#335](https://github.com/bluefunda/bluefunda-ai/issues/335)) ([8e0a484](https://github.com/bluefunda/bluefunda-ai/commit/8e0a48426e90c67c284cd78fbccf52012fe97969))
+
 ## [1.57.1](https://github.com/bluefunda/bluefunda-ai/compare/v1.57.0...v1.57.1) (2026-10-04)
 
 

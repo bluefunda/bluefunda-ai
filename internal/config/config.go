@@ -40,6 +40,18 @@ type Config struct {
 	Defaults       Defaults           `yaml:"defaults"`
 	Profiles       map[string]Profile `yaml:"profiles,omitempty"`
 	DefaultProfile string             `yaml:"default_profile,omitempty"`
+
+	// UpdateCheck is a tri-state override for the background update-notice
+	// check (#287): nil (unset, the default) means checks are enabled —
+	// every config file written before this field existed keeps working with
+	// no silent opt-out. Only an explicit `bai config set update.check
+	// false` sets a non-nil false.
+	UpdateCheck *bool `yaml:"update_check,omitempty"`
+}
+
+// UpdateCheckEnabled reports the effective update.check setting.
+func (cfg *Config) UpdateCheckEnabled() bool {
+	return cfg.UpdateCheck == nil || *cfg.UpdateCheck
 }
 
 // Profile is one named backend environment under the top-level `profiles:`

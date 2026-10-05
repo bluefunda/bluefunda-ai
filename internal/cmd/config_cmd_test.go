@@ -44,6 +44,63 @@ func TestUseProfile_UnknownNameListsAvailable(t *testing.T) {
 	}
 }
 
+func TestConfigKeys_UpdateCheck_DefaultsToTrue(t *testing.T) {
+	cfg := &config.Config{}
+	k := configKeys["update.check"]
+	if got := k.get(cfg); got != "true" {
+		t.Errorf("update.check default = %q, want %q (unset = enabled)", got, "true")
+	}
+}
+
+func TestConfigKeys_UpdateCheck_SetRoundTrip(t *testing.T) {
+	cfg := &config.Config{}
+	k := configKeys["update.check"]
+	if err := k.set(cfg, "false"); err != nil {
+		t.Fatalf("set(false): %v", err)
+	}
+	if got := k.get(cfg); got != "false" {
+		t.Errorf("after set(false), get() = %q, want %q", got, "false")
+	}
+	if cfg.UpdateCheckEnabled() {
+		t.Error("expected UpdateCheckEnabled() to be false after set(false)")
+	}
+
+	if err := k.set(cfg, "true"); err != nil {
+		t.Fatalf("set(true): %v", err)
+	}
+	if got := k.get(cfg); got != "true" {
+		t.Errorf("after set(true), get() = %q, want %q", got, "true")
+	}
+}
+
+func TestConfigKeys_UpdateCheck_InvalidValueErrors(t *testing.T) {
+	cfg := &config.Config{}
+	k := configKeys["update.check"]
+	err := k.set(cfg, "maybe")
+	if err == nil {
+		t.Fatal("expected an error for an invalid bool value, got nil")
+	}
+	if !strings.Contains(err.Error(), "maybe") {
+		t.Errorf("error = %q, want it to mention the invalid value", err.Error())
+	}
+	if cfg.UpdateCheck != nil {
+		t.Error("expected cfg.UpdateCheck to remain unset after a rejected value")
+	}
+}
+
+func TestConfigKeys_ExistingKeysStillSetWithoutError(t *testing.T) {
+	cfg := &config.Config{}
+	for _, key := range []string{"model", "output", "endpoint"} {
+		k := configKeys[key]
+		if err := k.set(cfg, "x"); err != nil {
+			t.Errorf("set(%q, \"x\") returned an error after the signature change: %v", key, err)
+		}
+		if got := k.get(cfg); got != "x" {
+			t.Errorf("get(%q) = %q, want %q", key, got, "x")
+		}
+	}
+}
+
 func TestUseProfile_NoneConfigured(t *testing.T) {
 	cfg := &config.Config{}
 	p, _ := testPrinter(ui.FormatTable)

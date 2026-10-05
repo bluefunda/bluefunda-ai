@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.61.0](https://github.com/bluefunda/bluefunda-ai/compare/v1.60.0...v1.61.0) (2026-10-05)
+
+
+### Features
+
+* **cli:** proactively notify when a newer bai version is available ([#341](https://github.com/bluefunda/bluefunda-ai/issues/341)) ([637ca5b](https://github.com/bluefunda/bluefunda-ai/commit/637ca5b772bd43ee9c9dec33960d1f3276efc09d))
+
 ## [1.60.0](https://github.com/bluefunda/bluefunda-ai/compare/v1.59.0...v1.60.0) (2026-10-05)
 
 

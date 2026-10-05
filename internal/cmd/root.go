@@ -14,6 +14,7 @@ import (
 	"github.com/bluefunda/bluefunda-ai/internal/config"
 	"github.com/bluefunda/bluefunda-ai/internal/tips"
 	"github.com/bluefunda/bluefunda-ai/internal/ui"
+	"github.com/bluefunda/bluefunda-ai/internal/updatecheck"
 )
 
 var (
@@ -163,7 +164,17 @@ func init() {
 		cmd.Flags().Visit(func(f *pflag.Flag) { invokedFlags = append(invokedFlags, f.Name) })
 
 		cfg := loadConfig()
-		tips.MaybeShowTip(outputFormat(cfg) == ui.FormatQuiet)
+		quiet := outputFormat(cfg) == ui.FormatQuiet
+		tips.MaybeShowTip(quiet)
+
+		// Skip when this invocation launched the interactive TUI (#287) — the
+		// footer badge (internal/ui/tui's renderFooter) already covers that
+		// case; a second, redundant stderr line right as the alt-screen
+		// closes would be noise, not help.
+		launchedTUI := invokedCmdPath == "bai" && !rootPrint && isTerminal()
+		if !launchedTUI {
+			updatecheck.MaybeNotify(Version, quiet, cfg.UpdateCheckEnabled())
+		}
 		return nil
 	}
 

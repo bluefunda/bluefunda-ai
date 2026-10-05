@@ -131,6 +131,11 @@ type SessionConfig struct {
 	SetCodeModeFn  func(enabled bool)            // nil = mode switch not supported in this session
 	CustomCommands []SlashCommand                // loaded from .bai/commands/*.md
 
+	// DisableUpdateCheck skips the background update-staleness check (#287)
+	// entirely. Zero-value (false) means enabled — every existing
+	// construction site that doesn't explicitly set this keeps checking.
+	DisableUpdateCheck bool
+
 	// RetryFn resends the last user turn, dropping the prior response so the
 	// new one replaces it in place (#289). Returns the stream channel to pump
 	// (same shape submitFn returns), the retried prompt text (so the TUI can
@@ -345,7 +350,7 @@ func (m Model) Init() tea.Cmd {
 		textarea.Blink,
 		tickCmd(),
 		tea.EnableBracketedPaste,
-		checkForUpdateCmd(m.cfg.Version),
+		checkForUpdateCmd(m.cfg.Version, m.cfg.DisableUpdateCheck),
 	)
 }
 

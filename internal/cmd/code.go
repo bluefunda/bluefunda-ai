@@ -495,17 +495,18 @@ func runAgenticSession(args []string) error {
 	}
 
 	tuiCfg := tui.SessionConfig{
-		ChatID:         chatID,
-		Model:          model,
-		IsCode:         true,
-		WorkDir:        workDir,
-		Version:        formatVersion(Version),
-		AutoApply:      codeAutoApply,
-		PlanMode:       codePlanMode,
-		InitialPrompt:  initialPrompt,
-		RepoName:       gitRepoName(),
-		CustomCommands: loadCustomSlashCommands("."),
-		RetryFn:        retryFn,
+		ChatID:             chatID,
+		Model:              model,
+		IsCode:             true,
+		WorkDir:            workDir,
+		Version:            formatVersion(Version),
+		AutoApply:          codeAutoApply,
+		PlanMode:           codePlanMode,
+		InitialPrompt:      initialPrompt,
+		RepoName:           gitRepoName(),
+		CustomCommands:     loadCustomSlashCommands("."),
+		RetryFn:            retryFn,
+		DisableUpdateCheck: !cfg.UpdateCheckEnabled(),
 		AccountFn: func() (*tui.AccountInfo, error) {
 			ctx, cancel := caigrpc.ContextWithTimeout()
 			defer cancel()

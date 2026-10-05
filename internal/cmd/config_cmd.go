@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -48,23 +49,38 @@ func init() {
 
 type configKeyDef struct {
 	get func(*config.Config) string
-	set func(*config.Config, string)
+	set func(*config.Config, string) error
 }
 
 var configKeys = map[string]configKeyDef{
 	"model": {
 		get: func(c *config.Config) string { return c.Defaults.Model },
-		set: func(c *config.Config, v string) { c.Defaults.Model = v },
+		set: func(c *config.Config, v string) error { c.Defaults.Model = v; return nil },
 	},
 	"output": {
 		get: func(c *config.Config) string { return c.Defaults.Output },
-		set: func(c *config.Config, v string) { c.Defaults.Output = v },
+		set: func(c *config.Config, v string) error { c.Defaults.Output = v; return nil },
 	},
 	"endpoint": {
 		get: func(c *config.Config) string { return c.BFFURL },
-		set: func(c *config.Config, v string) { c.BFFURL = v },
+		set: func(c *config.Config, v string) error { c.BFFURL = v; return nil },
+	},
+	"update.check": {
+		get: func(c *config.Config) string { return strconv.FormatBool(c.UpdateCheckEnabled()) },
+		set: func(c *config.Config, v string) error {
+			b, err := strconv.ParseBool(v)
+			if err != nil {
+				return fmt.Errorf("invalid value %q for update.check — want true or false", v)
+			}
+			c.UpdateCheck = &b
+			return nil
+		},
 	},
 }
+
+// validConfigKeys lists configKeys' keys for error messages, in the order
+// they're documented (map iteration order is random).
+const validConfigKeys = "model, output, endpoint, update.check"
 
 func runConfigList(cmd *cobra.Command, args []string) error {
 	cfg := loadConfig()
@@ -74,6 +90,7 @@ func runConfigList(cmd *cobra.Command, args []string) error {
 		{"model", cfg.Defaults.Model},
 		{"output", cfg.Defaults.Output},
 		{"endpoint", cfg.BFFURL},
+		{"update.check", strconv.FormatBool(cfg.UpdateCheckEnabled())},
 	}
 	defaultProfile := cfg.DefaultProfile
 	if defaultProfile == "" {
@@ -92,7 +109,7 @@ func runConfigGet(cmd *cobra.Command, args []string) error {
 	cfg := loadConfig()
 	k, ok := configKeys[key]
 	if !ok {
-		return fmt.Errorf("unknown key %q — valid keys: model, output, endpoint", key)
+		return fmt.Errorf("unknown key %q — valid keys: "+validConfigKeys, key)
 	}
 	fmt.Println(k.get(cfg))
 	return nil
@@ -112,9 +129,11 @@ func runConfigSet(cmd *cobra.Command, args []string) error {
 	cfg := loadConfig()
 	k, ok := configKeys[key]
 	if !ok {
-		return fmt.Errorf("unknown key %q — valid keys: model, output, endpoint", key)
+		return fmt.Errorf("unknown key %q — valid keys: "+validConfigKeys, key)
 	}
-	k.set(cfg, value)
+	if err := k.set(cfg, value); err != nil {
+		return err
+	}
 	if err := config.Save(cfg); err != nil {
 		return fmt.Errorf("save config: %w", err)
 	}

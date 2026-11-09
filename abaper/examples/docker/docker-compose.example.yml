@@ -1,0 +1,23 @@
+version: "3.8"
+
+services:
+  abaper:
+    image: ghcr.io/bluefunda/abaper:latest
+    container_name: abaper-server
+    restart: unless-stopped
+    ports:
+      - "8013:8013"
+    environment:
+      - SAP_HOST=${SAP_HOST}
+      - SAP_CLIENT=${SAP_CLIENT:-100}
+      - SAP_USERNAME=${SAP_USERNAME}
+      - SAP_PASSWORD=${SAP_PASSWORD}
+      - LOG_LEVEL=${LOG_LEVEL:-info}
+    volumes:
+      - ${CONFIG_PATH:-./config}:/app/config:ro
+      - ${LOGS_PATH:-./logs}:/app/logs
+    command: ["./abaper", "--server", "-p", "8080"]
+
+networks:
+  abaper-network:
+    driver: bridge

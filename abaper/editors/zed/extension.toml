@@ -1,0 +1,16 @@
+id = "abap"
+name = "ABAP"
+version = "0.1.0"
+schema_version = 1
+description = "ABAP language support with LSP via abaper."
+repository = "https://github.com/bluefunda/abaper"
+authors = ["Phani Kumar <phanikumar@bluefunda.com>"]
+
+[lib]
+kind = "Rust"
+version = "0.2.0"
+
+languages = ["languages/abap"]
+
+[language_servers.abaper-lsp]
+languages = ["ABAP"]

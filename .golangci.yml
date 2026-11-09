@@ -13,3 +13,12 @@ linters:
         # Deferred cleanup — errors on close are unactionable in CLI
         - (*github.com/bluefunda/bluefunda-ai/internal/grpc.Conn).Close
         - (*google.golang.org/grpc.ClientConn).Close
+  exclusions:
+    rules:
+      # Carried over from bluefunda/abaper's own lint config when it was
+      # merged into this repo (#349): the ADT client and REST server predate
+      # lint enforcement. Remove once they are cleaned up.
+      - path: abaper/internal/adt/client\.go
+        linters: [errcheck, unused, staticcheck]
+      - path: abaper/rest/
+        linters: [errcheck, unused, staticcheck]

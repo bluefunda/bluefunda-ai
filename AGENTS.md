@@ -4,9 +4,9 @@ Instructions for AI coding agents working on bluefunda-ai.
 
 ## Project Overview
 
-Go 1.25 CLI for the BlueFunda AI platform. Uses Cobra for commands, gRPC for backend communication with a BFF service, and OAuth2 device flow (Keycloak) for authentication.
+Go CLIs for the BlueFunda AI platform: `bai`, and `abaper` (the ABAPer brand, built from the same core — see `abaper/AGENTS.md`). Uses Cobra for commands, gRPC for backend communication with a BFF service, and OAuth2 device flow (Keycloak) for authentication.
 
-Binary name: `bai`
+Binary names: `bai` (`cmd/bai`), `abaper` (`abaper/cmd/abaper`, built to `bin/abaper`)
 Module: `github.com/bluefunda/bluefunda-ai`
 Config location: `~/.bai/config.yaml`
 
@@ -211,13 +211,15 @@ Fully automated — do NOT manually tag or create releases:
 
 ## Dependencies
 
-Only 6 direct dependencies — keep it minimal:
+Keep direct dependencies minimal. The core ones:
 - `github.com/spf13/cobra` — CLI framework
 - `google.golang.org/grpc` — gRPC client
 - `google.golang.org/protobuf` — Protobuf runtime
 - `github.com/fatih/color` — Terminal colors
 - `github.com/google/uuid` — UUID generation
 - `gopkg.in/yaml.v3` — Config file parsing
+
+abaper's SAP layer adds `go.uber.org/zap` (ADT client / REST server logging) and `github.com/tliron/glsp` + `github.com/tliron/commonlog` (language server).
 
 Do not add dependencies without clear justification. Run `make tidy` after any change to `go.mod`.
 

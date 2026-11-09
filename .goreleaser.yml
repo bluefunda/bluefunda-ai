@@ -19,9 +19,29 @@ builds:
       - -X github.com/bluefunda/bluefunda-ai/internal/cmd.Version={{ .Version }}
     flags:
       - -trimpath
+  # abaper — the ABAPer brand binary, built from the same platform core.
+  - id: abaper
+    main: ./abaper/cmd/abaper
+    binary: abaper
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - darwin
+      - linux
+      - windows
+    goarch:
+      - amd64
+      - arm64
+    ldflags:
+      - -s -w
+      - -X github.com/bluefunda/bluefunda-ai/internal/cmd.Version={{ .Version }}
+    flags:
+      - -trimpath
 
 archives:
   - id: bai
+    ids:
+      - bai
     name_template: "bai_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
     formats:
       - tar.gz
@@ -35,6 +55,27 @@ archives:
           - tar.gz
     files:
       - none*
+  - id: abaper
+    ids:
+      - abaper
+    name_template: "abaper_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    formats:
+      - tar.gz
+      - zip
+    format_overrides:
+      - goos: darwin
+        formats:
+          - zip
+      - goos: windows
+        formats:
+          - zip
+      - goos: linux
+        formats:
+          - tar.gz
+    files:
+      - src: abaper/man/abaper.1
+        dst: man/abaper.1
+        strip_parent: false
 
 nfpms:
   - id: bai
@@ -58,6 +99,29 @@ nfpms:
       - dst: /usr/local/bin/bai
         src: /opt/bai/bin/bai
         type: symlink
+  - id: abaper
+    package_name: abaper
+    file_name_template: "abaper_{{ .Os }}_{{ .Arch }}"
+    ids:
+      - abaper
+    vendor: BlueFunda
+    maintainer: BlueFunda <support@bluefunda.com>
+    description: Cross-platform CLI for the ABAPer platform — AI pair programmer for SAP ABAP developers.
+    license: Apache-2.0
+    formats:
+      - deb
+      - rpm
+    bindir: /opt/abaper/bin
+    contents:
+      - dst: /opt/abaper/etc
+        type: dir
+      - dst: /opt/abaper/log
+        type: dir
+      - dst: /usr/local/bin/abaper
+        src: /opt/abaper/bin/abaper
+        type: symlink
+      - src: abaper/man/abaper.1
+        dst: /usr/share/man/man1/abaper.1
 
 notarize:
   macos:
@@ -83,6 +147,21 @@ brews:
       token: "{{ .Env.HOMEBREW_TAP_TOKEN }}"
     install: |
       bin.install "bai"
+
+# abaper keeps the cask it has always shipped as (`brew install --cask abaper`).
+homebrew_casks:
+  - name: abaper
+    ids:
+      - abaper
+    binaries:
+      - abaper
+    homepage: https://github.com/bluefunda/bluefunda-ai
+    description: CLI for the ABAPer platform — AI pair programmer for SAP ABAP developers
+    directory: Casks
+    repository:
+      owner: bluefunda
+      name: homebrew-tap
+      token: "{{ .Env.HOMEBREW_TAP_TOKEN }}"
 
 checksum:
   name_template: "checksums.txt"
@@ -126,7 +205,7 @@ release:
     name: bluefunda-ai
   draft: false
   replace_existing_draft: true
-  name_template: "bai v{{ .Version }}"
+  name_template: "bai & abaper v{{ .Version }}"
   header: |
     ## BlueFunda AI CLI (bai) v{{ .Version }}
 
@@ -178,6 +257,20 @@ release:
     curl -sL https://github.com/bluefunda/bluefunda-ai/releases/download/v{{ .Version }}/bai_{{ .Version }}_linux_amd64.tar.gz | tar xz
     chmod +x bai && sudo mv bai /usr/local/bin/
     ```
+
+    ## ABAPer (abaper) v{{ .Version }}
+
+    AI pair programmer for SAP ABAP developers, built on the same platform core.
+
+    **Homebrew (macOS):**
+    ```bash
+    brew tap bluefunda/tap
+    brew install --cask abaper
+    ```
+
+    **Debian/Ubuntu:** `abaper_linux_amd64.deb` / `abaper_linux_arm64.deb` · **RHEL/Fedora:** `abaper_linux_amd64.rpm` / `abaper_linux_arm64.rpm`
+
+    **Manual:** `abaper_{{ .Version }}_<os>_<arch>` archives for macOS, Linux and Windows are attached below.
 
 snapshot:
   version_template: "{{ incpatch .Version }}-next"

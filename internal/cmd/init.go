@@ -8,6 +8,8 @@ import (
 	"strings"
 
 	"github.com/spf13/cobra"
+
+	"github.com/bluefunda/bluefunda-ai/internal/app"
 )
 
 var initCmd = &cobra.Command{
@@ -27,7 +29,7 @@ func runInit(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	baiDir := filepath.Join(cwd, ".bai")
+	baiDir := filepath.Join(cwd, app.Current().Dir)
 	if err := os.MkdirAll(baiDir, 0755); err != nil {
 		return fmt.Errorf("create .bai/: %w", err)
 	}

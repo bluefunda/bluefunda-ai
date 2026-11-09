@@ -6,6 +6,8 @@ import (
 
 	"github.com/charmbracelet/glamour"
 	"github.com/charmbracelet/lipgloss"
+
+	"github.com/bluefunda/bluefunda-ai/internal/app"
 )
 
 var spinnerFrames = []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}
@@ -62,7 +64,7 @@ func (m Model) View() string {
 
 func (m Model) renderHeader() string {
 	th := m.theme
-	left := th.AssistantLabel.Render("BlueFunda AI")
+	left := th.AssistantLabel.Render(app.Current().DisplayName)
 	if m.cfg.Version != "" {
 		left += th.ToolDim.Render("  " + m.cfg.Version)
 	}
@@ -84,7 +86,7 @@ func (m Model) renderHeader() string {
 	if m.streaming && m.liveUsagePct > 0 {
 		right = th.ToolDim.Render(fmt.Sprintf("%.0f%% used  ·  ", m.liveUsagePct)) + right
 	} else if m.totalPromptTokens > 0 {
-		right = th.ToolDim.Render(formatTokenCount(m.totalPromptTokens) + "  ·  ") + right
+		right = th.ToolDim.Render(formatTokenCount(m.totalPromptTokens)+"  ·  ") + right
 	}
 
 	spacer := strings.Repeat(" ", max(0, m.width-lipgloss.Width(left)-lipgloss.Width(right)-2))
@@ -108,7 +110,7 @@ func shortPath(p string) string {
 	if j < 0 {
 		return p[:]
 	}
-	return p[j+1 : i] + "/" + base
+	return p[j+1:i] + "/" + base
 }
 
 // formatTokenCount formats a token count as "1.2k", "45k", "150k", etc.
@@ -122,7 +124,6 @@ func formatTokenCount(n int32) string {
 // ──────────────────────────────────────────────
 //  Messages
 // ──────────────────────────────────────────────
-
 
 func (m *Model) renderMessageAt(idx, width int) string {
 	msg := m.messages[idx]
@@ -358,7 +359,7 @@ func (m Model) renderFooter() string {
 	if m.updateAvailable == "" {
 		return left
 	}
-	badge := lipgloss.NewStyle().Foreground(th.Warning).Render("↑ " + m.updateAvailable + "  run: bai update")
+	badge := lipgloss.NewStyle().Foreground(th.Warning).Render("↑ " + m.updateAvailable + "  run: " + app.Current().Name + " update")
 	spacer := strings.Repeat(" ", max(0, m.width-lipgloss.Width(left)-lipgloss.Width(badge)-2))
 	return left + spacer + badge + "  "
 }

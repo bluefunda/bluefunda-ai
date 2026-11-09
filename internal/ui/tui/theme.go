@@ -1,6 +1,10 @@
 package tui
 
-import "github.com/charmbracelet/lipgloss"
+import (
+	"github.com/charmbracelet/lipgloss"
+
+	"github.com/bluefunda/bluefunda-ai/internal/app"
+)
 
 // Theme holds every color and style used in the TUI so all rendering goes
 // through a single source of truth. Claude Code dark palette.
@@ -61,6 +65,13 @@ func DefaultTheme() Theme {
 	muted := lipgloss.Color("#3a3a3a")
 	accent := lipgloss.Color("#4a9eff")
 	accentBold := lipgloss.Color("#6ab8ff")
+	if id := app.Current(); id.Accent != "" {
+		accent = lipgloss.Color(id.Accent)
+		accentBold = accent
+		if id.AccentBold != "" {
+			accentBold = lipgloss.Color(id.AccentBold)
+		}
+	}
 	success := lipgloss.Color("#4caf72")
 	warning := lipgloss.Color("#d4a54a")
 	errColor := lipgloss.Color("#e05c5c")

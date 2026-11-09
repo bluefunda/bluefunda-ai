@@ -13,6 +13,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/bluefunda/bluefunda-ai/internal/app"
 	"github.com/bluefunda/bluefunda-ai/internal/daemon"
 	"github.com/bluefunda/bluefunda-ai/internal/schedule"
 	"github.com/bluefunda/bluefunda-ai/sdk/agent"
@@ -59,7 +60,7 @@ func daemonPaths() (pidFile, logDir string, err error) {
 	if err != nil {
 		return "", "", fmt.Errorf("home directory: %w", err)
 	}
-	return filepath.Join(home, ".bai", "daemon.pid"), filepath.Join(home, ".bai", "daemon", "logs"), nil
+	return filepath.Join(home, app.Current().Dir, "daemon.pid"), filepath.Join(home, app.Current().Dir, "daemon", "logs"), nil
 }
 
 // readDaemonPID returns the PID in pidFile if it's a live process, or 0 if

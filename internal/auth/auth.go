@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/bluefunda/bluefunda-ai/internal/app"
 	"github.com/bluefunda/bluefunda-ai/internal/config"
 )
 
@@ -46,7 +47,7 @@ func LoginWithDevice(domain, realm string) (*TokenResponse, error) {
 	// Step 1: Request device code
 	deviceURL := baseURL + "/auth/device"
 	data := url.Values{
-		"client_id": {config.DefaultClientID},
+		"client_id": {app.Current().ClientID},
 		"scope":     {"openid"},
 	}
 
@@ -109,7 +110,7 @@ func LoginWithDevice(domain, realm string) (*TokenResponse, error) {
 func pollToken(tokenURL, deviceCode string) (*TokenResponse, bool, error) {
 	data := url.Values{
 		"grant_type":  {"urn:ietf:params:oauth:grant-type:device_code"},
-		"client_id":   {config.DefaultClientID},
+		"client_id":   {app.Current().ClientID},
 		"device_code": {deviceCode},
 	}
 
@@ -155,7 +156,7 @@ func Refresh(domain, realm, refreshToken string) (*TokenResponse, error) {
 	tokenURL := config.AuthURL(domain, realm) + "/token"
 	data := url.Values{
 		"grant_type":    {"refresh_token"},
-		"client_id":     {config.DefaultClientID},
+		"client_id":     {app.Current().ClientID},
 		"refresh_token": {refreshToken},
 	}
 	return postToken(tokenURL, data)

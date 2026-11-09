@@ -9,6 +9,8 @@ import (
 	"os"
 	"path/filepath"
 	"time"
+
+	"github.com/bluefunda/bluefunda-ai/internal/app"
 )
 
 const retentionDays = 90
@@ -26,7 +28,7 @@ func NewLogger(sessionID string) (*Logger, error) {
 	if err != nil {
 		return &Logger{}, err
 	}
-	dir := filepath.Join(home, ".bai", "audit", time.Now().Format("2006-01-02"))
+	dir := filepath.Join(home, app.Current().Dir, "audit", time.Now().Format("2006-01-02"))
 	if err := os.MkdirAll(dir, 0700); err != nil {
 		return &Logger{}, err
 	}
@@ -102,7 +104,7 @@ func (l *Logger) write(fields map[string]any) {
 
 // pruneOld removes audit directories older than retentionDays.
 func pruneOld(home string) {
-	auditRoot := filepath.Join(home, ".bai", "audit")
+	auditRoot := filepath.Join(home, app.Current().Dir, "audit")
 	entries, err := os.ReadDir(auditRoot)
 	if err != nil {
 		return

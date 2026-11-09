@@ -15,6 +15,8 @@ import (
 	"time"
 
 	tipcatalog "github.com/bluefunda/tipcatalog"
+
+	"github.com/bluefunda/bluefunda-ai/internal/app"
 )
 
 // now is overridable in tests, matching this repo's execCommand/httpClient
@@ -173,7 +175,7 @@ func tipsDir() (string, error) {
 	if err != nil {
 		return "", err
 	}
-	dir := filepath.Join(home, ".bai", "tips")
+	dir := filepath.Join(home, app.Current().Dir, "tips")
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return "", err
 	}

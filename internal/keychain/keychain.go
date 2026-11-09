@@ -10,13 +10,15 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
-	"os"
 	"os/exec"
 	"runtime"
 	"strings"
+
+	"github.com/bluefunda/bluefunda-ai/internal/app"
 )
 
-const service = "bai"
+// service is the keychain service name for the running product.
+func service() string { return app.Current().KeychainService }
 
 // ErrNotFound is returned when a requested key does not exist in the keychain.
 var ErrNotFound = errors.New("keychain: entry not found")
@@ -52,7 +54,7 @@ func Delete(key string) error { return Default.Delete(key) }
 type osBackend struct{}
 
 func (o *osBackend) Available() bool {
-	if os.Getenv("BAI_NO_KEYCHAIN") == "1" {
+	if app.Getenv("NO_KEYCHAIN") == "1" {
 		return false
 	}
 	switch runtime.GOOS {
@@ -105,7 +107,7 @@ func (o *osBackend) Delete(key string) error {
 func darwinSet(key, value string) error {
 	// -U updates an existing entry; creates a new one if absent.
 	cmd := exec.Command("security", "add-generic-password",
-		"-s", service, "-a", key, "-w", value, "-U")
+		"-s", service(), "-a", key, "-w", value, "-U")
 	if out, err := cmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("security add-generic-password: %s", strings.TrimSpace(string(out)))
 	}
@@ -115,7 +117,7 @@ func darwinSet(key, value string) error {
 func darwinGet(key string) (string, error) {
 	var out bytes.Buffer
 	cmd := exec.Command("security", "find-generic-password",
-		"-s", service, "-a", key, "-w")
+		"-s", service(), "-a", key, "-w")
 	cmd.Stdout = &out
 	if err := cmd.Run(); err != nil {
 		return "", ErrNotFound
@@ -125,7 +127,7 @@ func darwinGet(key string) (string, error) {
 
 func darwinDelete(key string) error {
 	cmd := exec.Command("security", "delete-generic-password",
-		"-s", service, "-a", key)
+		"-s", service(), "-a", key)
 	_ = cmd.Run() // ignore error if entry does not exist
 	return nil
 }
@@ -134,8 +136,8 @@ func darwinDelete(key string) error {
 
 func linuxSet(key, value string) error {
 	cmd := exec.Command("secret-tool", "store",
-		"--label", "bai "+key,
-		"service", service,
+		"--label", app.Current().Name+" "+key,
+		"service", service(),
 		"account", key)
 	cmd.Stdin = strings.NewReader(value)
 	if out, err := cmd.CombinedOutput(); err != nil {
@@ -147,7 +149,7 @@ func linuxSet(key, value string) error {
 func linuxGet(key string) (string, error) {
 	var out bytes.Buffer
 	cmd := exec.Command("secret-tool", "lookup",
-		"service", service,
+		"service", service(),
 		"account", key)
 	cmd.Stdout = &out
 	if err := cmd.Run(); err != nil {
@@ -158,7 +160,7 @@ func linuxGet(key string) (string, error) {
 
 func linuxDelete(key string) error {
 	cmd := exec.Command("secret-tool", "clear",
-		"service", service,
+		"service", service(),
 		"account", key)
 	_ = cmd.Run()
 	return nil

@@ -15,6 +15,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/bluefunda/bluefunda-ai/internal/app"
 	"github.com/bluefunda/bluefunda-ai/internal/tips"
 )
 
@@ -87,7 +88,8 @@ func MaybeNotify(current string, quiet bool, enabled bool) {
 }
 
 func notify(w io.Writer, current, latest string) {
-	fmt.Fprintf(w, "bai %s → %s available · run `bai update`\n", current, latest)
+	name := app.Current().Name
+	fmt.Fprintf(w, "%s %s → %s available · run `%s update`\n", name, current, latest, name)
 }
 
 func cachePath() (string, error) {
@@ -95,7 +97,7 @@ func cachePath() (string, error) {
 	if err != nil {
 		return "", err
 	}
-	dir := filepath.Join(home, ".bai")
+	dir := filepath.Join(home, app.Current().Dir)
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return "", err
 	}

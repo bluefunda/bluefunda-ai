@@ -27,8 +27,18 @@ type FunctionDef struct {
 }
 
 // LocalToolSchemas returns the JSON-encoded tool schemas to send to the LLM.
+// Tools of registered packs (see RegisterPack) are appended after the built-ins.
 func LocalToolSchemas() (string, error) {
-	schemas := []ToolSchema{
+	b, err := json.Marshal(append(builtinSchemas(), packSchemas()...))
+	if err != nil {
+		return "", err
+	}
+	return string(b), nil
+}
+
+// builtinSchemas returns the schemas of the platform's own local tools.
+func builtinSchemas() []ToolSchema {
+	return []ToolSchema{
 		{
 			Type: "function",
 			Function: FunctionDef{
@@ -294,12 +304,6 @@ func LocalToolSchemas() (string, error) {
 			},
 		},
 	}
-
-	b, err := json.Marshal(schemas)
-	if err != nil {
-		return "", err
-	}
-	return string(b), nil
 }
 
 // MergeSchemas appends extra ToolSchemas to the JSON-encoded base schema string
@@ -319,6 +323,9 @@ func MergeSchemas(base string, extra []ToolSchema) (string, error) {
 
 // NeedsApproval returns true for tools that modify state and require user confirmation.
 func NeedsApproval(toolName string) bool {
+	if t, ok := lookupPackTool(toolName); ok {
+		return !t.ReadOnly
+	}
 	switch toolName {
 	case "write_file", "edit_file", "patch_file", "edit_notebook", "bash", "task", "memory_write", "memory_delete":
 		return true
@@ -329,6 +336,9 @@ func NeedsApproval(toolName string) bool {
 // IsReadOnlyTool reports whether a tool only reads/inspects state, never
 // mutates it — the baseline tool set permitted while plan mode is active.
 func IsReadOnlyTool(toolName string) bool {
+	if t, ok := lookupPackTool(toolName); ok {
+		return t.ReadOnly
+	}
 	switch toolName {
 	case "read_file", "list_dir", "search_files", "search_content", "read_notebook",
 		"web_fetch", "web_search", "memory_read", "memory_list":

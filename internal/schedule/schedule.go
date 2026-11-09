@@ -16,6 +16,8 @@ import (
 	"github.com/google/uuid"
 	"github.com/robfig/cron/v3"
 	"gopkg.in/yaml.v3"
+
+	"github.com/bluefunda/bluefunda-ai/internal/app"
 )
 
 // Entry is one scheduled agent run.
@@ -54,7 +56,7 @@ func DefaultPath() (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("home directory: %w", err)
 	}
-	return filepath.Join(home, ".bai", "schedules.yaml"), nil
+	return filepath.Join(home, app.Current().Dir, "schedules.yaml"), nil
 }
 
 // New returns a Store backed by path.

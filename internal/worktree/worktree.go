@@ -12,6 +12,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+
+	"github.com/bluefunda/bluefunda-ai/internal/app"
 )
 
 // GitRoot returns the absolute path to the git repository root from the
@@ -27,7 +29,7 @@ func GitRoot() (string, error) {
 // Create adds a detached worktree at <gitRoot>/.bai/worktrees/<sessionID>.
 // Returns the absolute path to the created worktree.
 func Create(gitRoot, sessionID string) (string, error) {
-	path := filepath.Join(gitRoot, ".bai", "worktrees", sessionID)
+	path := filepath.Join(gitRoot, app.Current().Dir, "worktrees", sessionID)
 	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
 		return "", fmt.Errorf("create worktrees dir: %w", err)
 	}

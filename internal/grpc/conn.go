@@ -20,6 +20,7 @@ import (
 	"google.golang.org/grpc/status"
 
 	pb "github.com/bluefunda/bluefunda-ai/api/proto/bff"
+	"github.com/bluefunda/bluefunda-ai/internal/app"
 	"github.com/bluefunda/bluefunda-ai/internal/config"
 )
 
@@ -90,12 +91,12 @@ func (ts *TokenSource) Token() (string, error) {
 		if ts.cfg.Auth.AccessToken != "" {
 			return ts.cfg.Auth.AccessToken, nil
 		}
-		return "", fmt.Errorf("not signed in — run `bai login`")
+		return "", fmt.Errorf("not signed in — run `%s login`", app.Current().Name)
 	}
 
 	newToken, err := ts.refreshFunc()
 	if err != nil {
-		return "", fmt.Errorf("token refresh failed (run `bai login`): %w", err)
+		return "", fmt.Errorf("token refresh failed (run `%s login`): %w", app.Current().Name, err)
 	}
 	return newToken, nil
 }
@@ -145,7 +146,7 @@ type Conn struct {
 // TLS is used automatically for remote targets; localhost uses plaintext.
 func Dial(target string, ts *TokenSource, opts ...grpc.DialOption) (*Conn, error) {
 	if target == "" {
-		return nil, fmt.Errorf("endpoint not configured — run `bai login`")
+		return nil, fmt.Errorf("endpoint not configured — run `%s login`", app.Current().Name)
 	}
 
 	defaults := []grpc.DialOption{

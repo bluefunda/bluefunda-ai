@@ -6,6 +6,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/bluefunda/bluefunda-ai/internal/app"
 	"github.com/bluefunda/bluefunda-ai/internal/ui/tui"
 )
 
@@ -22,7 +23,7 @@ func loadCustomSlashCommands(cwd string) []tui.SlashCommand {
 	byName := make(map[string]tui.SlashCommand)
 
 	if home, err := os.UserHomeDir(); err == nil {
-		for _, c := range loadCommandsDir(filepath.Join(home, ".bai", "commands")) {
+		for _, c := range loadCommandsDir(filepath.Join(home, app.Current().Dir, "commands")) {
 			byName[c.Name] = c
 		}
 	}
@@ -49,7 +50,7 @@ func findCommandsDir(cwd string) string {
 		return ""
 	}
 	for {
-		candidate := filepath.Join(abs, ".bai", "commands")
+		candidate := filepath.Join(abs, app.Current().Dir, "commands")
 		if info, err := os.Stat(candidate); err == nil && info.IsDir() {
 			return candidate
 		}

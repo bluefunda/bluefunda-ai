@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/bluefunda/bluefunda-ai/internal/app"
 	"github.com/bluefunda/bluefunda-ai/internal/crypto"
 	"github.com/bluefunda/bluefunda-ai/internal/keychain"
 	"gopkg.in/yaml.v3"
@@ -19,7 +20,6 @@ const (
 	DefaultBFFURL     = "cli.bluefunda.com:443"
 	DefaultDomain     = "bluefunda.com"
 	DefaultRealm      = "individual"
-	DefaultClientID   = "bai"
 )
 
 // AuthURL returns the Keycloak OpenID Connect base URL for the given realm.
@@ -100,7 +100,7 @@ func (cfg *Config) ProfileNames() []string {
 func (cfg *Config) activeProfile() (*Profile, error) {
 	name := profileOverride
 	if name == "" {
-		name = os.Getenv("BAI_PROFILE")
+		name = app.Getenv("PROFILE")
 	}
 	if name == "" {
 		name = cfg.DefaultProfile
@@ -176,7 +176,7 @@ func configDir() (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("home directory: %w", err)
 	}
-	dir := filepath.Join(home, ".bai")
+	dir := filepath.Join(home, app.Current().Dir)
 	if err := os.MkdirAll(dir, 0700); err != nil {
 		return "", fmt.Errorf("create config dir: %w", err)
 	}
@@ -197,25 +197,25 @@ func configPath() (string, error) {
 // CLI flags take precedence over these.
 // Precedence order: CLI flags > BAI_* env vars > active profile > YAML file > compiled defaults.
 func applyEnvOverrides(cfg *Config) {
-	if v := os.Getenv("BAI_GATEWAY"); v != "" {
+	if v := app.Getenv("GATEWAY"); v != "" {
 		cfg.GatewayURL = v
 	}
-	if v := os.Getenv("BAI_BFF"); v != "" {
+	if v := app.Getenv("BFF"); v != "" {
 		cfg.BFFURL = v
 	}
-	if v := os.Getenv("BAI_DOMAIN"); v != "" {
+	if v := app.Getenv("DOMAIN"); v != "" {
 		cfg.Domain = v
 	}
-	if v := os.Getenv("BAI_REALM"); v != "" {
+	if v := app.Getenv("REALM"); v != "" {
 		cfg.Realm = v
 	}
-	if v := os.Getenv("BAI_MODEL"); v != "" {
+	if v := app.Getenv("MODEL"); v != "" {
 		cfg.Defaults.Model = v
 	}
 	// BAI_ACCESS_TOKEN lets CI/CD authenticate without running `bai login`.
 	// Set TokenExpiry far in the future so the token source does not attempt
 	// a device-flow refresh on a token it didn't issue.
-	if v := os.Getenv("BAI_ACCESS_TOKEN"); v != "" {
+	if v := app.Getenv("ACCESS_TOKEN"); v != "" {
 		cfg.Auth.AccessToken = v
 		cfg.Auth.TokenExpiry = time.Now().Add(24 * time.Hour)
 	}
@@ -295,16 +295,16 @@ func localConfigPath(cwd string) (string, bool) {
 		return "", false
 	}
 	for {
-		candidate := filepath.Join(abs, ".bai", "settings.local.yaml")
+		candidate := filepath.Join(abs, app.Current().Dir, "settings.local.yaml")
 		if _, err := os.Stat(candidate); err == nil {
 			return candidate, true
 		}
 		if _, err := os.Stat(filepath.Join(abs, ".git")); err == nil {
-			return filepath.Join(abs, ".bai", "settings.local.yaml"), false
+			return filepath.Join(abs, app.Current().Dir, "settings.local.yaml"), false
 		}
 		parent := filepath.Dir(abs)
 		if parent == abs {
-			return filepath.Join(abs, ".bai", "settings.local.yaml"), false
+			return filepath.Join(abs, app.Current().Dir, "settings.local.yaml"), false
 		}
 		abs = parent
 	}
@@ -388,7 +388,7 @@ func FindProjectConfig(cwd string) *ProjectConfig {
 		return nil
 	}
 	for {
-		candidate := filepath.Join(abs, ".bai", "settings.yaml")
+		candidate := filepath.Join(abs, app.Current().Dir, "settings.yaml")
 		if data, err := os.ReadFile(candidate); err == nil {
 			var p ProjectConfig
 			if yaml.Unmarshal(data, &p) == nil {

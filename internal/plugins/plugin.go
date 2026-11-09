@@ -22,6 +22,7 @@ import (
 
 	"gopkg.in/yaml.v3"
 
+	"github.com/bluefunda/bluefunda-ai/internal/app"
 	"github.com/bluefunda/bluefunda-ai/internal/tools"
 )
 
@@ -148,13 +149,13 @@ func loadAll(cwd string) []*Plugin {
 
 	// User-level plugins.
 	if home, err := os.UserHomeDir(); err == nil {
-		all = append(all, loadDir(filepath.Join(home, ".bai", "plugins"))...)
+		all = append(all, loadDir(filepath.Join(home, app.Current().Dir, "plugins"))...)
 	}
 
 	// Project-level plugins: walk upward to git root.
 	abs, _ := filepath.Abs(cwd)
 	for {
-		all = append(all, loadDir(filepath.Join(abs, ".bai", "plugins"))...)
+		all = append(all, loadDir(filepath.Join(abs, app.Current().Dir, "plugins"))...)
 		if _, err := os.Stat(filepath.Join(abs, ".git")); err == nil {
 			break
 		}

@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.62.1](https://github.com/bluefunda/bluefunda-ai/compare/v1.62.0...v1.62.1) (2026-11-09)
+
+
+### Bug Fixes
+
+* **cli:** login help names the running binary and the real default realm ([#359](https://github.com/bluefunda/bluefunda-ai/issues/359)) ([2dc395b](https://github.com/bluefunda/bluefunda-ai/commit/2dc395b8c315e72d1c64e952f4b6eebcdee87e90))
+
 ## [1.62.0](https://github.com/bluefunda/bluefunda-ai/compare/v1.61.0...v1.62.0) (2026-11-09)
 
 

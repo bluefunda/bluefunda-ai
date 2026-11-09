@@ -1,8 +1,11 @@
 package cmd
 
 import (
+	"fmt"
+
 	"github.com/spf13/cobra"
 
+	"github.com/bluefunda/bluefunda-ai/internal/app"
 	"github.com/bluefunda/bluefunda-ai/internal/auth"
 	"github.com/bluefunda/bluefunda-ai/internal/config"
 	"github.com/bluefunda/bluefunda-ai/internal/ui"
@@ -13,18 +16,24 @@ var loginRealm string
 var loginCmd = &cobra.Command{
 	Use:   "login",
 	Short: "Log in via browser (opens Keycloak)",
-	Long: `Log in via browser using the Keycloak device authorization flow.
-
-By default, authenticates against the "trm" realm.
-Use --realm to authenticate against a different realm:
-
-  ai login --realm individual`,
-	RunE: runLogin,
+	RunE:  runLogin,
 }
 
 func init() {
+	// ExecuteABAPer rebuilds this after switching the app identity, so the
+	// help always names the binary being run.
+	loginCmd.Long = loginLongHelp()
 	loginCmd.Flags().StringVar(&loginRealm, "realm", config.DefaultRealm,
 		"Keycloak realm to authenticate against (e.g. individual, trm)")
+}
+
+func loginLongHelp() string {
+	return fmt.Sprintf(`Log in via browser using the Keycloak device authorization flow.
+
+By default, authenticates against the %q realm.
+Use --realm to authenticate against a different realm:
+
+  %s login --realm trm`, config.DefaultRealm, app.Current().Name)
 }
 
 func runLogin(cmd *cobra.Command, args []string) error {

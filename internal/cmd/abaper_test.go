@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/bluefunda/bluefunda-ai/internal/app"
@@ -29,5 +30,16 @@ func TestABAPerIdentity(t *testing.T) {
 	}
 	if app.Current().Name != "bai" {
 		t.Error("building the abaper root must not switch the process identity; only ExecuteABAPer does")
+	}
+}
+
+func TestLoginHelp_NamesBinaryAndDefaultRealm(t *testing.T) {
+	if got := loginLongHelp(); !strings.Contains(got, `"individual" realm`) || !strings.Contains(got, "bai login --realm") {
+		t.Errorf("bai login help = %q", got)
+	}
+	app.Set(ABAPer)
+	t.Cleanup(func() { app.Set(app.Bai) })
+	if got := loginLongHelp(); !strings.Contains(got, "abaper login --realm") {
+		t.Errorf("abaper login help = %q", got)
 	}
 }

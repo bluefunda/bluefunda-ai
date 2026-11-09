@@ -34,6 +34,7 @@ func ExecuteABAPer(extra ...*cobra.Command) error {
 	// The task tool re-executes the current binary with bai's headless
 	// flags, which abaper does not have.
 	sessionDeny = append(sessionDeny, "task")
+	loginCmd.Long = loginLongHelp()
 
 	root := newABAPerRoot()
 	root.AddCommand(extra...)

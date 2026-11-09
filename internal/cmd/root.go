@@ -185,6 +185,7 @@ func init() {
 		initCmd,
 		pluginsCmd,
 		codeCmd,
+		abapCmd,
 		configCmd,
 		doctorCmd,
 		memoryCmd,

@@ -57,7 +57,11 @@ internal/
     login.go                 # OAuth device flow login
     health.go                # gRPC health check
     version.go               # Version display
+    abap.go                  # `bai abap` command group (also mounted at the root of the abaper binary)
     cmd_test.go              # Integration tests (bufconn in-process gRPC)
+  app/
+    app.go                   # Product identity (bai vs abaper): config dir, env prefix, client ID, brand
+  abap/                      # SAP ABAP domain: gateway client, SAP systems, ABAP tool pack, verify gate, slash cmds
   grpc/
     conn.go                  # gRPC connection, TLS auto-detect, auth interceptors
     conn_test.go             # Transport tests
@@ -231,6 +235,9 @@ Do not add dependencies without clear justification. Run `make tidy` after any c
 2. Run `make proto`
 3. Implement the command in `internal/cmd/`
 4. Add tests
+
+### Add domain tools for the agent
+Register a `tools.Pack` (tools + instructions) before the session starts — see `internal/abap/pack.go`. Pack tools join the tool list, `tools.Execute`, approval, plan mode and permission globs automatically. Use `tools.ConfineToWorkspace` for any path argument.
 
 ### Modify config schema
 1. Edit `internal/config/config.go` — add field to `Config` struct with `yaml` tag

@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/bluefunda/abaper/types"
+	"github.com/bluefunda/bluefunda-ai/abaper/types"
 )
 
 // TestCreateServiceBinding_FullSequence: unlike Domain/DataElement,

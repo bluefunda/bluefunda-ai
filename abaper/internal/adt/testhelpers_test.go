@@ -5,7 +5,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/bluefunda/abaper/types"
+	"github.com/bluefunda/bluefunda-ai/abaper/types"
 	"go.uber.org/zap"
 )
 

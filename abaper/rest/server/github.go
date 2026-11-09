@@ -11,7 +11,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/bluefunda/abaper/rest/models"
+	"github.com/bluefunda/bluefunda-ai/abaper/rest/models"
 	"go.uber.org/zap"
 )
 

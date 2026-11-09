@@ -1,6 +1,6 @@
 package lsp
 
-import "github.com/bluefunda/abaper/types"
+import "github.com/bluefunda/bluefunda-ai/abaper/types"
 
 // Config holds LSP server configuration
 type Config struct {

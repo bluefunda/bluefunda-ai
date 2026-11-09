@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/bluefunda/abaper/types"
+	"github.com/bluefunda/bluefunda-ai/abaper/types"
 )
 
 // These tests marshal the create-shell XML payloads used by the various
@@ -100,7 +100,7 @@ func TestDDLSourceCreatePayload(t *testing.T) {
 }
 
 // TestSRVDSourceCreatePayload guards the srvd:srvdSourceType="S" attribute,
-// which SAP requires and silently rejects with "Service Definition type ''
+// which SAP requires and silently rejects with "Service Definition type ”
 // does not exist" if missing — found only via live testing against
 // abap.bluefunda.com (see docs/OBJECT_TYPE_PARITY_PLAN.md item 6 follow-up).
 func TestSRVDSourceCreatePayload(t *testing.T) {

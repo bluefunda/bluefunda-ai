@@ -3,8 +3,8 @@ package backend
 import (
 	"context"
 
-	"github.com/bluefunda/abaper/internal/lsp/abap"
-	"github.com/bluefunda/abaper/types"
+	"github.com/bluefunda/bluefunda-ai/abaper/internal/lsp/abap"
+	"github.com/bluefunda/bluefunda-ai/abaper/types"
 )
 
 // adtLSPClient is the minimal interface the ADTBackend depends on.

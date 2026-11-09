@@ -45,10 +45,10 @@ func runCobra(t *testing.T, cmd *cobra.Command, args ...string) (string, error) 
 func TestABAPSystem_AddUseList(t *testing.T) {
 	abapTestEnv(t, "")
 
-	if _, err := runCobra(t, abapSystemCmd(), "add", "--name", "dev", "--host", "https://dev.example.com", "--user", "DEV", "--password", "pw"); err != nil {
+	if _, err := runCobra(t, abapSystemCmd(), "add", "--name", "dev", "--host", "https://dev.example.com", "--username", "DEV", "--password", "pw"); err != nil {
 		t.Fatalf("add dev: %v", err)
 	}
-	if _, err := runCobra(t, abapSystemCmd(), "add", "--name", "qa", "--host", "https://qa.example.com", "--user", "QA", "--password", "pw"); err != nil {
+	if _, err := runCobra(t, abapSystemCmd(), "add", "--name", "qa", "--host", "https://qa.example.com", "-u", "QA", "--password", "pw"); err != nil {
 		t.Fatalf("add qa: %v", err)
 	}
 	if _, err := runCobra(t, abapSystemCmd(), "add", "--name", "qa", "--host", "x", "--user", "y", "--password", "z"); err == nil {
@@ -84,7 +84,7 @@ func TestABAPSearch_QuietPrintsNames(t *testing.T) {
 	defer srv.Close()
 	abapTestEnv(t, srv.URL)
 
-	if _, err := runCobra(t, abapSystemCmd(), "add", "--name", "dev", "--host", "https://dev.example.com", "--user", "DEV", "--password", "pw"); err != nil {
+	if _, err := runCobra(t, abapSystemCmd(), "add", "--name", "dev", "--host", "https://dev.example.com", "--username", "DEV", "--password", "pw"); err != nil {
 		t.Fatal(err)
 	}
 

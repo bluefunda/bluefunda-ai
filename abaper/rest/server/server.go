@@ -7,8 +7,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/bluefunda/abaper/rest/models"
-	"github.com/bluefunda/abaper/types"
+	"github.com/bluefunda/bluefunda-ai/abaper/rest/models"
+	"github.com/bluefunda/bluefunda-ai/abaper/types"
 	"go.uber.org/zap"
 )
 

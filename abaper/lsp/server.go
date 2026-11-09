@@ -4,9 +4,9 @@
 package lsp
 
 import (
-	"github.com/bluefunda/abaper/internal/lsp/backend"
-	"github.com/bluefunda/abaper/internal/lsp/document"
-	"github.com/bluefunda/abaper/internal/lsp/handler"
+	"github.com/bluefunda/bluefunda-ai/abaper/internal/lsp/backend"
+	"github.com/bluefunda/bluefunda-ai/abaper/internal/lsp/document"
+	"github.com/bluefunda/bluefunda-ai/abaper/internal/lsp/handler"
 	"github.com/tliron/commonlog"
 	_ "github.com/tliron/commonlog/simple"
 	"github.com/tliron/glsp"

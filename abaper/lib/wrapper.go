@@ -6,8 +6,8 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/bluefunda/abaper/internal/adt"
-	"github.com/bluefunda/abaper/types"
+	"github.com/bluefunda/bluefunda-ai/abaper/internal/adt"
+	"github.com/bluefunda/bluefunda-ai/abaper/types"
 )
 
 // NewADTClient creates a new ADT client using the internal implementation

@@ -1,4 +1,6 @@
-package commands
+// Package serve is the `abaper serve` command: the ABAPer REST server over
+// the direct ADT client (the abaper-ts replacement).
+package serve
 
 import (
 	"fmt"
@@ -8,30 +10,30 @@ import (
 	"github.com/spf13/cobra"
 	"go.uber.org/zap"
 
-	"github.com/bluefunda/abaper/internal/config"
-	"github.com/bluefunda/abaper/internal/adt"
-	"github.com/bluefunda/abaper/rest/server"
-	"github.com/bluefunda/abaper/types"
+	"github.com/bluefunda/bluefunda-ai/abaper/internal/adt"
+	"github.com/bluefunda/bluefunda-ai/abaper/rest/server"
+	"github.com/bluefunda/bluefunda-ai/abaper/types"
+	"github.com/bluefunda/bluefunda-ai/internal/abap"
 )
 
-var serveCmd = &cobra.Command{
-	Use:   "serve",
-	Short: "Start the local ABAPer REST server (abaper-ts replacement)",
-	Long: `Starts a local HTTP server that exposes the ADT SDK over REST,
+// NewCommand returns the `serve` command.
+func NewCommand() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "serve",
+		Short: "Start the local ABAPer REST server (abaper-ts replacement)",
+		Long: `Starts a local HTTP server that exposes the ADT SDK over REST,
 mirroring the abaper-ts API surface. Useful for local development and
 integration testing with abaper-editor.
 
 The active SAP system from ~/.abaper/systems.json is used as the default
 connection. Pass --system to select a different one. The server also accepts
 per-request X-SAP-* headers for multi-system operation.`,
-	RunE: runServe,
-}
-
-func init() {
-	serveCmd.Flags().String("port", "8080", "Port to listen on")
-	serveCmd.Flags().String("system", "", "SAP system name or ID to use (default: active system)")
-	serveCmd.Flags().Bool("allow-self-signed", false, "Allow self-signed TLS certificates")
-	rootCmd.AddCommand(serveCmd)
+		RunE: runServe,
+	}
+	cmd.Flags().String("port", "8080", "Port to listen on")
+	cmd.Flags().String("system", "", "SAP system name or ID to use (default: active system)")
+	cmd.Flags().Bool("allow-self-signed", false, "Allow self-signed TLS certificates")
+	return cmd
 }
 
 func runServe(cmd *cobra.Command, _ []string) error {
@@ -40,19 +42,19 @@ func runServe(cmd *cobra.Command, _ []string) error {
 	allowSelfSigned, _ := cmd.Flags().GetBool("allow-self-signed")
 
 	// Resolve SAP system from stored config.
-	sysCfg, err := config.LoadSystems()
+	sysCfg, err := abap.LoadSystems()
 	if err != nil {
 		return fmt.Errorf("load systems: %w", err)
 	}
 
-	var sys *config.SAPSystem
+	var sys *abap.SAPSystem
 	if systemName != "" {
-		sys = sysCfg.FindByNameOrID(systemName)
+		sys = sysCfg.Find(systemName)
 		if sys == nil {
 			return fmt.Errorf("system %q not found — run: abaper system list", systemName)
 		}
 	} else {
-		sys = sysCfg.GetActive()
+		sys = sysCfg.ActiveSystem()
 	}
 
 	// Fall back to environment variables when no stored system is available.
@@ -65,7 +67,7 @@ func runServe(cmd *cobra.Command, _ []string) error {
 			client = "001"
 		}
 		if host != "" && user != "" && pass != "" {
-			sys = &config.SAPSystem{
+			sys = &abap.SAPSystem{
 				Name:     host,
 				Host:     host,
 				Client:   client,

@@ -1,8 +1,8 @@
 package handler
 
 import (
-	"github.com/bluefunda/abaper/internal/lsp/backend"
-	"github.com/bluefunda/abaper/internal/lsp/document"
+	"github.com/bluefunda/bluefunda-ai/abaper/internal/lsp/backend"
+	"github.com/bluefunda/bluefunda-ai/abaper/internal/lsp/document"
 	"github.com/tliron/glsp"
 	protocol "github.com/tliron/glsp/protocol_3_16"
 )

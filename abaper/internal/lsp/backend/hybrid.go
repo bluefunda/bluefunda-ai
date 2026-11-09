@@ -6,7 +6,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/bluefunda/abaper/types"
+	"github.com/bluefunda/bluefunda-ai/abaper/types"
 )
 
 // HybridBackend tries the ADT backend first, falling back to offline.

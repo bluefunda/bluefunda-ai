@@ -4,7 +4,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/bluefunda/abaper/types"
+	"github.com/bluefunda/bluefunda-ai/abaper/types"
 )
 
 func TestNew_RequiredFields(t *testing.T) {

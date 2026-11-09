@@ -1,7 +1,7 @@
 #!/bin/sh
 set -e
 
-REPO="bluefunda/abaper"
+REPO="bluefunda/bluefunda-ai"
 BINARY="abaper"
 INSTALL_DIR=""
 

@@ -7,6 +7,8 @@ import (
 	"os/signal"
 	"sort"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
@@ -60,6 +62,7 @@ func registerABAPPack() error {
 // `bai abap`; the abaper binary mounts the same commands at its root.
 func NewABAPCommands() []*cobra.Command {
 	return []*cobra.Command{
+		abapStatusCmd(),
 		abapSystemCmd(),
 		abapSearchCmd(),
 		abapGetCmd(),
@@ -68,6 +71,7 @@ func NewABAPCommands() []*cobra.Command {
 		abapDeployCmd(),
 		abapTestCmd(),
 		abapCodeCmd(),
+		abapGenerateCmd(),
 	}
 }
 
@@ -90,7 +94,7 @@ With no subcommand, opens the interactive agent with ABAP tools
 slash commands (/system, /search, /source, /activate, /test, /verify).
 
 Start by registering a system:
-  bai abap system add --name dev --host https://sap.example.com:44300 --client 100 --user DEVELOPER`,
+  bai abap system add --name dev --host https://sap.example.com:44300 --client 100 -u DEVELOPER`,
 	Args: cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		return runABAPSession(nil)
@@ -99,6 +103,90 @@ Start by registering a system:
 
 func init() {
 	abapCmd.AddCommand(NewABAPCommands()...)
+}
+
+// ── status ────────────────────────────────────────────────────────────────────
+
+// systemCheckTimeout bounds each SAP connectivity check so one unreachable
+// system can't stall the report.
+const systemCheckTimeout = 5 * time.Second
+
+func abapStatusCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "status",
+		Short: "Show sign-in, gateway, and SAP system connectivity",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			cfg := loadConfig()
+			p := printer(cfg)
+			type systemStatus struct {
+				Name      string `json:"name"`
+				Host      string `json:"host"`
+				Active    bool   `json:"active"`
+				Reachable bool   `json:"reachable"`
+				Error     string `json:"error,omitempty"`
+			}
+			status := struct {
+				SignedIn         bool           `json:"signedIn"`
+				Gateway          string         `json:"gateway"`
+				GatewayReachable bool           `json:"gatewayReachable"`
+				GatewayStatus    string         `json:"gatewayStatus,omitempty"`
+				Systems          []systemStatus `json:"systems"`
+			}{SignedIn: cfg.Auth.AccessToken != "", Gateway: abap.GatewayURL(), Systems: []systemStatus{}}
+
+			reg, err := abap.LoadSystems()
+			if err != nil {
+				return err
+			}
+			if c, err := newABAPClient(); err == nil {
+				if st, err := c.Health(); err == nil {
+					status.GatewayReachable, status.GatewayStatus = true, st
+				}
+				active := reg.ActiveSystem()
+				status.Systems = make([]systemStatus, len(reg.Systems))
+				var wg sync.WaitGroup
+				for i := range reg.Systems {
+					sys := &reg.Systems[i]
+					status.Systems[i] = systemStatus{Name: sys.Name, Host: sys.Host, Active: active != nil && sys.ID == active.ID}
+					wg.Add(1)
+					go func(st *systemStatus) {
+						defer wg.Done()
+						if err := c.WithSystem(sys, systemCheckTimeout).Connect(); err != nil {
+							st.Error = err.Error()
+							return
+						}
+						st.Reachable = true
+					}(&status.Systems[i])
+				}
+				wg.Wait()
+			}
+
+			if p.Format == ui.FormatJSON {
+				p.JSON(status)
+				return nil
+			}
+			fmt.Printf("Signed in:        %v\n", status.SignedIn)
+			fmt.Printf("Gateway:          %s (reachable: %v)\n", status.Gateway, status.GatewayReachable)
+			if len(reg.Systems) == 0 {
+				fmt.Printf("SAP systems:      none — add one with `%s`\n", abap.SystemAddHint())
+				return nil
+			}
+			rows := make([][]string, 0, len(status.Systems))
+			for _, s := range status.Systems {
+				mark, state := "", "reachable"
+				if s.Active {
+					mark = "*"
+				}
+				if !s.Reachable {
+					state = "unreachable " + s.Error
+				}
+				rows = append(rows, []string{s.Name, s.Host, mark, state})
+			}
+			fmt.Println()
+			p.Table([]string{"NAME", "HOST", "ACTIVE", "STATUS"}, rows)
+			return nil
+		},
+	}
 }
 
 // ── system ────────────────────────────────────────────────────────────────────
@@ -118,7 +206,7 @@ func abapSystemCmd() *cobra.Command {
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if sys.Host == "" || sys.Username == "" {
-				return fmt.Errorf("--host and --user are required")
+				return fmt.Errorf("--host and --username are required")
 			}
 			if sys.Password == "" {
 				sys.Password = os.Getenv("SAP_PASSWORD")
@@ -150,8 +238,10 @@ func abapSystemCmd() *cobra.Command {
 	add.Flags().StringVar(&sys.Name, "name", "", "Display name (defaults to host)")
 	add.Flags().StringVar(&sys.Host, "host", "", "SAP host URL, e.g. https://sap.example.com:44300")
 	add.Flags().StringVar(&sys.Client, "client", "100", "SAP client")
-	add.Flags().StringVar(&sys.Username, "user", "", "SAP user")
-	add.Flags().StringVar(&sys.Password, "password", "", "SAP password (prefer $SAP_PASSWORD or the prompt)")
+	add.Flags().StringVarP(&sys.Username, "username", "u", "", "SAP user")
+	add.Flags().StringVar(&sys.Username, "user", "", "Alias for --username")
+	_ = add.Flags().MarkHidden("user")
+	add.Flags().StringVarP(&sys.Password, "password", "p", "", "SAP password (prefer $SAP_PASSWORD or the prompt)")
 
 	use := &cobra.Command{
 		Use:   "use <name>",
@@ -514,6 +604,51 @@ func abapTestCmd() *cobra.Command {
 	}
 	f.register(cmd, false)
 	return cmd
+}
+
+// abapGenerateCmd keeps the standalone abaper `generate` command: save an
+// object (from a file, or a minimal skeleton) without activating it.
+func abapGenerateCmd() *cobra.Command {
+	var f objectFlags
+	cmd := &cobra.Command{
+		Use:    "generate",
+		Short:  "Create an object on SAP without activating it (default: a minimal skeleton)",
+		Args:   cobra.NoArgs,
+		Hidden: true,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			name := strings.ToUpper(f.name)
+			src := skeletonSource(f.objType, name)
+			if f.sourceFile != "" {
+				var err error
+				if src, err = f.source(); err != nil {
+					return err
+				}
+			}
+			c, err := newABAPClient()
+			if err != nil {
+				return err
+			}
+			if err := c.Save(name, f.objType, src); err != nil {
+				return fmt.Errorf("generate failed: %w", err)
+			}
+			ui.Success(fmt.Sprintf("Created %s %s", f.objType, name))
+			return nil
+		},
+	}
+	f.register(cmd, false)
+	cmd.Flags().StringVar(&f.sourceFile, "source-file", "", "Path to the source file (default: a minimal skeleton)")
+	return cmd
+}
+
+func skeletonSource(objectType, name string) string {
+	switch objectType {
+	case "class":
+		return fmt.Sprintf("CLASS %s DEFINITION PUBLIC.\nENDCLASS.\n\nCLASS %s IMPLEMENTATION.\nENDCLASS.", name, name)
+	case "interface":
+		return fmt.Sprintf("INTERFACE %s PUBLIC.\nENDINTERFACE.", name)
+	default:
+		return fmt.Sprintf("REPORT %s.", name)
+	}
 }
 
 // ── code: headless ABAP agent with a verification gate ───────────────────────

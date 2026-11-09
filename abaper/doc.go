@@ -20,7 +20,7 @@
 //
 // Import the SDK to drive SAP ADT operations directly from Go:
 //
-//	import "github.com/bluefunda/abaper/lib"
+//	import "github.com/bluefunda/bluefunda-ai/abaper/lib"
 //
 //	client, err := lib.CreateADTClient(host, sapClient, user, password)
 //	src, err := client.GetProgram(ctx, "ZMY_PROGRAM")
@@ -43,7 +43,7 @@
 // An LSP server that bridges ABAP language intelligence to any LSP-capable
 // editor is exposed via the [lsp] package:
 //
-//	import "github.com/bluefunda/abaper/lsp"
+//	import "github.com/bluefunda/bluefunda-ai/abaper/lsp"
 //
 //	srv := lsp.NewServer(adtClient, workDir)
 //	srv.RunStdio()  // or RunTCP(":2087")
@@ -52,7 +52,7 @@
 //
 // A REST API server with CLI-feature parity (no AI) is in [rest/server]:
 //
-//	import "github.com/bluefunda/abaper/rest/server"
+//	import "github.com/bluefunda/bluefunda-ai/abaper/rest/server"
 //
 //	srv := server.NewRestServer(cfg, logger, adtClient)
 //	srv.Start("8080")

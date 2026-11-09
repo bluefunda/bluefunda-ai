@@ -1,6 +1,6 @@
 package backend
 
-import "github.com/bluefunda/abaper/types"
+import "github.com/bluefunda/bluefunda-ai/abaper/types"
 
 // LSPBackend defines the interface for LSP feature providers.
 // Implementations include the offline backend (keyword completion, formatting,

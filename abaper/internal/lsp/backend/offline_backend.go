@@ -5,9 +5,9 @@ import (
 	"log"
 	"strings"
 
-	"github.com/bluefunda/abaper/internal/lsp/abap"
-	"github.com/bluefunda/abaper/internal/lsp/abaplint"
-	"github.com/bluefunda/abaper/types"
+	"github.com/bluefunda/bluefunda-ai/abaper/internal/lsp/abap"
+	"github.com/bluefunda/bluefunda-ai/abaper/internal/lsp/abaplint"
+	"github.com/bluefunda/bluefunda-ai/abaper/types"
 )
 
 // OfflineBackend provides LSP features without a live SAP connection.

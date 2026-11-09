@@ -1,7 +1,7 @@
 # ABAPer
 
-[![Go Reference](https://pkg.go.dev/badge/github.com/bluefunda/abaper.svg)](https://pkg.go.dev/github.com/bluefunda/abaper)
-[![CI](https://github.com/bluefunda/abaper/actions/workflows/ci.yml/badge.svg)](https://github.com/bluefunda/abaper/actions/workflows/ci.yml)
+[![Go Reference](https://pkg.go.dev/badge/github.com/bluefunda/bluefunda-ai/abaper.svg)](https://pkg.go.dev/github.com/bluefunda/bluefunda-ai/abaper)
+[![CI](https://github.com/bluefunda/bluefunda-ai/actions/workflows/ci.yml/badge.svg)](https://github.com/bluefunda/bluefunda-ai/actions/workflows/ci.yml)
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
 
 **An AI pair programmer for SAP ABAP — in your terminal.**
@@ -20,7 +20,7 @@ abaper                # opens the interactive AI chat
 
 - **The agent talks to SAP, not just about it.** It deploys, activates, and runs unit tests through ADT — real objects on your system.
 - **Terminal-native.** Fits next to git and your shell, and runs headless in CI/CD where the Web IDE and editor plugins can't.
-- **Two modes of AI.** `ai chat` for quick answers, `ai code` for an agentic loop that reads and edits local ABAP source and deploys it.
+- **Two modes of AI.** Bare `abaper` for the interactive agent, `abaper code` for a headless agentic run that reads and edits local ABAP source, deploys it, and verifies the result.
 - **Scriptable and embeddable.** Drive ADT from Go with the SDK — no platform account needed — or embed the LSP server in any editor.
 - **One ecosystem.** Same backend and AI as the [Web IDE](https://github.com/bluefunda/abaper-editor) and [VS Code extension](https://github.com/bluefunda/abaper-vscode) — pick the surface that fits the task.
 
@@ -37,8 +37,8 @@ abaper system add --host https://my-sap:44300 -u DEVELOPER -p secret
 abaper system test
 
 # 3. Work — interactively or by command
-abaper                                  # interactive AI chat (TUI)
-abaper ai code "write a report that reads MARA and prints MATNR"
+abaper                                  # interactive ABAP agent (TUI)
+abaper code "write a report that reads MARA and prints MATNR"
 abaper deploy --type program --name ZMY_REPORT --source-file report.abap
 ```
 
@@ -49,12 +49,11 @@ abaper deploy --type program --name ZMY_REPORT --source-file report.abap
 ### AI assistance
 
 ```bash
-abaper ai chat "Explain SELECT FOR ALL ENTRIES"
-abaper ai chat "Optimise this" --context-file program.abap
-abaper ai code "add an authorization check to ZCL_ORDER"   # agentic: reads, edits, deploys
+abaper                                                  # interactive agent; /system /search /source /activate /test /verify
+abaper code "add an authorization check to ZCL_ORDER"   # headless: reads, edits, deploys, verifies
 ```
 
-`ai code` runs an agentic loop (default 20 turns) that can read and edit local ABAP files and deploy them. When it finishes, abaper syntax-checks, activates and unit-tests every object the agent deployed, gives the agent up to two rounds to fix failures, and prints the list of SAP objects it touched (`--no-verify` skips the gate). The agent never renames an object to work around a conflict; it stops and reports it. It uses the embedded [bluefunda-ai](https://github.com/bluefunda/bluefunda-ai) SDK — sign in once with `bai login`.
+`abaper code` runs an agentic loop (default 20 turns) that can read and edit local ABAP files and deploy them through native ABAP tools (search, read, syntax-check, deploy, activate, unit-test). When it finishes, abaper syntax-checks, activates and unit-tests every object the agent deployed, gives the agent up to two rounds to fix failures, and prints the list of SAP objects it touched (`--no-verify` skips the gate). The agent never renames an object to work around a conflict; it stops and reports it. abaper is built on the [bluefunda-ai](https://github.com/bluefunda/bluefunda-ai) platform core — sign in with `abaper login`. The same tools are available to bai users as `bai abap`.
 
 ### Object operations
 
@@ -63,11 +62,11 @@ abaper generate --type class --name ZCL_MY_CLASS --source-file my_class.abap   #
 abaper deploy   --type program --name ZMY_REPORT --source-file report.abap     # upload + activate
 abaper check    --type class --name ZCL_MY_CLASS --source-file my_class.abap   # syntax check, no save
 abaper test     --type class --name ZCL_MY_CLASS                               # run unit tests
-abaper list objects  --package ZDEV
+abaper list --package ZDEV
 abaper search "ZMY_*"
 ```
 
-Object types: `program`, `class`, `interface`.
+Object types: `program`, `class`, `interface`, `function`, `include`, `structure`, `table`.
 
 ### SAP system management
 
@@ -87,11 +86,11 @@ Manage systems from inside the TUI too: `/system add`, `/system list`, `/system 
 Drive SAP ADT operations directly from Go — no ABAPer platform account required.
 
 ```bash
-go get github.com/bluefunda/abaper/lib
+go get github.com/bluefunda/bluefunda-ai/abaper/lib
 ```
 
 ```go
-import "github.com/bluefunda/abaper/lib"
+import "github.com/bluefunda/bluefunda-ai/abaper/lib"
 
 client, err := lib.CreateADTClient(
     "https://my-sap.example.com:44300", "100", "DEVELOPER", "secret",
@@ -110,7 +109,7 @@ Key interfaces in `types/adt.go`: `SourceReader`, `SourceWriter`, `PackageBrowse
 Bring SAP language intelligence to any LSP-capable editor:
 
 ```go
-import "github.com/bluefunda/abaper/lsp"
+import "github.com/bluefunda/bluefunda-ai/abaper/lsp"
 
 srv := lsp.NewServer(adtClient, "/path/to/workspace")
 srv.RunStdio()       // stdio transport (most editors); or srv.RunTCP(":2087")
@@ -135,18 +134,18 @@ brew tap bluefunda/tap && brew install --cask abaper
 **Debian / Ubuntu**
 
 ```bash
-VER=$(curl -fsSL https://api.github.com/repos/bluefunda/abaper/releases/latest | grep '"tag_name"' | sed 's/.*"v\([^"]*\)".*/\1/')
+VER=$(curl -fsSL https://api.github.com/repos/bluefunda/bluefunda-ai/releases/latest | grep '"tag_name"' | sed 's/.*"v\([^"]*\)".*/\1/')
 ARCH=$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/')
-curl -sL "https://github.com/bluefunda/abaper/releases/download/v${VER}/abaper_${VER}_linux_${ARCH}.deb" -o abaper.deb
+curl -sL "https://github.com/bluefunda/bluefunda-ai/releases/download/v${VER}/abaper_${VER}_linux_${ARCH}.deb" -o abaper.deb
 sudo dpkg -i abaper.deb
 ```
 
 **RHEL / Fedora / Rocky**
 
 ```bash
-VER=$(curl -fsSL https://api.github.com/repos/bluefunda/abaper/releases/latest | grep '"tag_name"' | sed 's/.*"v\([^"]*\)".*/\1/')
+VER=$(curl -fsSL https://api.github.com/repos/bluefunda/bluefunda-ai/releases/latest | grep '"tag_name"' | sed 's/.*"v\([^"]*\)".*/\1/')
 ARCH=$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/')
-sudo dnf install "https://github.com/bluefunda/abaper/releases/download/v${VER}/abaper_${VER}_linux_${ARCH}.rpm"
+sudo dnf install "https://github.com/bluefunda/bluefunda-ai/releases/download/v${VER}/abaper_${VER}_linux_${ARCH}.rpm"
 ```
 
 **Docker**
@@ -158,10 +157,10 @@ docker run --rm -v ~/.abaper:/root/.abaper ghcr.io/bluefunda/abaper status
 **From source** (Go 1.26+)
 
 ```bash
-go install github.com/bluefunda/abaper/cmd/abaper@latest
+go install github.com/bluefunda/bluefunda-ai/abaper/cmd/abaper@latest
 ```
 
-Or download a binary from the [releases page](https://github.com/bluefunda/abaper/releases).
+Or download a binary from the [releases page](https://github.com/bluefunda/bluefunda-ai/releases).
 
 ---
 
@@ -238,7 +237,7 @@ make lint         # golangci-lint
 make vet          # go vet
 ```
 
-Releases are automated via [release-please](https://github.com/googleapis/release-please): merge PRs with [conventional commit](https://www.conventionalcommits.org/) titles, then merge the release PR to trigger GoReleaser → multi-platform binaries + Docker image at `ghcr.io/bluefunda/abaper`.
+abaper lives in [bluefunda/bluefunda-ai](https://github.com/bluefunda/bluefunda-ai) under `abaper/` and is released together with `bai`: merge PRs with [conventional commit](https://www.conventionalcommits.org/) titles, then merge the release PR to trigger GoReleaser → binaries for both CLIs. Build locally with `make build` at the repository root (writes `bin/abaper`).
 
 ---
 

@@ -1,6 +1,7 @@
 # Binaries (only the compiled binary in root)
 /ai
 /bai
+/bin/
 *.exe
 *.exe~
 *.dll

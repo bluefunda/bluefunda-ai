@@ -1,6 +1,6 @@
 package models
 
-import "github.com/bluefunda/abaper/types"
+import "github.com/bluefunda/bluefunda-ai/abaper/types"
 
 // REST API request and response structures
 

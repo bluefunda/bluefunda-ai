@@ -10,8 +10,8 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/bluefunda/abaper/internal/lsp/document"
-	"github.com/bluefunda/abaper/types"
+	"github.com/bluefunda/bluefunda-ai/abaper/internal/lsp/document"
+	"github.com/bluefunda/bluefunda-ai/abaper/types"
 )
 
 //go:embed default_config.json

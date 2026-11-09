@@ -3,7 +3,7 @@ package server
 import (
 	"context"
 
-	"github.com/bluefunda/abaper/types"
+	"github.com/bluefunda/bluefunda-ai/abaper/types"
 )
 
 // fakeADTClient is a scriptable stand-in for types.ADTClient used to unit

@@ -6,8 +6,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/bluefunda/abaper/internal/adt"
-	"github.com/bluefunda/abaper/types"
+	"github.com/bluefunda/bluefunda-ai/abaper/internal/adt"
+	"github.com/bluefunda/bluefunda-ai/abaper/types"
 	"go.uber.org/zap"
 )
 

@@ -149,14 +149,7 @@ func init() {
 			fmt.Println("bai version " + Version)
 			os.Exit(0)
 		}
-		config.SetProfileOverride(cfgProfile)
-		// NO_COLOR, TERM=dumb, and non-terminal stdout are already respected
-		// automatically by fatih/color and lipgloss's own detection. --no-color
-		// forces it off explicitly, e.g. for a color-capable terminal in CI.
-		if rootNoColor {
-			color.NoColor = true
-			lipgloss.SetColorProfile(termenv.Ascii)
-		}
+		applyGlobalFlags()
 		return nil
 	}
 	rootCmd.PersistentPostRunE = func(cmd *cobra.Command, args []string) error {
@@ -206,6 +199,18 @@ func init() {
 		billingCmd,
 		rateLimitCmd,
 	)
+}
+
+// applyGlobalFlags applies the persistent flags every product root shares.
+func applyGlobalFlags() {
+	config.SetProfileOverride(cfgProfile)
+	// NO_COLOR, TERM=dumb, and non-terminal stdout are already respected
+	// automatically by fatih/color and lipgloss's own detection. --no-color
+	// forces it off explicitly, e.g. for a color-capable terminal in CI.
+	if rootNoColor {
+		color.NoColor = true
+		lipgloss.SetColorProfile(termenv.Ascii)
+	}
 }
 
 // Execute runs the root command, then records this invocation's signal for

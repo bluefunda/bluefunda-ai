@@ -3,7 +3,7 @@ package sdk_test
 import (
 	"fmt"
 
-	"github.com/bluefunda/abaper/sdk"
+	"github.com/bluefunda/bluefunda-ai/abaper/sdk"
 )
 
 // Example shows the minimal construction of an ADT client. Real use requires a

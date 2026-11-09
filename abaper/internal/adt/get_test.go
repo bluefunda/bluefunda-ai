@@ -5,7 +5,7 @@ import (
 	"net/http"
 	"testing"
 
-	"github.com/bluefunda/abaper/types"
+	"github.com/bluefunda/bluefunda-ai/abaper/types"
 )
 
 // TestGetSource_AllObjectTypes exercises every single-name Get* wrapper

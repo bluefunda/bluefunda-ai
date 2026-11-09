@@ -209,6 +209,39 @@ type TestMethodResult struct {
 
 // ── Endpoints ────────────────────────────────────────────────────────────────
 
+// Health reports the gateway's own status. It needs no SAP system.
+func (c *Client) Health() (string, error) {
+	token, err := c.TokenFunc()
+	if err != nil {
+		return "", err
+	}
+	req, err := http.NewRequest(http.MethodGet, c.BaseURL+"/abaper/health", nil)
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("X-Realm", c.Realm)
+	resp, err := c.HTTPClient.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("gateway health: HTTP %d", resp.StatusCode)
+	}
+	var body map[string]string
+	_ = json.NewDecoder(resp.Body).Decode(&body)
+	return body["status"], nil
+}
+
+// WithSystem returns a copy of c that targets sys, with the given request timeout.
+func (c *Client) WithSystem(sys *SAPSystem, timeout time.Duration) *Client {
+	cp := *c
+	cp.System = sys
+	cp.HTTPClient = &http.Client{Timeout: timeout}
+	return &cp
+}
+
 // Connect checks that the gateway can reach and log on to the SAP system.
 func (c *Client) Connect() error {
 	resp, err := c.do(http.MethodPost, "/api/v1/system/connect", nil)

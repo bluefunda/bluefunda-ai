@@ -20,6 +20,8 @@ package agent
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"time"
@@ -61,6 +63,19 @@ type ToolResult struct {
 	Output string
 }
 
+// Tool is a caller-defined tool exposed to the LLM alongside (or, with
+// DisableBuiltins, instead of) the built-in local tools.
+type Tool struct {
+	// Name must be unique across all tools sent to the LLM.
+	Name        string
+	Description string
+	// Parameters is the JSON Schema for the arguments object. nil → no arguments.
+	Parameters json.RawMessage
+	// Handler runs the tool. arguments is the raw JSON object from the LLM.
+	// A returned error is reported to the LLM as "Error: <msg>".
+	Handler func(ctx context.Context, arguments string) (string, error)
+}
+
 // Message is one turn in the conversation history.
 type Message struct {
 	Role       string
@@ -85,6 +100,23 @@ type Options struct {
 	// Allow and Deny are permission policy lists (same syntax as .bai/settings.yaml).
 	Allow []string
 	Deny  []string
+
+	// Tools are extra tools offered to the LLM. Their calls go to Tool.Handler
+	// and never reach OnToolCall.
+	Tools []Tool
+	// DisableBuiltins drops the built-in local tools (bash, read_file, …), so
+	// the LLM only sees Tools.
+	DisableBuiltins bool
+
+	// TokenFunc supplies the access token for every BFF call. Set it when the
+	// caller has its own login; ~/.bai/config.yaml is then not read. The
+	// function owns refresh and should return a cached token while valid.
+	TokenFunc func() (string, error)
+	// BFFURL overrides the BFF endpoint. Defaults to the bai config value, or
+	// the platform default when TokenFunc is set.
+	BFFURL string
+	// LoginHint is the command named in "not signed in" errors. Default "bai login".
+	LoginHint string
 }
 
 // ── Runner ────────────────────────────────────────────────────────────────────
@@ -134,7 +166,7 @@ func (r *Runner) Run(ctx context.Context, prompt string) error {
 
 	history := append(r.history, intagent.Message{Role: "user", Content: prompt})
 
-	toolSchemas, err := tools.LocalToolSchemas()
+	toolSchemas, err := r.toolSchemas()
 	if err != nil {
 		return fmt.Errorf("build tool schemas: %w", err)
 	}
@@ -191,6 +223,54 @@ func DefaultTools() (string, error) {
 
 // ── Internal helpers ──────────────────────────────────────────────────────────
 
+// toolSchemas returns the JSON tool array sent to the LLM: the built-ins
+// (unless disabled) followed by Options.Tools.
+func (r *Runner) toolSchemas() (string, error) {
+	var schemas []tools.ToolSchema
+	if !r.opts.DisableBuiltins {
+		builtin, err := tools.LocalToolSchemas()
+		if err != nil {
+			return "", err
+		}
+		if err := json.Unmarshal([]byte(builtin), &schemas); err != nil {
+			return "", fmt.Errorf("decode built-in schemas: %w", err)
+		}
+	}
+	seen := make(map[string]bool, len(schemas)+len(r.opts.Tools))
+	for _, s := range schemas {
+		seen[s.Function.Name] = true
+	}
+	for _, t := range r.opts.Tools {
+		if t.Name == "" || t.Handler == nil {
+			return "", errors.New("custom tool needs a Name and a Handler")
+		}
+		if seen[t.Name] {
+			return "", fmt.Errorf("duplicate tool name %q", t.Name)
+		}
+		seen[t.Name] = true
+		params := t.Parameters
+		if len(params) == 0 {
+			params = json.RawMessage(`{"type":"object","properties":{}}`)
+		}
+		schemas = append(schemas, tools.ToolSchema{
+			Type:     "function",
+			Function: tools.FunctionDef{Name: t.Name, Description: t.Description, Parameters: params},
+		})
+	}
+	if len(schemas) == 0 {
+		return "", nil
+	}
+	b, err := json.Marshal(schemas)
+	return string(b), err
+}
+
+func (r *Runner) loginHint() string {
+	if r.opts.LoginHint != "" {
+		return r.opts.LoginHint
+	}
+	return "bai login"
+}
+
 func (r *Runner) ensureConn() error {
 	if r.conn != nil {
 		// Refresh token if near expiry.
@@ -199,12 +279,24 @@ func (r *Runner) ensureConn() error {
 		}
 		return nil
 	}
+	if r.opts.TokenFunc != nil {
+		target := r.opts.BFFURL
+		if target == "" {
+			target = config.DefaultBFFURL
+		}
+		conn, err := caigrpc.Dial(target, caigrpc.NewFuncTokenSource(r.opts.TokenFunc))
+		if err != nil {
+			return fmt.Errorf("dial BFF: %w", err)
+		}
+		r.conn = conn
+		return nil
+	}
 	cfg, err := config.Load()
 	if err != nil {
 		return fmt.Errorf("load config: %w", err)
 	}
 	if cfg.Auth.AccessToken == "" {
-		return fmt.Errorf("not signed in — run `bai login`")
+		return fmt.Errorf("not signed in — run `%s`", r.loginHint())
 	}
 	r.cfg = cfg
 
@@ -220,7 +312,11 @@ func (r *Runner) ensureConn() error {
 		return tok.AccessToken, nil
 	}
 	ts := caigrpc.NewTokenSource(cfg, refreshFunc)
-	conn, err := caigrpc.Dial(cfg.EffectiveBFFURL(), ts)
+	target := r.opts.BFFURL
+	if target == "" {
+		target = cfg.EffectiveBFFURL()
+	}
+	conn, err := caigrpc.Dial(target, ts)
 	if err != nil {
 		return fmt.Errorf("dial BFF: %w", err)
 	}
@@ -249,10 +345,23 @@ func (r *Runner) wrapEventFn() func(intagent.Event) {
 
 func (r *Runner) wrapToolFn() intagent.ToolExecutor {
 	onToolCall := r.opts.OnToolCall
-	if onToolCall == nil {
+	if onToolCall == nil && len(r.opts.Tools) == 0 && !r.opts.DisableBuiltins {
 		return nil // loop will use tools.Execute directly
 	}
+	custom := make(map[string]Tool, len(r.opts.Tools))
+	for _, t := range r.opts.Tools {
+		custom[t.Name] = t
+	}
 	return func(ctx context.Context, name, args string) (string, error) {
+		if t, ok := custom[name]; ok {
+			return t.Handler(ctx, args)
+		}
+		if r.opts.DisableBuiltins {
+			return "", fmt.Errorf("unknown tool %q", name)
+		}
+		if onToolCall == nil {
+			return tools.Execute(name, args)
+		}
 		res, err := onToolCall(ToolCall{Name: name, Arguments: args})
 		return res.Output, err
 	}

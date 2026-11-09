@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.62.0](https://github.com/bluefunda/bluefunda-ai/compare/v1.61.0...v1.62.0) (2026-11-09)
+
+
+### Features
+
+* **sdk:** custom tools and injectable auth in sdk/agent ([#346](https://github.com/bluefunda/bluefunda-ai/issues/346)) ([34bab09](https://github.com/bluefunda/bluefunda-ai/commit/34bab093d03ce1a3bc218aba3dde7584f1840ca4))
+
 ## [1.61.0](https://github.com/bluefunda/bluefunda-ai/compare/v1.60.0...v1.61.0) (2026-10-05)
 
 

@@ -20,6 +20,8 @@ import (
 	"time"
 
 	"gopkg.in/yaml.v3"
+
+	"github.com/bluefunda/bluefunda-ai/internal/app"
 )
 
 // Scope identifies where an Entry's backing file lives.
@@ -102,11 +104,11 @@ func New(projectDir string) *Manager {
 	m := &Manager{}
 	if projectDir != "" {
 		if abs, err := filepath.Abs(projectDir); err == nil {
-			m.ProjectDir = filepath.Join(abs, ".bai", "memory")
+			m.ProjectDir = filepath.Join(abs, app.Current().Dir, "memory")
 		}
 	}
 	if home, err := os.UserHomeDir(); err == nil {
-		m.UserDir = filepath.Join(home, ".bai", "memory")
+		m.UserDir = filepath.Join(home, app.Current().Dir, "memory")
 	}
 	return m
 }

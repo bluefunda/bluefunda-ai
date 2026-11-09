@@ -99,6 +99,9 @@ func ExtractPrimaryArg(toolName, argumentsJSON string) string {
 	if err := json.Unmarshal([]byte(argumentsJSON), &args); err != nil {
 		return ""
 	}
+	if t, ok := lookupPackTool(toolName); ok {
+		return strArg(args, t.PrimaryArg)
+	}
 	switch toolName {
 	case "bash":
 		return strArg(args, "command")

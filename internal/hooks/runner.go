@@ -62,6 +62,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/bluefunda/bluefunda-ai/internal/app"
 )
 
 const hookTimeout = 10 * time.Second
@@ -102,7 +104,7 @@ func FindHooksDir(cwd string) string {
 		return ""
 	}
 	for {
-		candidate := filepath.Join(abs, ".bai", "hooks")
+		candidate := filepath.Join(abs, app.Current().Dir, "hooks")
 		if _, err := os.Stat(candidate); err == nil {
 			return candidate
 		}

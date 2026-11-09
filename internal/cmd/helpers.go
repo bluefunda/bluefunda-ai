@@ -7,10 +7,12 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/bluefunda/bluefunda-ai/internal/app"
 	"github.com/bluefunda/bluefunda-ai/internal/auth"
 	"github.com/bluefunda/bluefunda-ai/internal/config"
 	caigrpc "github.com/bluefunda/bluefunda-ai/internal/grpc"
 	"github.com/bluefunda/bluefunda-ai/internal/memory"
+	"github.com/bluefunda/bluefunda-ai/internal/tools"
 	"github.com/bluefunda/bluefunda-ai/internal/ui"
 )
 
@@ -26,7 +28,7 @@ func loadContextFiles(cwd string) string {
 	}
 
 	if home, err := os.UserHomeDir(); err == nil {
-		if b, err := os.ReadFile(filepath.Join(home, ".bai", "instructions.md")); err == nil && len(b) > 0 {
+		if b, err := os.ReadFile(filepath.Join(home, app.Current().Dir, "instructions.md")); err == nil && len(b) > 0 {
 			parts = append(parts, string(b))
 		}
 	}
@@ -54,6 +56,9 @@ func loadMemoryIndex(cwd string) string {
 // context.
 func buildContextHistory(cwd string) []codeMessage {
 	var history []codeMessage
+	if packs := tools.PackInstructions(); packs != "" {
+		history = append(history, codeMessage{Role: "system", Content: packs})
+	}
 	if ctx := loadContextFiles(cwd); ctx != "" {
 		history = append(history, codeMessage{Role: "system", Content: ctx})
 	}
@@ -71,7 +76,7 @@ func findContextFile(dir string) string {
 		return ""
 	}
 	for {
-		if b, err := os.ReadFile(filepath.Join(abs, ".bai", "context.md")); err == nil && len(b) > 0 {
+		if b, err := os.ReadFile(filepath.Join(abs, app.Current().Dir, "context.md")); err == nil && len(b) > 0 {
 			return string(b)
 		}
 		if b, err := os.ReadFile(filepath.Join(abs, "AGENTS.md")); err == nil && len(b) > 0 {
@@ -122,13 +127,13 @@ func reAuthenticate(cfg *config.Config, p *ui.Printer) error {
 func bffConn() (*caigrpc.Conn, *config.Config, error) {
 	cfg := loadConfig()
 	if cfg.Auth.AccessToken == "" {
-		return nil, cfg, fmt.Errorf("not signed in — run `bai login`")
+		return nil, cfg, fmt.Errorf("not signed in — run `%s login`", app.Current().Name)
 	}
 
 	refreshFunc := func() (string, error) {
 		tok, err := auth.Refresh(cfg.EffectiveDomain(), cfg.Realm, cfg.Auth.RefreshToken)
 		if err != nil {
-			return "", fmt.Errorf("token refresh failed — run `bai login`: %w", err)
+			return "", fmt.Errorf("token refresh failed — run `%s login`: %w", app.Current().Name, err)
 		}
 		if err := saveAuthTokens(cfg, tok); err != nil {
 			return "", fmt.Errorf("save tokens: %w", err)

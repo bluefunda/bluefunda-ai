@@ -16,6 +16,7 @@ import (
 	"github.com/spf13/cobra"
 
 	pb "github.com/bluefunda/bluefunda-ai/api/proto/bff"
+	"github.com/bluefunda/bluefunda-ai/internal/app"
 	"github.com/bluefunda/bluefunda-ai/internal/config"
 	caigrpc "github.com/bluefunda/bluefunda-ai/internal/grpc"
 	"github.com/bluefunda/bluefunda-ai/internal/hooks"
@@ -143,7 +144,7 @@ func runDoctor(cmd *cobra.Command, args []string) error {
 	// 8. Context limit (auto-compaction threshold)
 	contextLimit := defaultCompactionThreshold
 	limitSource := "default"
-	if v := os.Getenv("BAI_MAX_CONTEXT_TOKENS"); v != "" {
+	if v := app.Getenv("MAX_CONTEXT_TOKENS"); v != "" {
 		if n, err := strconv.Atoi(v); err == nil && n > 0 {
 			contextLimit = n
 			limitSource = "BAI_MAX_CONTEXT_TOKENS"
@@ -154,7 +155,7 @@ func runDoctor(cmd *cobra.Command, args []string) error {
 
 	// 9. Budget limit
 	budgetDetail := "no limit (--max-budget-usd / BAI_MAX_BUDGET_USD)"
-	if v := os.Getenv("BAI_MAX_BUDGET_USD"); v != "" {
+	if v := app.Getenv("MAX_BUDGET_USD"); v != "" {
 		if f, err := strconv.ParseFloat(v, 64); err == nil && f > 0 {
 			budgetDetail = fmt.Sprintf("$%.2f per session (BAI_MAX_BUDGET_USD)", f)
 		}
@@ -197,7 +198,7 @@ func runDoctor(cmd *cobra.Command, args []string) error {
 	}
 
 	// 12. Hooks
-	hooksDir := filepath.Join(cwd, ".bai", "hooks")
+	hooksDir := filepath.Join(cwd, app.Current().Dir, "hooks")
 	hookCount := countHookScripts(hooksDir, hooks.Phases)
 	if hookCount == 0 {
 		checks = append(checks, checkResult{"Hooks", "info", "none configured — see docs for session/tool hooks"})

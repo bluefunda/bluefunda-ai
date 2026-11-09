@@ -14,6 +14,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	"github.com/google/uuid"
 
+	"github.com/bluefunda/bluefunda-ai/internal/app"
 	"github.com/bluefunda/bluefunda-ai/internal/memory"
 )
 
@@ -103,6 +104,13 @@ type tickMsg time.Time
 
 // updateExecDoneMsg is sent when the bai update subprocess exits.
 type updateExecDoneMsg struct{ err error }
+
+// slashRunDoneMsg carries the output of a Go-handler slash command (SlashCommand.Run).
+type slashRunDoneMsg struct {
+	name   string
+	output string
+	err    error
+}
 
 // ──────────────────────────────────────────────
 //  SessionConfig is passed from cmd to the TUI
@@ -298,7 +306,7 @@ func New(cfg SessionConfig, submit SubmitFn) Model {
 	th := DefaultTheme()
 
 	ta := textarea.New()
-	ta.Placeholder = "Ask BlueFunda AI..."
+	ta.Placeholder = app.Current().Placeholder
 	ta.ShowLineNumbers = false
 	ta.CharLimit = 0
 	ta.SetWidth(80)
@@ -393,6 +401,20 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case InterruptedMsg:
 		// Ctrl+C already handled in handleKey; nothing more to do here.
+		return m, nil
+
+	case slashRunDoneMsg:
+		text := msg.output
+		if msg.err != nil {
+			text = msg.name + " failed: " + msg.err.Error()
+		} else if text == "" {
+			text = msg.name + " done"
+		}
+		m.messages = append(m.messages, newSystemMessage(text))
+		m.refreshViewport()
+		if m.atBottom {
+			m.viewport.GotoBottom()
+		}
 		return m, nil
 
 	case StreamDoneMsg:
@@ -822,7 +844,7 @@ func (m Model) handleSlashCommand(input string) (tea.Model, tea.Cmd) {
 	case input == "/update":
 		exe, err := os.Executable()
 		if err != nil {
-			m.messages = append(m.messages, newSystemMessage("Could not locate bai binary: "+err.Error()))
+			m.messages = append(m.messages, newSystemMessage("Could not locate "+app.Current().Name+" binary: "+err.Error()))
 			m.refreshViewport()
 			break
 		}
@@ -1047,7 +1069,7 @@ func (m Model) handleSlashCommand(input string) (tea.Model, tea.Cmd) {
 			m.messages = append(m.messages, newSystemMessage("Switched to code mode — file tools loaded"))
 		} else {
 			m.messages = append(m.messages, newSystemMessage(
-				"File tools are not available in this session.\nStart with `bai code [prompt]` for the full agentic experience."))
+				"File tools are not available in this session.\nStart with `"+app.Current().Name+" code [prompt]` for the full agentic experience."))
 		}
 		m.refreshViewport()
 
@@ -1134,6 +1156,16 @@ func (m Model) handleSlashCommand(input string) (tea.Model, tea.Cmd) {
 		cmdName := strings.Fields(input)[0] // e.g. "/review"
 		cmdArgs := strings.TrimSpace(strings.TrimPrefix(input, cmdName))
 		for _, c := range m.cfg.CustomCommands {
+			if c.Name == cmdName && c.Run != nil {
+				run := c.Run
+				m.messages = append(m.messages, newSystemMessage(cmdName+" …"))
+				m.refreshViewport()
+				m.viewport.GotoBottom()
+				return m, func() tea.Msg {
+					out, err := run(cmdArgs)
+					return slashRunDoneMsg{name: cmdName, output: out, err: err}
+				}
+			}
 			if c.Name == cmdName && c.Prompt != "" {
 				prompt := expandArguments(c.Prompt, cmdArgs)
 				m.messages = append(m.messages, newUserMessage(prompt))
@@ -1180,7 +1212,7 @@ func runMemoryCommand(arg string) string {
 			return "Error listing memory: " + err.Error()
 		}
 		if len(entries) == 0 {
-			return "No memory entries — see docs for memory_write, or `bai memory list`"
+			return "No memory entries — see docs for memory_write, or `" + app.Current().Name + " memory list`"
 		}
 		noun := "entries"
 		if len(entries) == 1 {

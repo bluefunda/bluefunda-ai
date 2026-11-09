@@ -29,6 +29,7 @@ import (
 	"github.com/google/uuid"
 
 	intagent "github.com/bluefunda/bluefunda-ai/internal/agent"
+	"github.com/bluefunda/bluefunda-ai/internal/app"
 	"github.com/bluefunda/bluefunda-ai/internal/auth"
 	"github.com/bluefunda/bluefunda-ai/internal/config"
 	caigrpc "github.com/bluefunda/bluefunda-ai/internal/grpc"
@@ -115,7 +116,7 @@ type Options struct {
 	// BFFURL overrides the BFF endpoint. Defaults to the bai config value, or
 	// the platform default when TokenFunc is set.
 	BFFURL string
-	// LoginHint is the command named in "not signed in" errors. Default "bai login".
+	// LoginHint is the command named in "not signed in" errors. Default "<app> login".
 	LoginHint string
 }
 
@@ -268,7 +269,7 @@ func (r *Runner) loginHint() string {
 	if r.opts.LoginHint != "" {
 		return r.opts.LoginHint
 	}
-	return "bai login"
+	return app.Current().Name + " login"
 }
 
 func (r *Runner) ensureConn() error {

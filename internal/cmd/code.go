@@ -18,6 +18,7 @@ import (
 	"google.golang.org/grpc/status"
 
 	pb "github.com/bluefunda/bluefunda-ai/api/proto/bff"
+	"github.com/bluefunda/bluefunda-ai/internal/app"
 	"github.com/bluefunda/bluefunda-ai/internal/audit"
 	"github.com/bluefunda/bluefunda-ai/internal/config"
 	caigrpc "github.com/bluefunda/bluefunda-ai/internal/grpc"
@@ -216,7 +217,7 @@ func runAgenticSession(args []string) error {
 	// Resolve effective context token limit: CLI flag > BAI_MAX_CONTEXT_TOKENS > default.
 	maxContextTokens := codeMaxContextTokens
 	if maxContextTokens == 0 {
-		if v := os.Getenv("BAI_MAX_CONTEXT_TOKENS"); v != "" {
+		if v := app.Getenv("MAX_CONTEXT_TOKENS"); v != "" {
 			if n, err := strconv.Atoi(v); err == nil && n > 0 {
 				maxContextTokens = n
 			}
@@ -229,7 +230,7 @@ func runAgenticSession(args []string) error {
 	// Resolve effective budget limit: CLI flag > BAI_MAX_BUDGET_USD > 0 (no limit).
 	maxBudgetUSD := codeMaxBudgetUSD
 	if maxBudgetUSD == 0 {
-		if v := os.Getenv("BAI_MAX_BUDGET_USD"); v != "" {
+		if v := app.Getenv("MAX_BUDGET_USD"); v != "" {
 			if f, err := strconv.ParseFloat(v, 64); err == nil && f > 0 {
 				maxBudgetUSD = f
 			}

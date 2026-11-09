@@ -5,6 +5,8 @@ import (
 
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+
+	"github.com/bluefunda/bluefunda-ai/internal/app"
 )
 
 // RewriteError converts raw gRPC status errors into user-actionable messages.
@@ -19,7 +21,7 @@ func RewriteError(err error) string {
 	}
 	switch st.Code() {
 	case codes.Unauthenticated:
-		return "Not authenticated. Run: bai login"
+		return "Not authenticated. Run: " + app.Current().Name + " login"
 	case codes.PermissionDenied:
 		return "Access denied. Your subscription may not include this feature."
 	case codes.Unavailable:

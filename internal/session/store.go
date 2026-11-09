@@ -14,6 +14,8 @@ import (
 	"path/filepath"
 	"sort"
 	"time"
+
+	"github.com/bluefunda/bluefunda-ai/internal/app"
 )
 
 // Message mirrors cmd.codeMessage but is exported for storage.
@@ -54,7 +56,7 @@ func Dir(cwd string) (string, error) {
 		return "", err
 	}
 	hash := fmt.Sprintf("%x", md5.Sum([]byte(cwd)))[:8]
-	dir := filepath.Join(home, ".bai", "sessions", hash)
+	dir := filepath.Join(home, app.Current().Dir, "sessions", hash)
 	if err := os.MkdirAll(dir, 0700); err != nil {
 		return "", err
 	}
@@ -128,7 +130,7 @@ func ListAll() ([]Info, error) {
 	if err != nil {
 		return nil, err
 	}
-	base := filepath.Join(home, ".bai", "sessions")
+	base := filepath.Join(home, app.Current().Dir, "sessions")
 	hashDirs, err := os.ReadDir(base)
 	if err != nil {
 		return nil, nil // no sessions dir yet

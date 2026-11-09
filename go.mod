@@ -1,6 +1,6 @@
 module github.com/bluefunda/bluefunda-ai
 
-go 1.26.7
+go 1.26.10
 
 require (
 	github.com/alecthomas/chroma/v2 v2.27.0
@@ -65,7 +65,7 @@ require (
 	github.com/yuin/goldmark v1.7.17 // indirect
 	github.com/yuin/goldmark-emoji v1.0.6 // indirect
 	go.uber.org/multierr v1.10.0 // indirect
-	golang.org/x/net v0.58.0 // indirect
+	golang.org/x/net v0.60.0 // indirect
 	golang.org/x/text v0.42.0 // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20260706201446-f0a921348800 // indirect
 )

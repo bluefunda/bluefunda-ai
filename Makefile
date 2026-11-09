@@ -6,9 +6,11 @@ LDFLAGS := -ldflags "-X github.com/bluefunda/bluefunda-ai/internal/cmd.Version=$
 
 build: tidy
 	go build $(LDFLAGS) -o $(BINARY) ./cmd/bai
+	go build $(LDFLAGS) -o bin/abaper ./abaper/cmd/abaper
 
 clean:
 	rm -f $(BINARY)
+	rm -rf bin/
 	rm -rf dist/
 
 vet:

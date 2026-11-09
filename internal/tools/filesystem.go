@@ -180,6 +180,13 @@ func workspaceRoot() string {
 // verifies it falls within root (including defeating symlink escapes).
 // Paths that don't exist yet (e.g. a new file write_file is about to create)
 // are handled by walking up to the nearest existing ancestor to resolve.
+// ConfineToWorkspace resolves path and rejects it if it escapes the
+// workspace root, applying the same boundary as the built-in file tools.
+// Product tool packs use it for any path argument they read or write.
+func ConfineToWorkspace(path string) (string, error) {
+	return confinePath(workspaceRoot(), path)
+}
+
 func confinePath(root, path string) (string, error) {
 	abs, err := filepath.Abs(path)
 	if err != nil {

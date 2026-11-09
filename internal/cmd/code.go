@@ -52,6 +52,14 @@ var (
 	// the command line.
 )
 
+// sessionSlashCommands and sessionDeny are extra TUI slash commands and
+// permission deny rules that a product command group (e.g. `bai abap`) adds
+// to the interactive session before calling runAgenticSession.
+var (
+	sessionSlashCommands []tui.SlashCommand
+	sessionDeny          []string
+)
+
 // defaultMaxTurnsFlag is the --max-turns default, shared by both flag
 // registrations (root.go's primary `bai` command and this file's deprecated
 // `bai code` alias) and used as the sentinel for "the user didn't explicitly
@@ -275,6 +283,7 @@ func runAgenticSession(args []string) error {
 		permAllow = projCfg.Permissions.Allow
 		permDeny = projCfg.Permissions.Deny
 	}
+	permDeny = append(permDeny, sessionDeny...)
 
 	// --- Personal, local "always allow" rules + workspace trust gate (#331) ---
 	// .bai/settings.local.yaml is gitignored and holds per-developer rules
@@ -505,7 +514,7 @@ func runAgenticSession(args []string) error {
 		PlanMode:           codePlanMode,
 		InitialPrompt:      initialPrompt,
 		RepoName:           gitRepoName(),
-		CustomCommands:     loadCustomSlashCommands("."),
+		CustomCommands:     append(loadCustomSlashCommands("."), sessionSlashCommands...),
 		RetryFn:            retryFn,
 		DisableUpdateCheck: !cfg.UpdateCheckEnabled(),
 		AccountFn: func() (*tui.AccountInfo, error) {

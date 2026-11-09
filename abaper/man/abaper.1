@@ -1,0 +1,285 @@
+.TH ABAPER 1 "2026-03-11" "v1.0.0" "ABAPer CLI Manual"
+.SH NAME
+abaper \- command line interface for the ABAPer platform
+.SH SYNOPSIS
+.B abaper
+.I command
+.RI [ flags ]
+.SH DESCRIPTION
+.B abaper
+is a command line interface for the ABAPer platform.
+It communicates with ABAPer APIs exposed through the ABAPer gateway
+.RB ( abaper\-gw )
+to support developer workflows including authentication, code generation,
+deployment, and system inspection.
+.SH COMMANDS
+.TP
+.B login
+Authenticate with ABAPer using the OAuth2 device authorization flow.
+Opens a browser window for interactive login.
+Credentials are stored locally in
+.I ~/.abaper/tokens.yaml
+with restricted permissions (0600).
+.TP
+.B logout
+Clear stored credentials by removing the local token file.
+.TP
+.B status
+Show connection and authentication status.
+Reports the configured base URL, realm, organization, authentication state,
+and API health.
+.TP
+.B generate
+Create ABAP objects (programs, classes, interfaces) on the target SAP system.
+Accepts source from a file or generates default templates.
+See
+.BR abaper\-generate (1)
+for details.
+.TP
+.B deploy
+Upload source code and activate an ABAP object in a single step.
+Performs a save followed by activation, matching the workflow in ABAPer Editor.
+See
+.BR abaper\-deploy (1)
+for details.
+.TP
+.B check
+Syntax-check local ABAP source against the target system without saving or
+activating it. Exits non-zero when the check reports errors.
+.TP
+.B test
+Run ABAP unit tests for an object on the target system.
+Exits non-zero when any test fails.
+.TP
+.B list objects
+List ABAP objects, optionally filtered by package or type.
+.TP
+.B list packages
+List contents of an ABAP package.
+.TP
+.B ai chat
+Send a prompt to the ABAPer AI assistant and stream the response.
+Supports context injection from ABAP source files and session resumption.
+.TP
+.B version
+Print the CLI version.
+.SH GLOBAL FLAGS
+.TP
+.BI \-\-base\-url " url"
+ABAPer API base URL (default:
+.IR https://api.bluefunda.com ).
+.TP
+.BI \-\-realm " realm"
+Keycloak realm (default:
+.IR trm ).
+.TP
+.BR \-o ", " \-\-output " " \fIformat\fR
+Output format:
+.BR text " or " json
+(default:
+.IR text ).
+.SH GENERATE FLAGS
+.TP
+.BI \-\-name " name"
+Object name (required).
+.TP
+.BI \-\-type " type"
+Object type:
+.BR program ", " class ", or " interface
+(default:
+.IR program ).
+.TP
+.BI \-\-source\-file " path"
+Path to ABAP source file. If omitted, a default template is generated.
+.SH DEPLOY FLAGS
+.TP
+.BI \-\-name " name"
+Object name (required).
+.TP
+.BI \-\-type " type"
+Object type:
+.BR program ", " class ", or " interface
+(default:
+.IR program ).
+.TP
+.BI \-\-source\-file " path"
+Path to ABAP source file (required).
+.SH CHECK FLAGS
+.TP
+.BI \-\-name " name"
+Object name (required).
+.TP
+.BI \-\-type " type"
+Object type:
+.BR program ", " class ", or " interface
+(default:
+.IR program ).
+.TP
+.BI \-\-source\-file " path"
+Path to ABAP source file (required).
+.SH AI CHAT FLAGS
+.TP
+.BI \-\-model " model"
+LLM model to use (default:
+.IR groq ).
+.TP
+.BI \-\-context\-file " path"
+ABAP source file to include as context with the prompt.
+.TP
+.BI \-\-chat\-id " id"
+Resume an existing chat session. If omitted, a new session is created.
+.SH TEST FLAGS
+.TP
+.BI \-\-name " name"
+Object name (required).
+.TP
+.BI \-\-type " type"
+Object type:
+.BR class " or " program
+(default:
+.IR class ).
+.SH LIST FLAGS
+.TP
+.BI \-\-package " name"
+Filter objects by package name (list objects).
+.TP
+.BI \-\-type " type"
+Filter objects by type (list objects).
+.TP
+.BI \-\-name " name"
+Package name (list packages, required).
+.SH AUTHENTICATION
+ABAPer CLI uses the OAuth2 device authorization flow via Keycloak
+(same flow as the ABAPer VS Code extension):
+.PP
+.RS 4
+1. \fBabaper login\fR requests a device code from the authorization server
+.br
+2. Your browser opens to the verification URL
+.br
+3. The CLI polls for authorization completion
+.br
+4. Access and refresh tokens are stored locally
+.RE
+.PP
+Tokens are automatically refreshed when expired.
+The CLI uses the
+.B cai\-cli
+OAuth2 client ID.
+.SH CONFIGURATION
+Configuration is loaded in the following order of precedence:
+.PP
+.RS 4
+1. CLI flags (\fB\-\-base\-url\fR, \fB\-\-realm\fR)
+.br
+2. Environment variables (\fBABAPER_BASE_URL\fR, \fBABAPER_REALM\fR, \fBABAPER_ORG\fR)
+.br
+3. Config file \fI~/.abaper/config.yaml\fR
+.RE
+.SS Config File Format
+.PP
+.RS 4
+.nf
+base_url: https://api.bluefunda.com
+realm: trm
+org: default
+.fi
+.RE
+.SH ENVIRONMENT
+.TP
+.B ABAPER_BASE_URL
+Override the API base URL.
+.TP
+.B ABAPER_REALM
+Override the Keycloak realm.
+.TP
+.B ABAPER_ORG
+Override the organization.
+.SH FILES
+.TP
+.I ~/.abaper/config.yaml
+Configuration file.
+.TP
+.I ~/.abaper/tokens.yaml
+OAuth2 tokens. Created with permissions 0600.
+.SH EXAMPLES
+Authenticate and check connection:
+.PP
+.RS 4
+.nf
+abaper login
+abaper status
+.fi
+.RE
+.PP
+Create and deploy an ABAP program:
+.PP
+.RS 4
+.nf
+abaper generate \-\-type program \-\-name ZMY_REPORT
+abaper deploy \-\-type program \-\-name ZMY_REPORT \-\-source\-file report.abap
+.fi
+.RE
+.PP
+AI-assisted development:
+.PP
+.RS 4
+.nf
+abaper ai chat "Explain SELECT FOR ALL ENTRIES"
+abaper ai chat "Optimize this code" \-\-context\-file program.abap
+abaper ai chat "What about performance?" \-\-chat\-id <previous\-id>
+.fi
+.RE
+.PP
+Run unit tests:
+.PP
+.RS 4
+.nf
+abaper test \-\-type class \-\-name ZCL_MY_CLASS
+.fi
+.RE
+.PP
+List objects and packages:
+.PP
+.RS 4
+.nf
+abaper list objects \-\-package ZDEV
+abaper list packages \-\-name ZDEV
+.fi
+.RE
+.PP
+Use JSON output for scripting:
+.PP
+.RS 4
+.nf
+abaper status \-o json | jq '.authenticated'
+.fi
+.RE
+.PP
+Run via Docker:
+.PP
+.RS 4
+.nf
+docker run \-\-rm bluefunda/abaper version
+docker run \-\-rm \-v ~/.abaper:/root/.abaper bluefunda/abaper status
+.fi
+.RE
+.SH DOCKER
+The CLI is available as a Docker image at
+.BR bluefunda/abaper " on Docker Hub."
+.PP
+.RS 4
+.nf
+docker pull bluefunda/abaper:latest
+docker pull bluefunda/abaper:v1.0.0
+.fi
+.RE
+.SH SEE ALSO
+.UR https://abaper.bluefunda.com
+ABAPer platform
+.UE ,
+.UR https://github.com/bluefunda/abaper\-cli
+Source code & releases
+.UE
+.SH AUTHORS
+Bluefunda <https://bluefunda.com>

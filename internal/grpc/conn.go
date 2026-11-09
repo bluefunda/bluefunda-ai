@@ -57,6 +57,7 @@ func Ping(target string) error {
 type TokenSource struct {
 	cfg         *config.Config
 	refreshFunc func() (string, error)
+	tokenFunc   func() (string, error) // set by NewFuncTokenSource; bypasses cfg
 	mu          sync.Mutex
 }
 
@@ -65,10 +66,21 @@ func NewTokenSource(cfg *config.Config, refreshFunc func() (string, error)) *Tok
 	return &TokenSource{cfg: cfg, refreshFunc: refreshFunc}
 }
 
+// NewFuncTokenSource creates a TokenSource backed by a caller-supplied function.
+// The function owns storage and refresh; it is called for every RPC, so it should
+// return a cached token while that token is still valid.
+func NewFuncTokenSource(fn func() (string, error)) *TokenSource {
+	return &TokenSource{tokenFunc: fn}
+}
+
 // Token returns the current access token, refreshing if expired.
 func (ts *TokenSource) Token() (string, error) {
 	ts.mu.Lock()
 	defer ts.mu.Unlock()
+
+	if ts.tokenFunc != nil {
+		return ts.tokenFunc()
+	}
 
 	if ts.cfg.TokenValid() {
 		return ts.cfg.Auth.AccessToken, nil
@@ -92,6 +104,9 @@ func (ts *TokenSource) Token() (string, error) {
 func (ts *TokenSource) NearExpiry(within time.Duration) bool {
 	ts.mu.Lock()
 	defer ts.mu.Unlock()
+	if ts.tokenFunc != nil {
+		return false // the token function handles its own expiry
+	}
 	if ts.cfg.Auth.TokenExpiry.IsZero() {
 		return true
 	}

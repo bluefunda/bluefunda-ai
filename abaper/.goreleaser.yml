@@ -1,0 +1,196 @@
+version: 2
+
+project_name: abaper
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - id: abaper
+    main: ./cmd/abaper
+    binary: abaper
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - darwin
+      - linux
+      - windows
+    goarch:
+      - amd64
+      - arm64
+    ldflags:
+      - -s -w
+      - -X github.com/bluefunda/abaper/internal/commands.version={{ .Version }}
+    flags:
+      - -trimpath
+
+archives:
+  - id: abaper
+    name_template: "abaper_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    formats:
+      - tar.gz
+      - zip
+    format_overrides:
+      - goos: darwin
+        formats:
+          - zip
+      - goos: windows
+        formats:
+          - zip
+      - goos: linux
+        formats:
+          - tar.gz
+    files:
+      - src: man/abaper.1
+        dst: man/abaper.1
+        strip_parent: false
+
+nfpms:
+  - id: abaper
+    package_name: abaper
+    ids:
+      - abaper
+    vendor: Bluefunda
+    maintainer: Bluefunda <support@bluefunda.com>
+    description: Cross-platform CLI for the ABAPer platform.
+    license: Apache-2.0
+    formats:
+      - deb
+      - rpm
+    bindir: /opt/abaper/bin
+    contents:
+      - dst: /opt/abaper/etc
+        type: dir
+      - dst: /opt/abaper/log
+        type: dir
+      - dst: /usr/local/bin/abaper
+        src: /opt/abaper/bin/abaper
+        type: symlink
+      - src: man/abaper.1
+        dst: /usr/share/man/man1/abaper.1
+
+notarize:
+  macos:
+    - enabled: true
+      sign:
+        certificate: "{{ .Env.MACOS_CERTIFICATE }}"
+        password: "{{ .Env.MACOS_CERTIFICATE_PWD }}"
+      notarize:
+        issuer_id: "{{ .Env.NOTARIZATION_ISSUER_ID }}"
+        key_id: "{{ .Env.NOTARIZATION_KEY_ID }}"
+        key: "{{ .Env.NOTARIZATION_KEY }}"
+        wait: true
+        timeout: 10m
+
+homebrew_casks:
+  - name: abaper
+    ids:
+      - abaper
+    binaries:
+      - abaper
+    homepage: https://github.com/bluefunda/abaper
+    description: CLI for the ABAPer platform — ABAP development and deployment tooling
+    directory: Casks
+    repository:
+      owner: bluefunda
+      name: homebrew-tap
+      token: "{{ .Env.HOMEBREW_TAP_TOKEN }}"
+
+checksum:
+  name_template: "checksums.txt"
+  algorithm: sha256
+
+# Software Bill of Materials for every release archive, using syft.
+sboms:
+  - id: archive-sboms
+    artifacts: archive
+
+# Keyless signing (Sigstore/Fulcio via GitHub OIDC) of the checksum manifest.
+# Verifying the signed checksums.txt is sufficient to trust every archive:
+#   cosign verify-blob --certificate-identity-regexp='.*' \
+#     --certificate-oidc-issuer=https://token.actions.githubusercontent.com \
+#     --certificate checksums.txt.pem --signature checksums.txt.sig checksums.txt
+signs:
+  - id: checksum-sign
+    cmd: cosign
+    certificate: "${artifact}.pem"
+    args:
+      - sign-blob
+      - "--yes"
+      - "--output-signature=${signature}"
+      - "--output-certificate=${certificate}"
+      - "${artifact}"
+    artifacts: checksum
+    output: true
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+      - "^ci:"
+      - "^chore:"
+
+release:
+  github:
+    owner: bluefunda
+    name: abaper
+  draft: false
+  replace_existing_draft: true
+  name_template: "ABAPer v{{ .Version }}"
+  header: |
+    ## ABAPer v{{ .Version }}
+
+    CLI and Go SDK for the ABAPer platform.
+
+    ### Installation
+
+    **Homebrew (macOS):**
+    ```bash
+    brew tap bluefunda/tap
+    brew install --cask abaper
+    ```
+
+    **Linux (install script):**
+    ```bash
+    curl -fsSL https://github.com/bluefunda/abaper/releases/latest/download/install.sh | sh
+    ```
+
+    **Debian/Ubuntu (x86_64):**
+    ```bash
+    curl -sL https://github.com/bluefunda/abaper/releases/download/v{{ .Version }}/abaper_{{ .Version }}_linux_amd64.deb -o abaper.deb
+    sudo dpkg -i abaper.deb
+    ```
+
+    **Debian/Ubuntu (ARM64):**
+    ```bash
+    curl -sL https://github.com/bluefunda/abaper/releases/download/v{{ .Version }}/abaper_{{ .Version }}_linux_arm64.deb -o abaper.deb
+    sudo dpkg -i abaper.deb
+    ```
+
+    **RPM-based (x86_64):**
+    ```bash
+    sudo rpm -i https://github.com/bluefunda/abaper/releases/download/v{{ .Version }}/abaper_{{ .Version }}_linux_amd64.rpm
+    ```
+
+    **RPM-based (ARM64):**
+    ```bash
+    sudo rpm -i https://github.com/bluefunda/abaper/releases/download/v{{ .Version }}/abaper_{{ .Version }}_linux_arm64.rpm
+    ```
+
+    **macOS (manual):**
+    ```bash
+    curl -sL https://github.com/bluefunda/abaper/releases/download/v{{ .Version }}/abaper_{{ .Version }}_darwin_arm64.zip -o abaper.zip
+    unzip abaper.zip && chmod +x abaper && sudo mv abaper /usr/local/bin/
+    ```
+
+    **Linux (manual):**
+    ```bash
+    curl -sL https://github.com/bluefunda/abaper/releases/download/v{{ .Version }}/abaper_{{ .Version }}_linux_amd64.tar.gz | tar xz
+    chmod +x abaper && sudo mv abaper /usr/local/bin/
+    ```
+
+snapshot:
+  version_template: "{{ incpatch .Version }}-next"

@@ -1,0 +1,18 @@
+name: Go Review
+
+on:
+  workflow_dispatch:
+    inputs:
+      pr-number:
+        description: 'PR number to review'
+        required: true
+        type: string
+
+jobs:
+  go-review:
+    uses: bluefunda/.github/.github/workflows/go-review.yml@main
+    with:
+      pr-number: ${{ github.event.inputs.pr-number }}
+    secrets:
+      GH_PAT: ${{ secrets.GH_PAT }}
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}

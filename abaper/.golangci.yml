@@ -1,0 +1,19 @@
+version: "2"
+
+linters:
+  enable:
+    - errcheck
+    - staticcheck
+    - unused
+    - govet
+    - ineffassign
+  exclusions:
+    paths:
+      - rest
+      - cli.go
+      - main.go
+    rules:
+      - path: app.go
+        linters: [errcheck, unused]
+      - path: internal/adt/client.go
+        linters: [errcheck, unused, staticcheck]

@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.62.3](https://github.com/bluefunda/bluefunda-ai/compare/v1.62.2...v1.62.3) (2026-11-10)
+
+
+### Bug Fixes
+
+* **abaper:** publish ghcr.io/bluefunda/abaper from this repo ([#372](https://github.com/bluefunda/bluefunda-ai/issues/372)) ([78cbcc3](https://github.com/bluefunda/bluefunda-ai/commit/78cbcc3b1a6aea4d4853be16d1c9779880e1f85f))
+
 ## [1.62.2](https://github.com/bluefunda/bluefunda-ai/compare/v1.62.1...v1.62.2) (2026-11-10)
 
 

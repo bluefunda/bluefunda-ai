@@ -1,7 +1,7 @@
 #!/bin/sh
 set -e
 
-REPO="bluefunda/bluerequests"
+REPO="bluefunda/bluefunda-ai"
 BINARY="breq"
 INSTALL_DIR=""
 

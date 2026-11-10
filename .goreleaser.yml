@@ -38,6 +38,24 @@ builds:
     flags:
       - -trimpath
 
+  # breq — the BlueRequests CLI, built from the same platform core.
+  - id: breq
+    main: ./breq/cmd/breq
+    binary: breq
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - darwin
+      - linux
+    goarch:
+      - amd64
+      - arm64
+    ldflags:
+      - -s -w
+      - -X github.com/bluefunda/bluefunda-ai/internal/cmd.Version={{ .Version }}
+    flags:
+      - -trimpath
+
 archives:
   - id: bai
     ids:
@@ -76,6 +94,22 @@ archives:
       - src: abaper/man/abaper.1
         dst: man/abaper.1
         strip_parent: false
+  - id: breq
+    ids:
+      - breq
+    name_template: "breq_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    formats:
+      - tar.gz
+      - zip
+    format_overrides:
+      - goos: darwin
+        formats:
+          - zip
+      - goos: linux
+        formats:
+          - tar.gz
+    files:
+      - none*
 
 nfpms:
   - id: bai
@@ -122,6 +156,27 @@ nfpms:
         type: symlink
       - src: abaper/man/abaper.1
         dst: /usr/share/man/man1/abaper.1
+  - id: breq
+    package_name: breq
+    file_name_template: "breq_{{ .Os }}_{{ .Arch }}"
+    ids:
+      - breq
+    vendor: BlueFunda
+    maintainer: BlueFunda <support@bluefunda.com>
+    description: Cross-platform CLI for the BlueRequests change and release management platform.
+    license: Apache-2.0
+    formats:
+      - deb
+      - rpm
+    bindir: /opt/breq/bin
+    contents:
+      - dst: /opt/breq/etc
+        type: dir
+      - dst: /opt/breq/log
+        type: dir
+      - dst: /usr/local/bin/breq
+        src: /opt/breq/bin/breq
+        type: symlink
 
 notarize:
   macos:
@@ -148,7 +203,8 @@ brews:
     install: |
       bin.install "bai"
 
-# abaper keeps the cask it has always shipped as (`brew install --cask abaper`).
+# abaper and breq keep the casks they have always shipped as
+# (`brew install --cask abaper`, `brew install --cask breq`).
 homebrew_casks:
   - name: abaper
     ids:
@@ -157,6 +213,18 @@ homebrew_casks:
       - abaper
     homepage: https://github.com/bluefunda/bluefunda-ai
     description: CLI for the ABAPer platform — AI pair programmer for SAP ABAP developers
+    directory: Casks
+    repository:
+      owner: bluefunda
+      name: homebrew-tap
+      token: "{{ .Env.HOMEBREW_TAP_TOKEN }}"
+  - name: breq
+    ids:
+      - breq
+    binaries:
+      - breq
+    homepage: https://github.com/bluefunda/bluefunda-ai/tree/main/breq
+    description: CLI for the BlueRequests change and release management platform
     directory: Casks
     repository:
       owner: bluefunda
@@ -205,7 +273,7 @@ release:
     name: bluefunda-ai
   draft: false
   replace_existing_draft: true
-  name_template: "bai & abaper v{{ .Version }}"
+  name_template: "bai, abaper & breq v{{ .Version }}"
   header: |
     ## BlueFunda AI CLI (bai) v{{ .Version }}
 
@@ -271,6 +339,25 @@ release:
     **Debian/Ubuntu:** `abaper_linux_amd64.deb` / `abaper_linux_arm64.deb` · **RHEL/Fedora:** `abaper_linux_amd64.rpm` / `abaper_linux_arm64.rpm`
 
     **Manual:** `abaper_{{ .Version }}_<os>_<arch>` archives for macOS, Linux and Windows are attached below.
+
+    ## BlueRequests (breq) v{{ .Version }}
+
+    CLI for the BlueRequests change and release management platform, built on the same platform core. Also available as `bai requests`.
+
+    **Homebrew (macOS):**
+    ```bash
+    brew tap bluefunda/tap
+    brew install --cask breq
+    ```
+
+    **One-line installer (macOS and Linux):**
+    ```bash
+    curl -fsSL https://raw.githubusercontent.com/bluefunda/bluefunda-ai/main/breq/install.sh | sh
+    ```
+
+    **Debian/Ubuntu:** `breq_linux_amd64.deb` / `breq_linux_arm64.deb` · **RHEL/Fedora:** `breq_linux_amd64.rpm` / `breq_linux_arm64.rpm`
+
+    **Manual:** `breq_{{ .Version }}_<os>_<arch>` archives for macOS and Linux are attached below.
 
 snapshot:
   version_template: "{{ incpatch .Version }}-next"

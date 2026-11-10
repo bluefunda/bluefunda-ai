@@ -318,19 +318,19 @@ func claimsFromJWT(token string) (*jwtClaims, error) {
 
 // realmFromIssuer extracts the realm name from a Keycloak issuer URL.
 // Expected format: https://auth.example.com/realms/{realm}
-// Falls back to DefaultRealm if parsing fails.
+// Falls back to the product's default realm if parsing fails.
 func realmFromIssuer(issuer string) string {
 	const marker = "/realms/"
 	idx := strings.Index(issuer, marker)
 	if idx == -1 {
-		return config.DefaultRealm
+		return config.ProductRealm()
 	}
 	remaining := issuer[idx+len(marker):]
 	if slashIdx := strings.Index(remaining, "/"); slashIdx != -1 {
 		remaining = remaining[:slashIdx]
 	}
 	if remaining == "" {
-		return config.DefaultRealm
+		return config.ProductRealm()
 	}
 	return remaining
 }

@@ -1,7 +1,7 @@
 // Package app holds the identity of the product binary being run. bai and
 // abaper are built from the same platform core; everything that differs
 // between them at the platform level — config directory, env-var prefix,
-// OAuth client, keychain service, branding — is read from Current().
+// OAuth client, backend, keychain service, branding — is read from Current().
 //
 // A product's main sets its identity once with Set before any other package
 // is used. The zero configuration is bai.
@@ -31,6 +31,11 @@ type Identity struct {
 	HomebrewCask string
 	// Placeholder is the empty-input hint in the chat TUI.
 	Placeholder string
+	// BFFURL and Realm are the product's default gRPC backend and Keycloak
+	// realm. Empty uses the platform defaults (config.DefaultBFFURL,
+	// config.DefaultRealm); config files, env vars and flags still override.
+	BFFURL string
+	Realm  string
 	// Accent / AccentBold override the TUI accent colours (hex, e.g. "#FF5F1F").
 	// Empty keeps the default palette.
 	Accent     string

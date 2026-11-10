@@ -180,6 +180,10 @@ func transportCreds(target string) grpc.DialOption {
 	return grpc.WithTransportCredentials(credentials.NewTLS(&tls.Config{}))
 }
 
+// ClientConn exposes the underlying connection so other service clients
+// (e.g. the TRM BFF) can share its auth interceptors.
+func (c *Conn) ClientConn() grpc.ClientConnInterface { return c.cc }
+
 // Close closes the underlying gRPC connection.
 func (c *Conn) Close() error {
 	return c.cc.Close()

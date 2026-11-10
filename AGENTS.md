@@ -4,9 +4,9 @@ Instructions for AI coding agents working on bluefunda-ai.
 
 ## Project Overview
 
-Go CLIs for the BlueFunda AI platform: `bai`, and `abaper` (the ABAPer brand, built from the same core — see `abaper/AGENTS.md`). Uses Cobra for commands, gRPC for backend communication with a BFF service, and OAuth2 device flow (Keycloak) for authentication.
+Go CLIs for the BlueFunda AI platform: `bai`, `abaper` (the ABAPer brand, built from the same core — see `abaper/AGENTS.md`), and `breq` (BlueRequests change and release management — see `breq/AGENTS.md`). Uses Cobra for commands, gRPC for backend communication with a BFF service, and OAuth2 device flow (Keycloak) for authentication.
 
-Binary names: `bai` (`cmd/bai`), `abaper` (`abaper/cmd/abaper`, built to `bin/abaper`)
+Binary names: `bai` (`cmd/bai`), `abaper` (`abaper/cmd/abaper`, built to `bin/abaper`), `breq` (`breq/cmd/breq`, built to `bin/breq`)
 Module: `github.com/bluefunda/bluefunda-ai`
 Config location: `~/.bai/config.yaml`
 
@@ -45,6 +45,7 @@ cmd/bai/main.go             # Entry point (delegates to internal/cmd.Execute)
 api/proto/
   bff.proto                  # Source-of-truth service definition (DO NOT hand-edit generated files)
   bff/                       # Generated Go code (bff.pb.go, bff_grpc.pb.go)
+  trm/                       # TRM (BlueRequests) BFF proto + generated client for breq / bai requests
 internal/
   cmd/                       # Cobra command tree and CLI logic
     root.go                  # Root command, global flags, loadConfig(), outputFormat()
@@ -62,6 +63,7 @@ internal/
   app/
     app.go                   # Product identity (bai vs abaper): config dir, env prefix, client ID, brand
   abap/                      # SAP ABAP domain: gateway client, SAP systems, ABAP tool pack, verify gate, slash cmds
+  requests/                  # BlueRequests (TRM) domain: TRM connection, A4H sessions (a4h/), dashboard (tui/)
   grpc/
     conn.go                  # gRPC connection, TLS auto-detect, auth interceptors
     conn_test.go             # Transport tests
@@ -94,7 +96,7 @@ scripts/
 - `go.mod` / `go.sum` — Run `make tidy` after any dependency change
 
 ### Do NOT modify
-- `api/proto/bff/*.pb.go` — Generated files. Run `make proto` instead.
+- `api/proto/bff/*.pb.go`, `api/proto/trm/*.pb.go` — Generated files. Run `make proto` instead (it also keeps the TRM client's wire method paths; see `api/proto/trm/requests.proto`).
 - `.github/workflows/*.yml` — CI/CD pipelines (uses shared workflows from `bluefunda/release-foundry`)
 - `cmd/bai/main.go` — Entry point; should remain a 3-line delegation to `internal/cmd.Execute()`
 

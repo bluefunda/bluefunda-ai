@@ -1,0 +1,239 @@
+syntax = "proto3";
+
+// TRM (BlueRequests) BFF API, served at requests.bluefunda.com.
+//
+// The server defines this service as bff.v1.BFFService, the same full name as
+// bai's own BFF (api/proto/bff.proto) but with different messages. To link
+// both into one binary without protobuf registry conflicts, this copy uses its
+// own proto package; scripts/generate-proto.sh rewrites the generated client's
+// method paths back to /bff.v1.BFFService/* so the wire calls are unchanged.
+// Message type names never appear on the wire (no google.protobuf.Any here).
+package trm.bff.v1;
+
+option go_package = "github.com/bluefunda/bluefunda-ai/api/proto/trm";
+
+// BFFService provides backend-for-frontend operations for the TRM platform.
+service BFFService {
+  // User
+  rpc GetUserInfo(GetUserInfoRequest) returns (GetUserInfoResponse);
+
+  // Events (message bus — CLI never hits NATS directly)
+  rpc SubscribeEvents(SubscribeEventsRequest) returns (stream Event);
+  rpc PublishEvent(PublishEventRequest) returns (PublishEventResponse);
+  rpc RequestReply(RequestReplyRequest) returns (RequestReplyResponse);
+
+  // Change Requests
+  rpc ListChangeRequests(ListChangeRequestsRequest) returns (ListChangeRequestsResponse);
+  rpc GetChangeRequest(GetChangeRequestRequest) returns (GetChangeRequestResponse);
+  rpc CreateChangeRequest(CreateChangeRequestRequest) returns (CreateChangeRequestResponse);
+  rpc UpdateChangeRequest(UpdateChangeRequestRequest) returns (UpdateChangeRequestResponse);
+  rpc DeleteChangeRequest(DeleteChangeRequestRequest) returns (DeleteChangeRequestResponse);
+  rpc UpdateChangeRequestStage(UpdateChangeRequestStageRequest) returns (UpdateChangeRequestStageResponse);
+
+  // Comments
+  rpc ListComments(ListCommentsRequest) returns (ListCommentsResponse);
+  rpc AddComment(AddCommentRequest) returns (AddCommentResponse);
+  rpc UpdateComment(UpdateCommentRequest) returns (UpdateCommentResponse);
+  rpc DeleteComment(DeleteCommentRequest) returns (DeleteCommentResponse);
+
+  // A4H on-demand SAP trial sessions (answered by a4h-worker over NATS).
+  // The session belongs to the authenticated user; nothing in the requests
+  // selects whose it is.
+  rpc GetA4HSession(GetA4HSessionRequest) returns (A4HSessionResponse);
+  rpc StartA4HSession(StartA4HSessionRequest) returns (A4HSessionResponse);
+  rpc ExtendA4HSession(ExtendA4HSessionRequest) returns (A4HSessionResponse);
+  rpc TerminateA4HSession(TerminateA4HSessionRequest) returns (A4HSessionResponse);
+}
+
+// ─── User ────────────────────────────────────────────────────────────────────
+
+message GetUserInfoRequest {}
+
+message GetUserInfoResponse {
+  string sub = 1;
+  bool email_verified = 2;
+  string name = 3;
+  string preferred_username = 4;
+  string given_name = 5;
+  string family_name = 6;
+  string email = 7;
+}
+
+// ─── Events ──────────────────────────────────────────────────────────────────
+
+message SubscribeEventsRequest {
+  string subject_pattern = 1;
+}
+
+message Event {
+  string subject = 1;
+  bytes data = 2;
+  string timestamp = 3;
+}
+
+message PublishEventRequest {
+  string subject = 1;
+  bytes data = 2;
+}
+
+message PublishEventResponse {}
+
+message RequestReplyRequest {
+  string subject = 1;
+  bytes data = 2;
+  int64 timeout_ms = 3;
+}
+
+message RequestReplyResponse {
+  bytes data = 1;
+}
+
+// ─── Change Requests ─────────────────────────────────────────────────────────
+
+message ChangeRequest {
+  string id = 1;
+  string description = 2;
+  string status = 3;
+  string request_owner = 4;
+  string request_type = 5;
+  string severity = 6;
+  string assignee = 7;
+  bool archive = 8;
+  string project_id = 9;
+  string created_at = 10;
+  string updated_at = 11;
+}
+
+message ListChangeRequestsRequest {
+  string project_id = 1;
+  string description = 2;
+  string status = 3;
+  string request_type = 4;
+  string severity = 5;
+  string assignee = 6;
+  bool include_archived = 7;
+}
+
+message ListChangeRequestsResponse {
+  repeated ChangeRequest change_requests = 1;
+}
+
+message GetChangeRequestRequest {
+  string id = 1;
+}
+
+message GetChangeRequestResponse {
+  ChangeRequest change_request = 1;
+}
+
+message CreateChangeRequestRequest {
+  string description = 1;
+  string project_id = 2;
+  string request_type = 3;
+  string severity = 4;
+  string assignee = 5;
+}
+
+message CreateChangeRequestResponse {
+  ChangeRequest change_request = 1;
+}
+
+message UpdateChangeRequestRequest {
+  string id = 1;
+  string description = 2;
+  string status = 3;
+  string request_type = 4;
+  string severity = 5;
+  string assignee = 6;
+}
+
+message UpdateChangeRequestResponse {
+  ChangeRequest change_request = 1;
+}
+
+message DeleteChangeRequestRequest {
+  string id = 1;
+}
+
+message DeleteChangeRequestResponse {}
+
+message UpdateChangeRequestStageRequest {
+  string id = 1;
+  string stage = 2;
+}
+
+message UpdateChangeRequestStageResponse {
+  ChangeRequest change_request = 1;
+}
+
+// ─── Comments ────────────────────────────────────────────────────────────────
+
+message Comment {
+  string id = 1;
+  string change_request_id = 2;
+  string message = 3;
+  string created_by = 4;
+  string created_at = 5;
+  string updated_at = 6;
+}
+
+message ListCommentsRequest {
+  string change_request_id = 1;
+}
+
+message ListCommentsResponse {
+  repeated Comment comments = 1;
+}
+
+message AddCommentRequest {
+  string change_request_id = 1;
+  string message = 2;
+}
+
+message AddCommentResponse {
+  Comment comment = 1;
+}
+
+message UpdateCommentRequest {
+  string id = 1;
+  string message = 2;
+}
+
+message UpdateCommentResponse {
+  Comment comment = 1;
+}
+
+message DeleteCommentRequest {
+  string id = 1;
+}
+
+message DeleteCommentResponse {}
+
+// ── A4H sessions ─────────────────────────────────────────────────────────────
+
+message GetA4HSessionRequest {}
+
+// Starts the caller's session, or returns the one already running.
+message StartA4HSessionRequest {}
+
+// Extends the running session by one hour.
+message ExtendA4HSessionRequest {}
+
+// Ends the session and deletes its system.
+message TerminateA4HSessionRequest {}
+
+message A4HSession {
+  // none, provisioning_vm, vm_running, waiting_for_sap, sap_running,
+  // terminating or terminated. sap_running means the system is usable.
+  string state = 1;
+  string instance_name = 2;
+  // Set from vm_running on.
+  string public_ip = 3;
+  // RFC 3339; empty until the session is running.
+  string deadline = 4;
+  string last_active_at = 5;
+}
+
+message A4HSessionResponse {
+  A4HSession session = 1;
+}

@@ -20,4 +20,6 @@ FROM alpine:3.21
 RUN apk --no-cache add ca-certificates man-db
 COPY --from=builder /abaper /usr/local/bin/abaper
 COPY abaper/man/abaper.1 /usr/local/share/man/man1/abaper.1
+# Links the GHCR package to this repo (bluefunda/abaper, its old source, is archived).
+LABEL org.opencontainers.image.source="https://github.com/bluefunda/bluefunda-ai"
 ENTRYPOINT ["abaper"]

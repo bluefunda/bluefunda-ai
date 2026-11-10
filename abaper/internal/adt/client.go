@@ -47,8 +47,15 @@ const (
 	includesCreateEndpoint       = "/programs/includes"
 )
 
-// ErrNotFound is returned when an ADT object does not exist (HTTP 404).
-var ErrNotFound = errors.New("object not found")
+var (
+	// ErrNotFound is returned when an ADT object does not exist (HTTP 404).
+	ErrNotFound = errors.New("object not found")
+	// ErrSAPUnreachable is returned when the SAP host can't be reached at all:
+	// DNS, connection refused, TLS or timeout.
+	ErrSAPUnreachable = errors.New("SAP system unreachable")
+	// ErrSAPAuthFailed is returned when SAP rejects the credentials on login (HTTP 401/403).
+	ErrSAPAuthFailed = errors.New("SAP rejected the credentials")
+)
 
 // ADTClientImpl implements the ADTClient interface using shared types
 type ADTClientImpl struct {
@@ -1454,7 +1461,7 @@ func (c *ADTClientImpl) testConnectivity() error {
 
 	resp, err := client.Do(req)
 	if err != nil {
-		return fmt.Errorf("connectivity test failed: %w", err)
+		return fmt.Errorf("%w: %w", ErrSAPUnreachable, err)
 	}
 	defer resp.Body.Close()
 
@@ -1481,12 +1488,12 @@ func (c *ADTClientImpl) performLogin() error {
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		return fmt.Errorf("login request failed: %w", err)
+		return fmt.Errorf("login request failed: %w: %w", ErrSAPUnreachable, err)
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode == http.StatusUnauthorized {
-		return fmt.Errorf("authentication failed: invalid credentials")
+	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
+		return fmt.Errorf("%w: HTTP %d", ErrSAPAuthFailed, resp.StatusCode)
 	}
 
 	if resp.StatusCode != http.StatusOK {

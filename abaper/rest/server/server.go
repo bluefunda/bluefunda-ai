@@ -1,12 +1,16 @@
 package server
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"net"
 	"net/http"
 	"strings"
 	"time"
 
+	"github.com/bluefunda/bluefunda-ai/abaper/internal/adt"
 	"github.com/bluefunda/bluefunda-ai/abaper/rest/models"
 	"github.com/bluefunda/bluefunda-ai/abaper/types"
 	"go.uber.org/zap"
@@ -65,6 +69,10 @@ func NewRestServerWithPool(config *Config, logger *zap.Logger, pool *Pool, fallb
 	return rs
 }
 
+// errNoSAPCredentials is returned when a request carries no SAP credentials
+// and the server has no static client.
+var errNoSAPCredentials = errors.New("no ADT client configured and no X-SAP-* headers provided")
+
 // clientForRequest returns the ADT client to use for this request.
 // If X-SAP-* headers are present and a pool is configured, a pooled client is
 // returned. Otherwise falls back to the static client.
@@ -90,7 +98,7 @@ func (rs *RestServer) clientForRequest(r *http.Request) (types.ADTClient, error)
 	}
 
 	if rs.adtClient == nil {
-		return nil, fmt.Errorf("no ADT client configured and no X-SAP-* headers provided")
+		return nil, errNoSAPCredentials
 	}
 	return rs.adtClient, nil
 }
@@ -196,6 +204,34 @@ func (rs *RestServer) sendError(w http.ResponseWriter, message string, statusCod
 	json.NewEncoder(w).Encode(response)
 }
 
+// sendClientError reports a clientForRequest failure. Only a real SAP
+// credential problem is a 401: abaper-gw also answers 401 for a rejected
+// BlueFunda token, so an unreachable SAP host must not look like one.
+func (rs *RestServer) sendClientError(w http.ResponseWriter, err error) {
+	status, code := clientErrorStatus(err)
+	rs.logger.Warn("API error", zap.Error(err), zap.Int("status", status), zap.String("code", code))
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	json.NewEncoder(w).Encode(models.APIResponse[any]{Success: false, Error: err.Error(), Code: code})
+}
+
+// clientErrorStatus maps a clientForRequest error to an HTTP status and error code.
+func clientErrorStatus(err error) (int, string) {
+	var netErr net.Error
+	switch {
+	case errors.Is(err, errNoSAPCredentials):
+		return http.StatusUnauthorized, "sap_credentials_missing"
+	case errors.Is(err, adt.ErrSAPAuthFailed):
+		return http.StatusUnauthorized, "sap_auth_failed"
+	case errors.Is(err, adt.ErrSAPUnreachable) && (errors.Is(err, context.DeadlineExceeded) || errors.As(err, &netErr) && netErr.Timeout()):
+		return http.StatusGatewayTimeout, "sap_timeout"
+	case errors.Is(err, adt.ErrSAPUnreachable):
+		return http.StatusBadGateway, "sap_unreachable"
+	default:
+		return http.StatusBadGateway, "sap_error"
+	}
+}
+
 // getObjectHandler handles object retrieval requests (CLI get command equivalent)
 func (rs *RestServer) getObjectHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method != "POST" {
@@ -216,7 +252,7 @@ func (rs *RestServer) getObjectHandler(w http.ResponseWriter, r *http.Request) {
 
 	c, err := rs.clientForRequest(r)
 	if err != nil {
-		rs.sendError(w, err.Error(), http.StatusUnauthorized)
+		rs.sendClientError(w, err)
 		return
 	}
 
@@ -297,7 +333,7 @@ func (rs *RestServer) createObjectHandler(w http.ResponseWriter, r *http.Request
 
 	c, err := rs.clientForRequest(r)
 	if err != nil {
-		rs.sendError(w, err.Error(), http.StatusUnauthorized)
+		rs.sendClientError(w, err)
 		return
 	}
 
@@ -501,7 +537,7 @@ func (rs *RestServer) searchObjectsHandler(w http.ResponseWriter, r *http.Reques
 
 	c, err := rs.clientForRequest(r)
 	if err != nil {
-		rs.sendError(w, err.Error(), http.StatusUnauthorized)
+		rs.sendClientError(w, err)
 		return
 	}
 
@@ -542,7 +578,7 @@ func (rs *RestServer) listObjectsHandler(w http.ResponseWriter, r *http.Request)
 
 	c, err := rs.clientForRequest(r)
 	if err != nil {
-		rs.sendError(w, err.Error(), http.StatusUnauthorized)
+		rs.sendClientError(w, err)
 		return
 	}
 
@@ -611,7 +647,7 @@ func (rs *RestServer) packageContentsHandler(w http.ResponseWriter, r *http.Requ
 	}
 	c, err := rs.clientForRequest(r)
 	if err != nil {
-		rs.sendError(w, err.Error(), http.StatusUnauthorized)
+		rs.sendClientError(w, err)
 		return
 	}
 	result, err := c.GetNodeContents(r.Context(), packageName)
@@ -638,7 +674,7 @@ func (rs *RestServer) saveObjectHandler(w http.ResponseWriter, r *http.Request) 
 	}
 	c, err := rs.clientForRequest(r)
 	if err != nil {
-		rs.sendError(w, err.Error(), http.StatusUnauthorized)
+		rs.sendClientError(w, err)
 		return
 	}
 	objectType := strings.ToUpper(req.ObjectType)
@@ -745,7 +781,7 @@ func (rs *RestServer) activateObjectHandler(w http.ResponseWriter, r *http.Reque
 	}
 	c, err := rs.clientForRequest(r)
 	if err != nil {
-		rs.sendError(w, err.Error(), http.StatusUnauthorized)
+		rs.sendClientError(w, err)
 		return
 	}
 	objectType := strings.ToUpper(req.ObjectType)
@@ -800,7 +836,7 @@ func (rs *RestServer) publishServiceBindingHandler(w http.ResponseWriter, r *htt
 	}
 	c, err := rs.clientForRequest(r)
 	if err != nil {
-		rs.sendError(w, err.Error(), http.StatusUnauthorized)
+		rs.sendClientError(w, err)
 		return
 	}
 	objectName := strings.ToUpper(req.ObjectName)
@@ -828,7 +864,7 @@ func (rs *RestServer) syntaxCheckHandler(w http.ResponseWriter, r *http.Request)
 	}
 	c, err := rs.clientForRequest(r)
 	if err != nil {
-		rs.sendError(w, err.Error(), http.StatusUnauthorized)
+		rs.sendClientError(w, err)
 		return
 	}
 	result, err := c.SyntaxCheck(r.Context(), strings.ToUpper(req.ObjectType), strings.ToUpper(req.ObjectName), req.Source)
@@ -855,7 +891,7 @@ func (rs *RestServer) formatSourceHandler(w http.ResponseWriter, r *http.Request
 	}
 	c, err := rs.clientForRequest(r)
 	if err != nil {
-		rs.sendError(w, err.Error(), http.StatusUnauthorized)
+		rs.sendClientError(w, err)
 		return
 	}
 	formatted, err := c.FormatSource(r.Context(), req.Source)
@@ -882,7 +918,7 @@ func (rs *RestServer) completionHandler(w http.ResponseWriter, r *http.Request) 
 	}
 	c, err := rs.clientForRequest(r)
 	if err != nil {
-		rs.sendError(w, err.Error(), http.StatusUnauthorized)
+		rs.sendClientError(w, err)
 		return
 	}
 	proposals, err := c.GetCompletionProposals(r.Context(), strings.ToUpper(req.ObjectType), strings.ToUpper(req.ObjectName), req.Source, req.Line, req.Column)
@@ -909,7 +945,7 @@ func (rs *RestServer) navigationHandler(w http.ResponseWriter, r *http.Request) 
 	}
 	c, err := rs.clientForRequest(r)
 	if err != nil {
-		rs.sendError(w, err.Error(), http.StatusUnauthorized)
+		rs.sendClientError(w, err)
 		return
 	}
 	target, err := c.GetNavigationTarget(r.Context(), strings.ToUpper(req.ObjectType), strings.ToUpper(req.ObjectName), req.Source, req.Line, req.Column)
@@ -936,7 +972,7 @@ func (rs *RestServer) unitTestsHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	c, err := rs.clientForRequest(r)
 	if err != nil {
-		rs.sendError(w, err.Error(), http.StatusUnauthorized)
+		rs.sendClientError(w, err)
 		return
 	}
 	result, err := c.RunUnitTests(r.Context(), strings.ToUpper(req.ObjectType), strings.ToUpper(req.ObjectName))
@@ -963,7 +999,7 @@ func (rs *RestServer) transportInfoHandler(w http.ResponseWriter, r *http.Reques
 	}
 	c, err := rs.clientForRequest(r)
 	if err != nil {
-		rs.sendError(w, err.Error(), http.StatusUnauthorized)
+		rs.sendClientError(w, err)
 		return
 	}
 	result, err := c.GetTransportInfo(r.Context(), strings.ToUpper(req.ObjectType), strings.ToUpper(req.ObjectName))
@@ -990,7 +1026,7 @@ func (rs *RestServer) createTransportHandler(w http.ResponseWriter, r *http.Requ
 	}
 	c, err := rs.clientForRequest(r)
 	if err != nil {
-		rs.sendError(w, err.Error(), http.StatusUnauthorized)
+		rs.sendClientError(w, err)
 		return
 	}
 	transportNumber, err := c.CreateTransport(r.Context(), strings.ToUpper(req.ObjectType), strings.ToUpper(req.ObjectName), req.Description, strings.ToUpper(req.Package))
@@ -1016,7 +1052,7 @@ func (rs *RestServer) connectHandler(w http.ResponseWriter, r *http.Request) {
 
 	c, err := rs.clientForRequest(r)
 	if err != nil {
-		rs.sendError(w, err.Error(), http.StatusUnauthorized)
+		rs.sendClientError(w, err)
 		return
 	}
 

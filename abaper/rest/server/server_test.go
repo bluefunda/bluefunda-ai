@@ -4,10 +4,15 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"testing"
 
+	"github.com/bluefunda/bluefunda-ai/abaper/internal/adt"
+	"github.com/bluefunda/bluefunda-ai/abaper/rest/models"
 	"github.com/bluefunda/bluefunda-ai/abaper/types"
 	"go.uber.org/zap"
 )
@@ -393,7 +398,88 @@ func TestGetObjectHandler(t *testing.T) {
 		if rec.Code != http.StatusUnauthorized {
 			t.Fatalf("expected 401, got %d: %s", rec.Code, rec.Body.String())
 		}
+		if code := decodeAPI(t, rec).Code; code != "sap_credentials_missing" {
+			t.Errorf("code = %q", code)
+		}
 	})
+}
+
+// --- SAP connection failures (#371) ---
+
+type timeoutError struct{}
+
+func (timeoutError) Error() string   { return "i/o timeout" }
+func (timeoutError) Timeout() bool   { return true }
+func (timeoutError) Temporary() bool { return true }
+
+func TestClientErrorStatus(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		err    error
+		status int
+		code   string
+	}{
+		{"no credentials", errNoSAPCredentials, http.StatusUnauthorized, "sap_credentials_missing"},
+		{"credentials rejected", fmt.Errorf("authenticate h: login failed: %w: HTTP 401", adt.ErrSAPAuthFailed), http.StatusUnauthorized, "sap_auth_failed"},
+		{"unreachable", fmt.Errorf("authenticate h: %w: %w", adt.ErrSAPUnreachable, errors.New("no such host")), http.StatusBadGateway, "sap_unreachable"},
+		{"timeout", fmt.Errorf("authenticate h: %w: %w", adt.ErrSAPUnreachable, &url.Error{Op: "Head", URL: "h", Err: timeoutError{}}), http.StatusGatewayTimeout, "sap_timeout"},
+		{"deadline", fmt.Errorf("%w: %w", adt.ErrSAPUnreachable, context.DeadlineExceeded), http.StatusGatewayTimeout, "sap_timeout"},
+		{"other SAP failure", errors.New("CSRF token retrieval failed: HTTP 500"), http.StatusBadGateway, "sap_error"},
+	} {
+		if status, code := clientErrorStatus(tc.err); status != tc.status || code != tc.code {
+			t.Errorf("%s: got %d %q, want %d %q", tc.name, status, code, tc.status, tc.code)
+		}
+	}
+}
+
+// TestPooledClientErrors drives the real pool and ADT login against a fake SAP host.
+func TestPooledClientErrors(t *testing.T) {
+	rejecting := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodHead {
+			return // connectivity test passes
+		}
+		w.WriteHeader(http.StatusUnauthorized)
+	}))
+	t.Cleanup(rejecting.Close)
+	down := httptest.NewServer(http.NotFoundHandler())
+	downURL := down.URL
+	down.Close() // connection refused
+
+	for _, tc := range []struct {
+		name, host string
+		status     int
+		code       string
+	}{
+		{"SAP unreachable", downURL, http.StatusBadGateway, "sap_unreachable"},
+		{"SAP rejects credentials", rejecting.URL, http.StatusUnauthorized, "sap_auth_failed"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			rs := NewRestServerWithPool(&Config{}, zap.NewNop(), NewPool(0, zap.NewNop()), nil)
+			body, _ := json.Marshal(map[string]string{"object_type": "program", "object_name": "ZX"})
+			req := httptest.NewRequest(http.MethodPost, "/api/v1/objects/get", bytes.NewReader(body))
+			req.Header.Set("Content-Type", "application/json")
+			req.Header.Set("X-SAP-Host", tc.host)
+			req.Header.Set("X-SAP-User", "DEV")
+			req.Header.Set("X-SAP-Password", "pw")
+			rec := httptest.NewRecorder()
+			rs.Handler().ServeHTTP(rec, req)
+			if rec.Code != tc.status {
+				t.Fatalf("status = %d, want %d: %s", rec.Code, tc.status, rec.Body.String())
+			}
+			if resp := decodeAPI(t, rec); resp.Code != tc.code || resp.Success {
+				t.Errorf("response = %+v, want code %q", resp, tc.code)
+			}
+		})
+	}
+}
+
+func decodeAPI(t *testing.T, rec *httptest.ResponseRecorder) models.APIResponse[any] {
+	t.Helper()
+	var resp models.APIResponse[any]
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode %q: %v", rec.Body.String(), err)
+	}
+	return resp
 }
 
 // --- objects/create ---

@@ -111,6 +111,68 @@ func init() {
 // system can't stall the report.
 const systemCheckTimeout = 5 * time.Second
 
+// abapSystemStatus is one SAP system's line in `status`.
+type abapSystemStatus struct {
+	Name      string `json:"name"`
+	Host      string `json:"host"`
+	Active    bool   `json:"active"`
+	Reachable bool   `json:"reachable"`
+	Error     string `json:"error,omitempty"`
+}
+
+// abapStatusReport is what `status` prints, and its JSON output.
+type abapStatusReport struct {
+	SignedIn         bool               `json:"signedIn"`
+	SessionExpired   bool               `json:"sessionExpired"`
+	Gateway          string             `json:"gateway"`
+	GatewayReachable bool               `json:"gatewayReachable"`
+	GatewayStatus    string             `json:"gatewayStatus,omitempty"`
+	Systems          []abapSystemStatus `json:"systems"`
+}
+
+// collectABAPStatus checks the session, the gateway and every SAP system.
+// c is nil when there is no stored session. A session counts as expired when
+// its token can't be obtained or refreshed. The gateway is checked either way;
+// SAP systems need a session, so without one they are listed but not checked.
+func collectABAPStatus(c *abap.Client, gateway, realm string, reg *abap.Systems) abapStatusReport {
+	status := abapStatusReport{Gateway: gateway, Systems: []abapSystemStatus{}}
+	if c == nil {
+		c = abap.NewClient(gateway, realm, nil, nil)
+	} else if _, err := c.TokenFunc(); err != nil {
+		status.SessionExpired = true
+		anon := *c
+		anon.TokenFunc = nil // don't retry the failed refresh for the health check
+		c = &anon
+	} else {
+		status.SignedIn = true
+	}
+	if st, err := c.Health(); err == nil {
+		status.GatewayReachable, status.GatewayStatus = true, st
+	}
+
+	active := reg.ActiveSystem()
+	status.Systems = make([]abapSystemStatus, len(reg.Systems))
+	var wg sync.WaitGroup
+	for i := range reg.Systems {
+		sys := &reg.Systems[i]
+		status.Systems[i] = abapSystemStatus{Name: sys.Name, Host: sys.Host, Active: active != nil && sys.ID == active.ID}
+		if !status.SignedIn {
+			continue
+		}
+		wg.Add(1)
+		go func(st *abapSystemStatus) {
+			defer wg.Done()
+			if err := c.WithSystem(sys, systemCheckTimeout).Connect(); err != nil {
+				st.Error = err.Error()
+				return
+			}
+			st.Reachable = true
+		}(&status.Systems[i])
+	}
+	wg.Wait()
+	return status
+}
+
 func abapStatusCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "status",
@@ -119,53 +181,29 @@ func abapStatusCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cfg := loadConfig()
 			p := printer(cfg)
-			type systemStatus struct {
-				Name      string `json:"name"`
-				Host      string `json:"host"`
-				Active    bool   `json:"active"`
-				Reachable bool   `json:"reachable"`
-				Error     string `json:"error,omitempty"`
-			}
-			status := struct {
-				SignedIn         bool           `json:"signedIn"`
-				Gateway          string         `json:"gateway"`
-				GatewayReachable bool           `json:"gatewayReachable"`
-				GatewayStatus    string         `json:"gatewayStatus,omitempty"`
-				Systems          []systemStatus `json:"systems"`
-			}{SignedIn: cfg.Auth.AccessToken != "", Gateway: abap.GatewayURL(), Systems: []systemStatus{}}
-
 			reg, err := abap.LoadSystems()
 			if err != nil {
 				return err
 			}
-			if c, err := newABAPClient(); err == nil {
-				if st, err := c.Health(); err == nil {
-					status.GatewayReachable, status.GatewayStatus = true, st
-				}
-				active := reg.ActiveSystem()
-				status.Systems = make([]systemStatus, len(reg.Systems))
-				var wg sync.WaitGroup
-				for i := range reg.Systems {
-					sys := &reg.Systems[i]
-					status.Systems[i] = systemStatus{Name: sys.Name, Host: sys.Host, Active: active != nil && sys.ID == active.ID}
-					wg.Add(1)
-					go func(st *systemStatus) {
-						defer wg.Done()
-						if err := c.WithSystem(sys, systemCheckTimeout).Connect(); err != nil {
-							st.Error = err.Error()
-							return
-						}
-						st.Reachable = true
-					}(&status.Systems[i])
-				}
-				wg.Wait()
+			c, err := newABAPClient()
+			if err != nil {
+				c = nil // no stored session
 			}
+			status := collectABAPStatus(c, abap.GatewayURL(), cfg.Realm, reg)
 
 			if p.Format == ui.FormatJSON {
 				p.JSON(status)
 				return nil
 			}
-			fmt.Printf("Signed in:        %v\n", status.SignedIn)
+			login := app.Current().Name + " login"
+			signedIn := "true"
+			switch {
+			case status.SessionExpired:
+				signedIn = fmt.Sprintf("false (session expired — run `%s`)", login)
+			case !status.SignedIn:
+				signedIn = fmt.Sprintf("false (run `%s`)", login)
+			}
+			fmt.Printf("Signed in:        %s\n", signedIn)
 			fmt.Printf("Gateway:          %s (reachable: %v)\n", status.Gateway, status.GatewayReachable)
 			if len(reg.Systems) == 0 {
 				fmt.Printf("SAP systems:      none — add one with `%s`\n", abap.SystemAddHint())
@@ -177,7 +215,10 @@ func abapStatusCmd() *cobra.Command {
 				if s.Active {
 					mark = "*"
 				}
-				if !s.Reachable {
+				switch {
+				case !status.SignedIn:
+					state = "not checked (sign in first)"
+				case !s.Reachable:
 					state = "unreachable " + s.Error
 				}
 				rows = append(rows, []string{s.Name, s.Host, mark, state})

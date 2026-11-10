@@ -2,6 +2,7 @@ package abap
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -47,6 +48,8 @@ func (g *fakeGateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewEncoder(w).Encode(map[string]any{"success": true, "data": data})
 	}
 	switch r.URL.Path {
+	case "/abaper/health":
+		_ = json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
 	case "/abaper/api/v1/system/connect":
 		w.WriteHeader(http.StatusOK)
 	case "/abaper/api/v1/objects/search":
@@ -113,6 +116,24 @@ func TestClient_SendsAuthAndSAPHeaders(t *testing.T) {
 		if got := g.headers.Get(k); got != v {
 			t.Errorf("header %s = %q, want %q", k, got, v)
 		}
+	}
+}
+
+func TestHealth_TokenOptional(t *testing.T) {
+	c, g := newTestClient(t)
+	if st, err := c.Health(); err != nil || st != "ok" || g.headers.Get("Authorization") != "Bearer tok" {
+		t.Errorf("signed in: status %q, err %v, auth %q", st, err, g.headers.Get("Authorization"))
+	}
+	c.TokenFunc = func() (string, error) { return "", errors.New("token refresh failed") }
+	if st, err := c.Health(); err != nil || st != "ok" {
+		t.Errorf("expired session: status %q, err %v — the gateway is reachable without a token", st, err)
+	}
+	if a := g.headers.Get("Authorization"); a != "" {
+		t.Errorf("expired session sent Authorization %q", a)
+	}
+	c.TokenFunc = nil
+	if _, err := c.Health(); err != nil {
+		t.Errorf("no token source: %v", err)
 	}
 }
 

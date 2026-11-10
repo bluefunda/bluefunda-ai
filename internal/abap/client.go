@@ -210,16 +210,19 @@ type TestMethodResult struct {
 // ── Endpoints ────────────────────────────────────────────────────────────────
 
 // Health reports the gateway's own status. It needs no SAP system.
+//
+// The health endpoint doesn't need a token, so one is sent only when
+// available: gateway reachability doesn't depend on the sign-in state.
 func (c *Client) Health() (string, error) {
-	token, err := c.TokenFunc()
-	if err != nil {
-		return "", err
-	}
 	req, err := http.NewRequest(http.MethodGet, c.BaseURL+"/abaper/health", nil)
 	if err != nil {
 		return "", err
 	}
-	req.Header.Set("Authorization", "Bearer "+token)
+	if c.TokenFunc != nil {
+		if token, err := c.TokenFunc(); err == nil && token != "" {
+			req.Header.Set("Authorization", "Bearer "+token)
+		}
+	}
 	req.Header.Set("X-Realm", c.Realm)
 	resp, err := c.HTTPClient.Do(req)
 	if err != nil {

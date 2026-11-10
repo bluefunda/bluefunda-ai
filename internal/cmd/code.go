@@ -935,7 +935,7 @@ func agenticLoopTUI(
 		rateLimitRetries = 0
 
 		// Pump this iteration's stream into ch, collecting tool calls.
-		toolCalls, usage, err := pumpCodeStream(stream, cancel, ch)
+		toolCalls, text, usage, err := pumpCodeStream(stream, cancel, ch)
 		if usage.PromptTokens > 0 {
 			lastPromptTokens = usage.PromptTokens
 		}
@@ -1000,7 +1000,12 @@ func agenticLoopTUI(
 			}
 		}
 
+		// Keep the assistant's text in history: without it, the next request
+		// shows earlier questions as unanswered and the model goes back to them (#390).
 		if len(toolCalls) == 0 {
+			if text != "" {
+				history = append(history, codeMessage{Role: "assistant", Content: text})
+			}
 			if stopRes := hookRunner.Stop(); stopRes.Block {
 				msg := stopRes.SystemMessage
 				if msg == "" {
@@ -1014,7 +1019,7 @@ func agenticLoopTUI(
 		}
 
 		// Build assistant tool-call turn in history
-		assistantMsg := codeMessage{Role: "assistant"}
+		assistantMsg := codeMessage{Role: "assistant", Content: text}
 		for _, tc := range toolCalls {
 			assistantMsg.ToolCalls = append(assistantMsg.ToolCalls, codeToolCall{
 				ID:       tc.ID,
@@ -1065,42 +1070,48 @@ type iterationUsage struct {
 }
 
 // pumpCodeStream reads a gRPC stream for one agentic iteration, forwarding
-// content/tool events to ch and collecting tool_call events for return.
+// content/tool events to ch. It returns the tool calls and the assistant text
+// it forwarded, so the caller can keep both in history.
 func pumpCodeStream(
 	stream interface {
 		Recv() (*pb.ChatEvent, error)
 	},
 	cancelFn context.CancelFunc,
 	ch chan<- tui.StreamEvent,
-) ([]ui.ToolCallEvent, iterationUsage, error) {
+) ([]ui.ToolCallEvent, string, iterationUsage, error) {
 	defer cancelFn()
 	tf := &tui.ExportedThinkFilter{}
 	var toolCalls []ui.ToolCallEvent
+	var text strings.Builder
+	chunk := func(s string) {
+		text.WriteString(s)
+		ch <- tui.StreamEvent{Kind: "chunk", Chunk: s}
+	}
 
 	for {
 		ev, err := stream.Recv()
 		if err != nil {
 			if err == io.EOF {
 				if tail := tf.Flush(); tail != "" {
-					ch <- tui.StreamEvent{Kind: "chunk", Chunk: tail}
+					chunk(tail)
 				}
-				return toolCalls, iterationUsage{}, nil
+				return toolCalls, text.String(), iterationUsage{}, nil
 			}
-			return toolCalls, iterationUsage{}, fmt.Errorf("stream recv: %w", err)
+			return toolCalls, text.String(), iterationUsage{}, fmt.Errorf("stream recv: %w", err)
 		}
 
 		switch ev.GetType() {
 		case "content", "stream_chunk":
 			filtered := tf.Filter(ev.GetContent())
 			if filtered != "" {
-				ch <- tui.StreamEvent{Kind: "chunk", Chunk: filtered}
+				chunk(filtered)
 			}
 
 		case "done", "stream_end":
 			if tail := tf.Flush(); tail != "" {
-				ch <- tui.StreamEvent{Kind: "chunk", Chunk: tail}
+				chunk(tail)
 			}
-			return toolCalls, iterationUsage{
+			return toolCalls, text.String(), iterationUsage{
 				PromptTokens:     ev.GetUsagePromptTokens(),
 				CompletionTokens: ev.GetUsageCompletionTokens(),
 			}, nil
@@ -1135,7 +1146,7 @@ func pumpCodeStream(
 			}
 
 		case "error", "stream_error":
-			return toolCalls, iterationUsage{}, fmt.Errorf("%s", ev.GetError())
+			return toolCalls, text.String(), iterationUsage{}, fmt.Errorf("%s", ev.GetError())
 
 		case "tool_call":
 			var tc ui.ToolCallEvent

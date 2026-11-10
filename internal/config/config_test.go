@@ -877,10 +877,19 @@ func TestProductDefaults_IdentityOverrides(t *testing.T) {
 // A ~/.breq/config.yaml written by the standalone breq CLI (v1.9) must keep
 // working, so existing users stay signed in after the move.
 func TestLoad_StandaloneBreqConfig(t *testing.T) {
+	for _, withKeychain := range []bool{false, true} {
+		t.Run(map[bool]string{false: "file", true: "keychain"}[withKeychain], func(t *testing.T) {
+			testLoadStandaloneBreqConfig(t, withKeychain)
+		})
+	}
+}
+
+func testLoadStandaloneBreqConfig(t *testing.T, withKeychain bool) {
 	home := withTempHome(t)
 	withIdentity(t, requestsLike)
 	orig := keychain.Default
-	keychain.SetBackend(newMockKeychain(false))
+	kc := newMockKeychain(withKeychain)
+	keychain.SetBackend(kc)
 	defer keychain.SetBackend(orig)
 
 	expiry := time.Now().Add(time.Hour).UTC().Truncate(time.Second)
@@ -907,5 +916,20 @@ func TestLoad_StandaloneBreqConfig(t *testing.T) {
 	}
 	if !cfg.TokenValid() {
 		t.Error("an unexpired breq token must stay valid")
+	}
+
+	// Saving moves the tokens to the keychain when there is one, and still
+	// loads back the same session.
+	if err := Save(cfg); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	if withKeychain {
+		if got, _ := kc.Get("access_token"); got != "at-123" {
+			t.Errorf("keychain access_token = %q", got)
+		}
+	}
+	again, err := Load()
+	if err != nil || again.Auth.AccessToken != "at-123" || again.Auth.RefreshToken != "rt-456" {
+		t.Errorf("reload after save: %+v, %v", again.Auth, err)
 	}
 }

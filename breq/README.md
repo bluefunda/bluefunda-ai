@@ -49,7 +49,7 @@ sudo dnf install https://github.com/bluefunda/bluerequests/releases/latest/downl
 ### From source
 
 ```bash
-go install github.com/bluefunda/bluerequests/cmd/breq@latest
+go install github.com/bluefunda/bluefunda-ai/breq/cmd/breq@latest
 ```
 
 ### Manual download
@@ -207,54 +207,18 @@ defaults:
 | Variable | Description |
 |----------|-------------|
 | `BREQ_INSTALL_DIR` | Custom install directory for `install.sh` |
-| `BLUEFUNDA_TOKEN` | Bearer token (alternative to `breq login`) |
+| `BREQ_ACCESS_TOKEN` | Bearer token for CI (alternative to `breq login`) |
+| `BREQ_BFF` / `BREQ_REALM` / `BREQ_DOMAIN` | Override the BFF endpoint, Keycloak realm or auth domain |
+| `BREQ_NO_KEYCHAIN=1` | Store tokens encrypted in `~/.breq/config.yaml` instead of the OS keychain |
 
 ## Development
 
-### Prerequisites
-
-- Go 1.25+
-- `protoc` + `protoc-gen-go` + `protoc-gen-go-grpc` (for proto regeneration)
-- [goreleaser](https://goreleaser.com/) (for releases)
-
-### Build
+breq is built from the [bluefunda-ai](https://github.com/bluefunda/bluefunda-ai) repository, alongside `bai` and `abaper`. See [AGENTS.md](AGENTS.md) for where the code lives.
 
 ```bash
-make build      # Build breq binary
-make test       # Run tests with race detector
-make vet        # Run go vet
-make fmt        # Format code
-make snapshot   # Build release snapshot with goreleaser
-```
-
-### Project Layout
-
-```
-bluerequests/
-├── cmd/breq/          # Entry point
-├── internal/
-│   ├── a4h/          # A4H session states, steps, polling, formatting (shared by cmd and tui)
-│   ├── auth/         # OAuth2 device flow (RFC 8628)
-│   ├── cmd/          # Cobra command definitions
-│   ├── config/       # Config loader (~/.breq/config.yaml)
-│   ├── grpc/         # gRPC connection + interceptors
-│   ├── tui/          # BubbleTea TUI dashboard
-│   └── ui/           # Output formatting
-├── api/proto/        # Protobuf definitions + generated code
-└── scripts/          # Build utilities
-```
-
-### Regenerate Protobuf
-
-```bash
-make proto
-```
-
-### Running Tests
-
-```bash
-make test           # All tests with race detector
-make test-cover     # Tests + coverage report
+make build      # Builds bai, bin/abaper and bin/breq
+make test       # All tests with the race detector
+make proto      # Regenerate protobuf code (bai and TRM BFF)
 ```
 
 ## Releases
@@ -268,11 +232,11 @@ See [CHANGELOG.md](CHANGELOG.md) for the full release history.
 
 ## Contributing
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) for development workflow, code style, and how to submit pull requests.
+See [CONTRIBUTING.md](../CONTRIBUTING.md) for development workflow, code style, and how to submit pull requests.
 
 ## Security
 
-To report a security vulnerability, see [SECURITY.md](SECURITY.md).
+To report a security vulnerability, see [SECURITY.md](../SECURITY.md).
 
 ## License
 

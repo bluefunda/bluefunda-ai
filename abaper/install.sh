@@ -73,9 +73,9 @@ curl -fsSL "${BASE_URL}/checksums.txt"  -o "${TMPDIR}/checksums.txt"
 # Verify checksum
 cd "$TMPDIR"
 if [ "$OS" = "darwin" ]; then
-  grep "${ARCHIVE}" checksums.txt | shasum -a 256 -c --quiet || die "Checksum verification failed"
+  grep "  ${ARCHIVE}\$" checksums.txt | shasum -a 256 -c --quiet || die "Checksum verification failed"
 else
-  grep "${ARCHIVE}" checksums.txt | sha256sum -c --quiet || die "Checksum verification failed"
+  grep "  ${ARCHIVE}\$" checksums.txt | sha256sum -c --quiet || die "Checksum verification failed"
 fi
 ok "Checksum verified"
 

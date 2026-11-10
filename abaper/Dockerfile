@@ -1,7 +1,9 @@
 # ABAPer REST server / CLI image (ghcr.io/bluefunda/abaper).
 # Build from the repository root:
 #   docker build -f abaper/Dockerfile -t ghcr.io/bluefunda/abaper .
-FROM golang:1.26-alpine AS builder
+# CI passes GO_VERSION from go.mod (release.yml); the default is for local builds.
+ARG GO_VERSION=1.26.10
+FROM golang:${GO_VERSION}-alpine AS builder
 
 WORKDIR /app
 COPY go.mod go.sum ./

@@ -1,4 +1,6 @@
-FROM golang:1.26-alpine AS builder
+# CI passes GO_VERSION from go.mod (release.yml); the default is for local builds.
+ARG GO_VERSION=1.26.10
+FROM golang:${GO_VERSION}-alpine AS builder
 
 ARG GH_PAT
 RUN apk add --no-cache git

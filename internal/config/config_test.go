@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/bluefunda/bluefunda-ai/internal/app"
 	"github.com/bluefunda/bluefunda-ai/internal/keychain"
 	"gopkg.in/yaml.v3"
 )
@@ -837,5 +838,74 @@ func TestLoad_UnknownProfileOverrideErrors(t *testing.T) {
 
 	if _, err := Load(); err == nil {
 		t.Error("expected Load to error on an unknown --profile override, got nil")
+	}
+}
+
+// requestsLike is a product with its own backend, like breq.
+var requestsLike = app.Identity{
+	Name: "breq", Dir: ".breq", EnvPrefix: "BREQ_", ClientID: "bluerequests",
+	KeychainService: "breq", BFFURL: "requests.bluefunda.com:443", Realm: "trm",
+}
+
+func withIdentity(t *testing.T, id app.Identity) {
+	t.Helper()
+	app.Set(id)
+	t.Cleanup(func() { app.Set(app.Bai) })
+}
+
+func TestProductDefaults_Bai(t *testing.T) {
+	if ProductBFFURL() != DefaultBFFURL || ProductRealm() != DefaultRealm {
+		t.Errorf("bai defaults = %q, %q", ProductBFFURL(), ProductRealm())
+	}
+}
+
+func TestProductDefaults_IdentityOverrides(t *testing.T) {
+	withTempHome(t)
+	withIdentity(t, requestsLike)
+	if got := AuthURL(DefaultDomain, ""); got != "https://auth.bluefunda.com/realms/trm/protocol/openid-connect" {
+		t.Errorf("AuthURL = %q", got)
+	}
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.BFFURL != "requests.bluefunda.com:443" || cfg.Realm != "trm" {
+		t.Errorf("no config file: BFF %q realm %q, want the identity's", cfg.BFFURL, cfg.Realm)
+	}
+}
+
+// A ~/.breq/config.yaml written by the standalone breq CLI (v1.9) must keep
+// working, so existing users stay signed in after the move.
+func TestLoad_StandaloneBreqConfig(t *testing.T) {
+	home := withTempHome(t)
+	withIdentity(t, requestsLike)
+	orig := keychain.Default
+	keychain.SetBackend(newMockKeychain(false))
+	defer keychain.SetBackend(orig)
+
+	expiry := time.Now().Add(time.Hour).UTC().Truncate(time.Second)
+	legacy := "bff_url: requests.example.com:443\ndomain: bluefunda.com\nrealm: trm\n" +
+		"auth:\n  access_token: at-123\n  refresh_token: rt-456\n  token_expiry: " + expiry.Format(time.RFC3339) + "\n" +
+		"defaults:\n  output: json\n"
+	dir := filepath.Join(home, ".breq")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "config.yaml"), []byte(legacy), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.BFFURL != "requests.example.com:443" || cfg.Realm != "trm" || cfg.Defaults.Output != "json" {
+		t.Errorf("cfg = BFF %q realm %q output %q", cfg.BFFURL, cfg.Realm, cfg.Defaults.Output)
+	}
+	if cfg.Auth.AccessToken != "at-123" || cfg.Auth.RefreshToken != "rt-456" || !cfg.Auth.TokenExpiry.Equal(expiry) {
+		t.Errorf("tokens not carried over: %+v", cfg.Auth)
+	}
+	if !cfg.TokenValid() {
+		t.Error("an unexpired breq token must stay valid")
 	}
 }

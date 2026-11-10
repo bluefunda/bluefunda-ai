@@ -23,8 +23,10 @@ func init() {
 	// ExecuteABAPer rebuilds this after switching the app identity, so the
 	// help always names the binary being run.
 	loginCmd.Long = loginLongHelp()
-	loginCmd.Flags().StringVar(&loginRealm, "realm", config.DefaultRealm,
-		"Keycloak realm to authenticate against (e.g. individual, trm)")
+	// Empty means the running product's realm (resolved at run time, since
+	// the identity is switched after init).
+	loginCmd.Flags().StringVar(&loginRealm, "realm", "",
+		"Keycloak realm to authenticate against (default: the product's realm, e.g. individual, trm)")
 }
 
 func loginLongHelp() string {
@@ -33,25 +35,29 @@ func loginLongHelp() string {
 By default, authenticates against the %q realm.
 Use --realm to authenticate against a different realm:
 
-  %s login --realm trm`, config.DefaultRealm, app.Current().Name)
+  %s login --realm trm`, config.ProductRealm(), app.Current().Name)
 }
 
 func runLogin(cmd *cobra.Command, args []string) error {
 	cfg := loadConfig()
+	realm := loginRealm
+	if realm == "" {
+		realm = config.ProductRealm()
+	}
 
-	tok, err := auth.LoginWithDevice(cfg.EffectiveDomain(), loginRealm)
+	tok, err := auth.LoginWithDevice(cfg.EffectiveDomain(), realm)
 	if err != nil {
 		ui.Error("Login failed: " + err.Error())
 		return err
 	}
 
-	cfg.Realm = loginRealm
+	cfg.Realm = realm
 
 	if err := saveAuthTokens(cfg, tok); err != nil {
 		ui.Error("Failed to save config: " + err.Error())
 		return err
 	}
 
-	ui.Success("Logged in successfully (realm: " + loginRealm + ")")
+	ui.Success("Logged in successfully (realm: " + realm + ")")
 	return nil
 }

@@ -1,5 +1,18 @@
 # Changelog
 
+## [1.63.0](https://github.com/bluefunda/bluefunda-ai/compare/v1.62.3...v1.63.0) (2026-11-10)
+
+
+### Features
+
+* **requests:** bai requests command group ([e343a1c](https://github.com/bluefunda/bluefunda-ai/commit/e343a1c66beb251894a447051ea83fe87ea1bd45))
+* **requests:** bai requests command group ([#383](https://github.com/bluefunda/bluefunda-ai/issues/383)) ([28d163c](https://github.com/bluefunda/bluefunda-ai/commit/28d163c94a61a72a3a1092b42e98c91a5053cdab))
+
+
+### Bug Fixes
+
+* **breq:** release breq from bluefunda-ai ([#384](https://github.com/bluefunda/bluefunda-ai/issues/384)) ([cc9f529](https://github.com/bluefunda/bluefunda-ai/commit/cc9f5293ba4fec5b1eac95eec6ce4b4d4a5dd2dd))
+
 ## [1.62.3](https://github.com/bluefunda/bluefunda-ai/compare/v1.62.2...v1.62.3) (2026-11-10)
 
 

@@ -1,0 +1,5 @@
+trm
+dist/
+coverage.out
+*.deb
+*.rpm

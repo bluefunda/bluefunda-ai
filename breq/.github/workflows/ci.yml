@@ -1,0 +1,13 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+jobs:
+  ci:
+    uses: bluefunda/release-foundry/.github/workflows/go-ci.yml@main
+    secrets:
+      GH_PAT: ${{ secrets.GH_PAT }}

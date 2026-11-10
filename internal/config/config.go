@@ -30,18 +30,10 @@ func ProductBFFURL() string {
 	return DefaultBFFURL
 }
 
-// ProductRealm is the running product's default Keycloak realm.
-func ProductRealm() string {
-	if v := app.Current().Realm; v != "" {
-		return v
-	}
-	return DefaultRealm
-}
-
 // AuthURL returns the Keycloak OpenID Connect base URL for the given realm.
 func AuthURL(domain, realm string) string {
 	if realm == "" {
-		realm = ProductRealm()
+		realm = DefaultRealm
 	}
 	return fmt.Sprintf("https://auth.%s/realms/%s/protocol/openid-connect", domain, realm)
 }
@@ -479,7 +471,7 @@ func Load() (*Config, error) {
 		cfg.Domain = DefaultDomain
 	}
 	if cfg.Realm == "" {
-		cfg.Realm = ProductRealm()
+		cfg.Realm = DefaultRealm
 	}
 	if cfg.Defaults.Model == "" {
 		cfg.Defaults.Model = "auto"
@@ -543,7 +535,7 @@ func defaultConfig() *Config {
 		GatewayURL: DefaultGatewayURL,
 		BFFURL:     ProductBFFURL(),
 		Domain:     DefaultDomain,
-		Realm:      ProductRealm(),
+		Realm:      DefaultRealm,
 		Defaults:   Defaults{Model: "auto", Output: "text"},
 	}
 }

@@ -327,14 +327,14 @@ func realmFromIssuer(issuer string) string {
 	const marker = "/realms/"
 	idx := strings.Index(issuer, marker)
 	if idx == -1 {
-		return config.ProductRealm()
+		return config.DefaultRealm
 	}
 	remaining := issuer[idx+len(marker):]
 	if slashIdx := strings.Index(remaining, "/"); slashIdx != -1 {
 		remaining = remaining[:slashIdx]
 	}
 	if remaining == "" {
-		return config.ProductRealm()
+		return config.DefaultRealm
 	}
 	return remaining
 }

@@ -69,7 +69,7 @@ bai init        # creates .bai/ for the current project
 | `bai plugins` | Manage plugins |
 | `bai billing` | View subscription and plans |
 | `bai abap` | SAP ABAP: systems, search, deploy, unit tests, and the ABAP agent (same as the [abaper](abaper/) CLI) |
-| `bai requests` | BlueRequests change and release management: change requests, events, A4H sessions (same as the [breq](breq/) CLI; own sign-in: `bai requests login`) |
+| `bai requests` | BlueRequests change and release management: change requests, events, A4H sessions (same as the [breq](breq/) CLI; uses your `bai login`) |
 | `bai update` | Update bai to the latest release |
 | `bai completion` | Generate shell completions (bash, zsh, fish, PowerShell) |
 

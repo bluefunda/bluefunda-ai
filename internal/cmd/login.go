@@ -23,10 +23,7 @@ func init() {
 	// ExecuteABAPer rebuilds this after switching the app identity, so the
 	// help always names the binary being run.
 	loginCmd.Long = loginLongHelp()
-	// Empty means the running product's realm (resolved at run time, since
-	// the identity is switched after init).
-	loginCmd.Flags().StringVar(&loginRealm, "realm", "",
-		"Keycloak realm to authenticate against (default: the product's realm, e.g. individual, trm)")
+	loginCmd.Flags().StringVar(&loginRealm, "realm", config.DefaultRealm, "Keycloak realm to authenticate against")
 }
 
 func loginLongHelp() string {
@@ -35,14 +32,14 @@ func loginLongHelp() string {
 By default, authenticates against the %q realm.
 Use --realm to authenticate against a different realm:
 
-  %s login --realm trm`, config.ProductRealm(), app.Current().Name)
+  %s login --realm <name>`, config.DefaultRealm, app.Current().Name)
 }
 
 func runLogin(cmd *cobra.Command, args []string) error {
 	cfg := loadConfig()
 	realm := loginRealm
 	if realm == "" {
-		realm = config.ProductRealm()
+		realm = config.DefaultRealm
 	}
 
 	tok, err := auth.LoginWithDevice(cfg.EffectiveDomain(), realm)

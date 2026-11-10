@@ -36,8 +36,8 @@ func TestRequestsCommands_FreshTrees(t *testing.T) {
 }
 
 func TestBreqIdentity(t *testing.T) {
-	if Breq.Dir != ".breq" || Breq.EnvPrefix != "BREQ_" || Breq.ClientID != "bluerequests" ||
-		Breq.Realm != "trm" || Breq.BFFURL != "requests.bluefunda.com:443" || Breq.HomebrewCask != "breq" {
+	if Breq.Dir != ".breq" || Breq.EnvPrefix != "BREQ_" || Breq.ClientID != "bai" ||
+		Breq.BFFURL != "requests.bluefunda.com:443" || Breq.HomebrewCask != "breq" {
 		t.Errorf("breq identity changed: %+v — existing installs depend on these", Breq)
 	}
 	if app.Current().Name != "bai" {

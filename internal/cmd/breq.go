@@ -13,19 +13,18 @@ import (
 	"github.com/bluefunda/bluefunda-ai/internal/updatecheck"
 )
 
-// Breq is the product identity of the breq (BlueRequests) binary. It keeps
-// breq's config directory (~/.breq, so existing logins keep working),
-// Keycloak realm and client, and its own BFF.
+// Breq is the product identity of the breq (BlueRequests) binary: its own
+// config directory (~/.breq) and BFF. It signs in like bai — the individual
+// realm and the bai client.
 var Breq = app.Identity{
 	Name:            "breq",
 	DisplayName:     "BlueRequests",
 	Dir:             ".breq",
 	EnvPrefix:       "BREQ_",
-	ClientID:        "bluerequests",
+	ClientID:        "bai",
 	KeychainService: "breq",
 	HomebrewCask:    "breq",
 	BFFURL:          "requests.bluefunda.com:443",
-	Realm:           "trm",
 }
 
 // ExecuteBREQ runs the breq binary: the BlueRequests command set at the
@@ -80,7 +79,7 @@ func NewRequestsCommands() []*cobra.Command {
 // requestsConn opens an authenticated connection to the TRM BFF, using the
 // running identity's config and login. Caller must Close it.
 func requestsConn() (*requests.Conn, *config.Config, error) {
-	conn, cfg, err := bffConn()
+	conn, cfg, err := bffConnTo(requestsTarget)
 	if err != nil {
 		return nil, cfg, err
 	}
@@ -94,7 +93,7 @@ func newRequestsHealthCmd() *cobra.Command {
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cfg := loadConfig()
-			target := cfg.EffectiveBFFURL()
+			target := requestsTarget(cfg)
 			if err := caigrpc.Ping(target); err != nil {
 				return fmt.Errorf("BFF unhealthy at %s: %w", target, err)
 			}

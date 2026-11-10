@@ -843,8 +843,8 @@ func TestLoad_UnknownProfileOverrideErrors(t *testing.T) {
 
 // requestsLike is a product with its own backend, like breq.
 var requestsLike = app.Identity{
-	Name: "breq", Dir: ".breq", EnvPrefix: "BREQ_", ClientID: "bluerequests",
-	KeychainService: "breq", BFFURL: "requests.bluefunda.com:443", Realm: "trm",
+	Name: "breq", Dir: ".breq", EnvPrefix: "BREQ_", ClientID: "bai",
+	KeychainService: "breq", BFFURL: "requests.bluefunda.com:443",
 }
 
 func withIdentity(t *testing.T, id app.Identity) {
@@ -854,23 +854,23 @@ func withIdentity(t *testing.T, id app.Identity) {
 }
 
 func TestProductDefaults_Bai(t *testing.T) {
-	if ProductBFFURL() != DefaultBFFURL || ProductRealm() != DefaultRealm {
-		t.Errorf("bai defaults = %q, %q", ProductBFFURL(), ProductRealm())
+	if ProductBFFURL() != DefaultBFFURL {
+		t.Errorf("bai default BFF = %q", ProductBFFURL())
 	}
 }
 
 func TestProductDefaults_IdentityOverrides(t *testing.T) {
 	withTempHome(t)
 	withIdentity(t, requestsLike)
-	if got := AuthURL(DefaultDomain, ""); got != "https://auth.bluefunda.com/realms/trm/protocol/openid-connect" {
-		t.Errorf("AuthURL = %q", got)
+	if got := AuthURL(DefaultDomain, ""); got != "https://auth.bluefunda.com/realms/individual/protocol/openid-connect" {
+		t.Errorf("AuthURL = %q — every product signs in to the individual realm", got)
 	}
 	cfg, err := Load()
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	if cfg.BFFURL != "requests.bluefunda.com:443" || cfg.Realm != "trm" {
-		t.Errorf("no config file: BFF %q realm %q, want the identity's", cfg.BFFURL, cfg.Realm)
+	if cfg.BFFURL != "requests.bluefunda.com:443" || cfg.Realm != DefaultRealm {
+		t.Errorf("no config file: BFF %q realm %q, want the identity's BFF and the individual realm", cfg.BFFURL, cfg.Realm)
 	}
 }
 
@@ -893,7 +893,7 @@ func testLoadStandaloneBreqConfig(t *testing.T, withKeychain bool) {
 	defer keychain.SetBackend(orig)
 
 	expiry := time.Now().Add(time.Hour).UTC().Truncate(time.Second)
-	legacy := "bff_url: requests.example.com:443\ndomain: bluefunda.com\nrealm: trm\n" +
+	legacy := "bff_url: requests.example.com:443\ndomain: bluefunda.com\n" +
 		"auth:\n  access_token: at-123\n  refresh_token: rt-456\n  token_expiry: " + expiry.Format(time.RFC3339) + "\n" +
 		"defaults:\n  output: json\n"
 	dir := filepath.Join(home, ".breq")
@@ -908,7 +908,7 @@ func testLoadStandaloneBreqConfig(t *testing.T, withKeychain bool) {
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	if cfg.BFFURL != "requests.example.com:443" || cfg.Realm != "trm" || cfg.Defaults.Output != "json" {
+	if cfg.BFFURL != "requests.example.com:443" || cfg.Realm != DefaultRealm || cfg.Defaults.Output != "json" {
 		t.Errorf("cfg = BFF %q realm %q output %q", cfg.BFFURL, cfg.Realm, cfg.Defaults.Output)
 	}
 	if cfg.Auth.AccessToken != "at-123" || cfg.Auth.RefreshToken != "rt-456" || !cfg.Auth.TokenExpiry.Equal(expiry) {

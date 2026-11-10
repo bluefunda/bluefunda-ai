@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.64.1](https://github.com/bluefunda/bluefunda-ai/compare/v1.64.0...v1.64.1) (2026-11-10)
+
+
+### Bug Fixes
+
+* **agent:** keep the assistant's replies in conversation history ([#394](https://github.com/bluefunda/bluefunda-ai/issues/394)) ([378beee](https://github.com/bluefunda/bluefunda-ai/commit/378beee0e3735c97adbdf43aa9a2208a91f0dcad))
+* **requests:** use the bai sign-in and the individual realm only ([#395](https://github.com/bluefunda/bluefunda-ai/issues/395)) ([1ea4496](https://github.com/bluefunda/bluefunda-ai/commit/1ea449682d685c17d462c94dd0c0ff3c6bf50ccd))
+
 ## [1.64.0](https://github.com/bluefunda/bluefunda-ai/compare/v1.63.1...v1.64.0) (2026-11-10)
 
 

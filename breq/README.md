@@ -1,9 +1,9 @@
 # BlueRequests
 
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
-[![Go Reference](https://pkg.go.dev/badge/github.com/bluefunda/bluerequests.svg)](https://pkg.go.dev/github.com/bluefunda/bluerequests)
-[![Release](https://img.shields.io/github/v/release/bluefunda/bluerequests)](https://github.com/bluefunda/bluerequests/releases)
-[![CI](https://github.com/bluefunda/bluerequests/actions/workflows/ci.yml/badge.svg)](https://github.com/bluefunda/bluerequests/actions/workflows/ci.yml)
+[![Go Reference](https://pkg.go.dev/badge/github.com/bluefunda/bluefunda-ai.svg)](https://pkg.go.dev/github.com/bluefunda/bluefunda-ai/breq/cmd/breq)
+[![Release](https://img.shields.io/github/v/release/bluefunda/bluefunda-ai)](https://github.com/bluefunda/bluefunda-ai/releases)
+[![CI](https://github.com/bluefunda/bluefunda-ai/actions/workflows/ci.yml/badge.svg)](https://github.com/bluefunda/bluefunda-ai/actions/workflows/ci.yml)
 
 **`breq`** — A terminal-native CLI for the BlueRequests change and release management platform. Manage SAP transport requests, change orders, and release workflows from the command line or an interactive TUI dashboard.
 
@@ -17,6 +17,9 @@
 - **Multi-format output** — Table, JSON, and quiet modes for scripting and automation
 - **gRPC-native** — All operations go through the BlueRequests BFF service with TLS
 - **macOS + Linux** — Native binaries for amd64 and arm64
+- **Also in bai** — the same commands are available as `bai requests` (shared sign-in)
+
+> breq moved from `bluefunda/bluerequests` into the [bluefunda-ai](https://github.com/bluefunda/bluefunda-ai) repository and is released with `bai` and `abaper`, so its version numbers jump from 1.9.x to the bluefunda-ai series. Existing `~/.breq` logins keep working.
 
 ## Installation
 
@@ -30,20 +33,20 @@ brew install --cask breq
 ### One-line installer (macOS and Linux)
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/bluefunda/bluerequests/main/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/bluefunda/bluefunda-ai/main/breq/install.sh | sh
 ```
 
 ### Debian / Ubuntu
 
 ```bash
-curl -sL https://github.com/bluefunda/bluerequests/releases/latest/download/breq_linux_amd64.deb -o breq.deb
+curl -sL https://github.com/bluefunda/bluefunda-ai/releases/latest/download/breq_linux_amd64.deb -o breq.deb
 sudo dpkg -i breq.deb
 ```
 
 ### RHEL / Fedora / Rocky
 
 ```bash
-sudo dnf install https://github.com/bluefunda/bluerequests/releases/latest/download/breq_linux_amd64.rpm
+sudo dnf install https://github.com/bluefunda/bluefunda-ai/releases/latest/download/breq_linux_amd64.rpm
 ```
 
 ### From source
@@ -54,7 +57,7 @@ go install github.com/bluefunda/bluefunda-ai/breq/cmd/breq@latest
 
 ### Manual download
 
-Download the latest binary for your platform from the [Releases](https://github.com/bluefunda/bluerequests/releases) page.
+Download the latest binary for your platform from the [Releases](https://github.com/bluefunda/bluefunda-ai/releases) page.
 
 ## Quick Start
 

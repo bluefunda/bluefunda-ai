@@ -125,6 +125,11 @@ func reAuthenticate(cfg *config.Config, p *ui.Printer) error {
 // bffConn establishes an authenticated gRPC connection to the BFF.
 // Caller must defer conn.Close().
 func bffConn() (*caigrpc.Conn, *config.Config, error) {
+	return bffConnTo((*config.Config).EffectiveBFFURL)
+}
+
+// bffConnTo is bffConn for the backend that target picks from the config.
+func bffConnTo(target func(*config.Config) string) (*caigrpc.Conn, *config.Config, error) {
 	cfg := loadConfig()
 	if cfg.Auth.AccessToken == "" {
 		return nil, cfg, fmt.Errorf("not signed in — run `%s login`", app.Current().Name)
@@ -142,7 +147,7 @@ func bffConn() (*caigrpc.Conn, *config.Config, error) {
 	}
 
 	ts := caigrpc.NewTokenSource(cfg, refreshFunc)
-	conn, err := caigrpc.Dial(cfg.EffectiveBFFURL(), ts)
+	conn, err := caigrpc.Dial(target(cfg), ts)
 	if err != nil {
 		return nil, cfg, err
 	}

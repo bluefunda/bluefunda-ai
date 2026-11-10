@@ -4,20 +4,25 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/bluefunda/bluefunda-ai/internal/app"
+	"github.com/bluefunda/bluefunda-ai/internal/config"
 )
 
-// baiRequestsIdentity is breq's identity as mounted under `bai requests`:
-// same config dir, keychain service, realm and BFF — so `breq login` and
-// `bai requests login` are one TRM sign-in — but hints name `bai requests`.
-func baiRequestsIdentity() app.Identity {
-	id := Breq
-	id.Name = "bai requests"
-	return id
+// requestsTarget is the BlueRequests BFF for this process. The breq binary
+// uses its own config (endpoint, --bff, BREQ_BFF). Inside bai, `bai requests`
+// keeps bai's sign-in and talks to the BlueRequests BFF instead of bai's:
+// BAI_REQUESTS_BFF, else breq's default.
+func requestsTarget(cfg *config.Config) string {
+	if app.Current().Name == Breq.Name {
+		return cfg.EffectiveBFFURL()
+	}
+	if v := app.Getenv("REQUESTS_BFF"); v != "" {
+		return v
+	}
+	return Breq.BFFURL
 }
 
-// requestsCmd is `bai requests`: the breq command set inside bai. TRM uses
-// its own Keycloak realm and BFF, so the process switches to the breq
-// identity for the command and switches back before bai's post-run hooks.
+// requestsCmd is `bai requests`: the breq command set inside bai, signed in
+// with the bai session — `bai login` covers it.
 var requestsCmd = &cobra.Command{
 	Use:     "requests",
 	Aliases: []string{"breq"},
@@ -25,34 +30,25 @@ var requestsCmd = &cobra.Command{
 	Long: `Change requests, events, A4H sessions and more on the BlueRequests (TRM)
 platform — the same commands as the breq CLI.
 
-BlueRequests uses its own sign-in (realm "trm"), shared with breq:
-  bai requests login`,
-	PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
-		if err := rootCmd.PersistentPreRunE(cmd, args); err != nil {
-			return err
-		}
-		app.Set(baiRequestsIdentity())
-		return nil
-	},
-	PersistentPostRunE: func(cmd *cobra.Command, args []string) error {
-		app.Set(app.Bai)
-		return rootCmd.PersistentPostRunE(cmd, args)
-	},
+Uses your bai sign-in; run ` + "`bai login`" + ` if you aren't signed in.`,
 }
 
 func init() {
+	// Kept so `bai requests login` from the breq habit still works.
 	login := &cobra.Command{
-		Use:   "login",
-		Short: "Sign in to BlueRequests (shared with `breq login`)",
-		Args:  cobra.NoArgs,
-		RunE:  runLogin,
+		Use:    "login",
+		Short:  "Same as `bai login`",
+		Hidden: true,
+		Args:   cobra.NoArgs,
+		RunE:   runLogin,
 	}
-	login.Flags().StringVar(&loginRealm, "realm", "", "Keycloak realm (default: trm)")
+	login.Flags().StringVar(&loginRealm, "realm", config.DefaultRealm, "Keycloak realm")
 	logout := &cobra.Command{
-		Use:   "logout",
-		Short: "Sign out of BlueRequests (shared with `breq logout`)",
-		Args:  cobra.NoArgs,
-		RunE:  runLogout,
+		Use:    "logout",
+		Short:  "Same as `bai logout`",
+		Hidden: true,
+		Args:   cobra.NoArgs,
+		RunE:   runLogout,
 	}
 	requestsCmd.AddCommand(login, logout)
 	requestsCmd.AddCommand(NewRequestsCommands()...)

@@ -31,11 +31,10 @@ type Identity struct {
 	HomebrewCask string
 	// Placeholder is the empty-input hint in the chat TUI.
 	Placeholder string
-	// BFFURL and Realm are the product's default gRPC backend and Keycloak
-	// realm. Empty uses the platform defaults (config.DefaultBFFURL,
-	// config.DefaultRealm); config files, env vars and flags still override.
+	// BFFURL is the product's default gRPC backend. Empty uses
+	// config.DefaultBFFURL; config files, env vars and flags still override.
+	// Every product signs in to the same Keycloak realm (config.DefaultRealm).
 	BFFURL string
-	Realm  string
 	// Accent / AccentBold override the TUI accent colours (hex, e.g. "#FF5F1F").
 	// Empty keeps the default palette.
 	Accent     string

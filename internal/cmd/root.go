@@ -11,7 +11,6 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 
-	"github.com/bluefunda/bluefunda-ai/internal/app"
 	"github.com/bluefunda/bluefunda-ai/internal/config"
 	"github.com/bluefunda/bluefunda-ai/internal/tips"
 	"github.com/bluefunda/bluefunda-ai/internal/ui"
@@ -222,11 +221,6 @@ func applyGlobalFlags() {
 func Execute() error {
 	start := time.Now()
 	err := rootCmd.Execute()
-	// `bai requests` switches the process to the breq identity; cobra skips
-	// its PersistentPostRunE when the command fails, so switch back here
-	// before recording bai's own tips signal.
-	app.Set(app.Bai)
-
 	exitCode := 0
 	if err != nil {
 		exitCode = 1

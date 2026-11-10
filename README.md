@@ -25,7 +25,7 @@ That's the whole setup. The installer picks the right binary for your OS, verifi
 - **Stays in your flow.** It's a terminal tool. It fits next to git, your editor, and your shell — and into CI.
 - **You stay in control.** Every tool call is yours to approve. Use `--auto` when you trust the task, `--worktree` to keep changes isolated, `--print` for a dry run.
 - **Tuned for real work.** `--fast` for quick answers, `--think` for hard problems, and automatic context compaction so long sessions don't fall over.
-- **Extensible.** Connect tools via MCP (Model Context Protocol) — including SAP operations through [ABAPer](https://github.com/bluefunda/abaper).
+- **Extensible.** Connect tools via MCP (Model Context Protocol), work on SAP ABAP systems with `bai abap`, and manage BlueRequests change requests with `bai requests`.
 - **Embeddable.** Drop the agentic loop straight into your own Go programs with the [SDK](#embed-it-go-sdk).
 
 ---
@@ -68,6 +68,8 @@ bai init        # creates .bai/ for the current project
 | `bai mcp` | Connect and manage MCP tool integrations |
 | `bai plugins` | Manage plugins |
 | `bai billing` | View subscription and plans |
+| `bai abap` | SAP ABAP: systems, search, deploy, unit tests, and the ABAP agent (same as the [abaper](abaper/) CLI) |
+| `bai requests` | BlueRequests change and release management: change requests, events, A4H sessions (same as the [breq](breq/) CLI; own sign-in: `bai requests login`) |
 | `bai update` | Update bai to the latest release |
 | `bai completion` | Generate shell completions (bash, zsh, fish, PowerShell) |
 
@@ -169,7 +171,7 @@ defaults:
 **Prerequisites:** Go 1.26+, `protoc` (+ `protoc-gen-go`, `protoc-gen-go-grpc`) for proto regen, [goreleaser](https://goreleaser.com/) for releases.
 
 ```bash
-make build      # build the bai binary
+make build      # build bai, bin/abaper and bin/breq
 make test       # tests with race detector
 make vet        # go vet
 make fmt        # format
@@ -178,12 +180,16 @@ make snapshot   # release snapshot via goreleaser
 ```
 
 ```
-cmd/bai/          Entry point
+cmd/bai/          bai entry point
+abaper/           abaper binary (ABAPer brand) — see abaper/AGENTS.md
+breq/             breq binary (BlueRequests) — see breq/AGENTS.md
 internal/
   auth/           OAuth2 device flow (RFC 8628)
   cmd/            Cobra command definitions
   config/         Config loader (~/.bai/config.yaml)
   grpc/           gRPC connection + interceptors
+  abap/           SAP ABAP domain (bai abap, abaper)
+  requests/       BlueRequests domain (bai requests, breq)
   tools/          Agentic tool implementations
   ui/             Output formatting + Bubble Tea TUI
 sdk/agent/        Embeddable in-process agent SDK
@@ -198,7 +204,8 @@ Releases are automated via [Release Please](https://github.com/googleapis/releas
 
 - **Contributing:** [CONTRIBUTING.md](CONTRIBUTING.md)
 - **Security:** report vulnerabilities via [SECURITY.md](SECURITY.md)
-- **SAP / ABAP developers:** see [ABAPer](https://github.com/bluefunda/abaper) — the same agent, specialized for ABAP
+- **SAP / ABAP developers:** see [abaper](abaper/) — the same agent, specialized for ABAP
+- **Change and release management:** see [breq](breq/) — the BlueRequests CLI
 
 ## License
 

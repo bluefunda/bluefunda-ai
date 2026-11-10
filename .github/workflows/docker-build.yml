@@ -1,0 +1,45 @@
+name: Manual Docker Build
+
+# Rebuild and push an image outside a release, e.g. when the release run's
+# docker job failed. Builds from the branch the workflow is dispatched on;
+# `tag` only names the image.
+on:
+  workflow_dispatch:
+    inputs:
+      image:
+        description: Image to build
+        required: true
+        type: choice
+        options:
+          - abaper
+          - bluefunda-ai
+      tag:
+        description: Image tag (e.g. v1.62.3); :latest is always pushed too
+        required: true
+        type: string
+
+jobs:
+  go-version:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.go.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: go
+        run: echo "version=$(awk '/^go /{print $2}' go.mod)" >> "$GITHUB_OUTPUT"
+
+  deploy:
+    needs: [go-version]
+    permissions:
+      contents: read
+      packages: write
+    uses: bluefunda/release-foundry/.github/workflows/docker-deploy.yml@main
+    with:
+      tag: ${{ inputs.tag }}
+      image-name: ${{ inputs.image }}
+      file: ${{ inputs.image == 'abaper' && 'abaper/Dockerfile' || 'Dockerfile' }}
+      build-args: |
+        VERSION=${{ inputs.tag }}
+        GO_VERSION=${{ needs.go-version.outputs.version }}
+    secrets:
+      GH_PAT: ${{ secrets.GH_PAT }}

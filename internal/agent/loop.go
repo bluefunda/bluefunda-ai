@@ -30,25 +30,25 @@ import (
 type EventKind string
 
 const (
-	EventText       EventKind = "text"       // streamed LLM text chunk
-	EventToolUse    EventKind = "tool_use"   // tool call issued by the LLM
+	EventText       EventKind = "text"        // streamed LLM text chunk
+	EventToolUse    EventKind = "tool_use"    // tool call issued by the LLM
 	EventToolResult EventKind = "tool_result" // tool execution result
-	EventResult     EventKind = "result"     // session complete
-	EventError      EventKind = "error"      // non-fatal error
+	EventResult     EventKind = "result"      // session complete
+	EventError      EventKind = "error"       // non-fatal error
 )
 
 // Event is one streaming event from the agentic loop.
 type Event struct {
 	Kind       EventKind
-	Text       string    // EventText
-	ToolID     string    // EventToolUse, EventToolResult
-	ToolName   string    // EventToolUse, EventToolResult
-	ToolInput  string    // EventToolUse
-	ToolOutput string    // EventToolResult
-	StopReason string    // EventResult
-	InputToks  int32     // EventResult
-	OutputToks int32     // EventResult
-	Err        error     // EventError
+	Text       string // EventText
+	ToolID     string // EventToolUse, EventToolResult
+	ToolName   string // EventToolUse, EventToolResult
+	ToolInput  string // EventToolUse
+	ToolOutput string // EventToolResult
+	StopReason string // EventResult
+	InputToks  int32  // EventResult
+	OutputToks int32  // EventResult
+	Err        error  // EventError
 }
 
 // Message is one turn in the conversation history.
@@ -96,12 +96,12 @@ type LoopOptions struct {
 // ── Core loop ─────────────────────────────────────────────────────────────────
 
 const (
-	defaultMaxTurns        = 50
-	rateLimitInitialDelay  = 10 * time.Second
-	rateLimitMaxDelay      = 5 * time.Minute
-	rateLimitMaxRetries    = 3
-	compactionThreshold    = int32(100_000)
-	cliPayloadVersion      = 1
+	defaultMaxTurns       = 50
+	rateLimitInitialDelay = 10 * time.Second
+	rateLimitMaxDelay     = 5 * time.Minute
+	rateLimitMaxRetries   = 3
+	compactionThreshold   = int32(100_000)
+	cliPayloadVersion     = 1
 )
 
 // resolveModelAlias maps user-facing aliases to the backend model strings
@@ -140,6 +140,8 @@ func RunLoop(ctx context.Context, opts LoopOptions) ([]Message, error) {
 	}
 
 	history := opts.History
+	// A chat is new until it has an assistant turn; later Runs continue it.
+	newChat := !hasRole(history, "assistant")
 	rateLimitRetries := 0
 	var lastPromptTokens int32
 
@@ -154,7 +156,7 @@ func RunLoop(ctx context.Context, opts LoopOptions) ([]Message, error) {
 			}
 		}
 
-		req := buildRequest(opts.ChatID, opts.Model, opts.ToolSchemas, history, iteration == 0)
+		req := buildRequest(opts.ChatID, opts.Model, opts.ToolSchemas, history, newChat && iteration == 0)
 		iterCtx, cancel := context.WithCancel(ctx)
 		stream, err := opts.Conn.Client.Chat(iterCtx, req)
 		if err != nil {
@@ -174,7 +176,13 @@ func RunLoop(ctx context.Context, opts LoopOptions) ([]Message, error) {
 		}
 		rateLimitRetries = 0
 
-		toolCalls, usage, err := pumpStream(stream, cancel, emit)
+		var text strings.Builder
+		toolCalls, usage, err := pumpStream(stream, cancel, func(ev Event) {
+			if ev.Kind == EventText {
+				text.WriteString(ev.Text)
+			}
+			emit(ev)
+		})
 		if usage.promptTokens > 0 {
 			lastPromptTokens = usage.promptTokens
 		}
@@ -191,13 +199,18 @@ func RunLoop(ctx context.Context, opts LoopOptions) ([]Message, error) {
 		}
 		rateLimitRetries = 0
 
+		// Keep the assistant's text in history: without it, the next request
+		// shows earlier questions as unanswered and the model goes back to them (#390).
 		if len(toolCalls) == 0 {
+			if text.Len() > 0 {
+				history = append(history, Message{Role: "assistant", Content: text.String()})
+			}
 			emit(Event{Kind: EventResult, StopReason: "end_turn", InputToks: lastPromptTokens})
 			return history, nil
 		}
 
 		// Append assistant tool-call message.
-		assistantMsg := Message{Role: "assistant"}
+		assistantMsg := Message{Role: "assistant", Content: text.String()}
 		assistantMsg.ToolCalls = toolCalls
 		history = append(history, assistantMsg)
 
@@ -221,16 +234,16 @@ func RunLoop(ctx context.Context, opts LoopOptions) ([]Message, error) {
 
 // wireMessage is the JSON wire format for cai-llm-router (same as codeMessage).
 type wireMessage struct {
-	Role       string          `json:"role"`
-	Content    string          `json:"content"`
-	ToolCallID string          `json:"tool_call_id,omitempty"`
-	ToolCalls  []wireToolCall  `json:"tool_calls,omitempty"`
+	Role       string         `json:"role"`
+	Content    string         `json:"content"`
+	ToolCallID string         `json:"tool_call_id,omitempty"`
+	ToolCalls  []wireToolCall `json:"tool_calls,omitempty"`
 }
 
 type wireToolCall struct {
-	ID       string        `json:"id"`
-	Type     string        `json:"type"`
-	Function wireFuncCall  `json:"function"`
+	ID       string       `json:"id"`
+	Type     string       `json:"type"`
+	Function wireFuncCall `json:"function"`
 }
 
 type wireFuncCall struct {
@@ -273,13 +286,22 @@ func toWire(msgs []Message) []wireMessage {
 		}
 		for _, tc := range m.ToolCalls {
 			out[i].ToolCalls = append(out[i].ToolCalls, wireToolCall{
-				ID:   tc.ID,
-				Type: "function",
+				ID:       tc.ID,
+				Type:     "function",
 				Function: wireFuncCall{Name: tc.Name, Arguments: tc.Arguments},
 			})
 		}
 	}
 	return out
+}
+
+func hasRole(history []Message, role string) bool {
+	for _, m := range history {
+		if m.Role == role {
+			return true
+		}
+	}
+	return false
 }
 
 func buildRequest(chatID, model, toolSchemas string, history []Message, isNew bool) *pb.ChatRequest {

@@ -53,7 +53,7 @@ abaper                                                  # interactive agent; /sy
 abaper code "add an authorization check to ZCL_ORDER"   # headless: reads, edits, deploys, verifies
 ```
 
-`abaper code` runs an agentic loop (default 20 turns) that can read and edit local ABAP files and deploy them through native ABAP tools (search, read, syntax-check, deploy, activate, unit-test). When it finishes, abaper syntax-checks, activates and unit-tests every object the agent deployed, gives the agent up to two rounds to fix failures, and prints the list of SAP objects it touched (`--no-verify` skips the gate). The agent never renames an object to work around a conflict; it stops and reports it. abaper is built on the [bluefunda-ai](https://github.com/bluefunda/bluefunda-ai) platform core — sign in with `abaper login`. The same tools are available to bai users as `bai abap`.
+`abaper code` runs an agentic loop (default 20 turns) that can read and edit local ABAP files and deploy them through native ABAP tools (search, read, syntax-check, deploy, activate, unit-test). When it finishes, abaper syntax-checks, activates and unit-tests every object the agent deployed, gives the agent up to two rounds to fix failures, and prints the list of SAP objects it touched (`--no-verify` skips the gate). The agent never renames an object to work around a conflict; it stops and reports it. abaper is built on the [bluefunda-ai](https://github.com/bluefunda/bluefunda-ai) platform core — sign in with `abaper login`. The same tools are available to bai users as `bai abap`. For editors and scripts, `abaper code -o stream-json` prints one JSON event per line instead of text; see [docs/stream-json.md](docs/stream-json.md).
 
 ### Object operations
 

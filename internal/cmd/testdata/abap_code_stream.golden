@@ -1,0 +1,8 @@
+{"type":"session","model":"auto","system":"DEV","cwd":"<cwd>"}
+{"type":"tool_use","id":"t1","name":"abap_deploy","input":{"name":"ZCL_FOO","type":"class","source":"CLASS zcl_foo DEFINITION PUBLIC. ENDCLASS. CLASS zcl_foo IMPLEMENTATION. ENDCLASS."}}
+{"type":"tool_result","id":"t1","name":"abap_deploy","ok":true,"output":"Deployed and activated class ZCL_FOO."}
+{"type":"text","text":"Deployed ZCL_FOO."}
+{"type":"result","stop_reason":"end_turn","input_tokens":0}
+{"type":"objects","items":[{"type":"class","name":"ZCL_FOO","ok":true,"attempts":1}]}
+{"type":"verify","round":0,"passed":true,"report":[{"type":"class","name":"ZCL_FOO","syntax":"ok","active":"ok","tests":"ok"}]}
+{"type":"done","exit":0}

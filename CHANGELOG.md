@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.62.2](https://github.com/bluefunda/bluefunda-ai/compare/v1.62.1...v1.62.2) (2026-11-10)
+
+
+### Bug Fixes
+
+* **abaper:** installer checksum check matches only the archive line ([#368](https://github.com/bluefunda/bluefunda-ai/issues/368)) ([0615f28](https://github.com/bluefunda/bluefunda-ai/commit/0615f28b2c86e2860f2f49e58f167ac65b537eb3))
+
 ## [1.62.1](https://github.com/bluefunda/bluefunda-ai/compare/v1.62.0...v1.62.1) (2026-11-09)
 
 

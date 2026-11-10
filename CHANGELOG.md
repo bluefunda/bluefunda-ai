@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.63.1](https://github.com/bluefunda/bluefunda-ai/compare/v1.63.0...v1.63.1) (2026-11-10)
+
+
+### Bug Fixes
+
+* **abaper/rest:** return 502/504 when SAP is unreachable instead of 401 ([#388](https://github.com/bluefunda/bluefunda-ai/issues/388)) ([a901fd4](https://github.com/bluefunda/bluefunda-ai/commit/a901fd4f4dd0b977e766816d22ceeb2bc1fe5715))
+* **abap:** report an expired session in status and check the gateway without a token ([#387](https://github.com/bluefunda/bluefunda-ai/issues/387)) ([672ab4f](https://github.com/bluefunda/bluefunda-ai/commit/672ab4fe3917735e46687826d7afeaaabf6bef89))
+
 ## [1.63.0](https://github.com/bluefunda/bluefunda-ai/compare/v1.62.3...v1.63.0) (2026-11-10)
 
 

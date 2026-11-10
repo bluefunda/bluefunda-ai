@@ -34,6 +34,9 @@ type APIResponse[T any] struct {
 	Success bool   `json:"success"`
 	Data    T      `json:"data,omitempty"`
 	Error   string `json:"error,omitempty"`
+	// Code classifies an error for clients: sap_unreachable, sap_timeout,
+	// sap_auth_failed, sap_credentials_missing or sap_error.
+	Code    string `json:"code,omitempty"`
 	Message string `json:"message,omitempty"`
 }
 

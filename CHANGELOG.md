@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.64.0](https://github.com/bluefunda/bluefunda-ai/compare/v1.63.1...v1.64.0) (2026-11-10)
+
+
+### Features
+
+* **abap:** `code -o stream-json` for editor integrations ([#389](https://github.com/bluefunda/bluefunda-ai/issues/389)) ([ea01400](https://github.com/bluefunda/bluefunda-ai/commit/ea014001a93bb4b19fc0388005ff28bdb041e6cb))
+
 ## [1.63.1](https://github.com/bluefunda/bluefunda-ai/compare/v1.63.0...v1.63.1) (2026-11-10)
 
 

@@ -710,40 +710,21 @@ files and deploy to SAP through native ABAP tools.
 
 When the loop ends, every object the agent deployed is syntax-checked,
 activated and unit-tested. Failures go back to the agent for up to
---repair-turns rounds; the command exits non-zero if any remain.`,
+--repair-turns rounds; the command exits non-zero if any remain.
+
+With -o stream-json, stdout carries one JSON event per line (session,
+text, tool_use, tool_result, objects, verify, repair, done) for editor
+integrations; status messages stay on stderr. The last event is always
+done, and its exit field matches the exit code.`,
 		Args: cobra.MinimumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if err := registerABAPPack(); err != nil {
-				return err
+			var rep codeReporter = textReporter{out: cmd.OutOrStdout(), verbose: verbose}
+			if cfgOutput == outputStreamJSON {
+				rep = newStreamReporter(cmd.OutOrStdout())
 			}
-			ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt)
-			defer cancel()
-
-			runner := agent.New(agent.Options{
-				Model:    model,
-				MaxTurns: maxTurns,
-				// The headless agent cannot ask for approval; deny the
-				// sub-agent tool so it doesn't spawn a child without the pack.
-				Deny:    []string{"task"},
-				OnEvent: abapEventPrinter(verbose),
-			})
-			defer func() { _ = runner.Close() }()
-
-			abapTracker.Reset()
-			run := func(prompt string) error { return runner.Run(ctx, prompt) }
-			if err := run(strings.Join(args, " ")); err != nil {
-				return err
-			}
-			objs := abapTracker.Objects()
-			fmt.Fprintln(os.Stderr, "\n"+abap.Summary(objs))
-			if noVerify || len(objs) == 0 {
-				return failedDeploys(objs)
-			}
-			c, err := newABAPClient()
-			if err != nil {
-				return fmt.Errorf("verification: %w", err)
-			}
-			return verifyAndRepair(ctx, c, run, repairTurns)
+			err := runABAPCode(strings.Join(args, " "), model, maxTurns, noVerify, repairTurns, rep)
+			rep.Done(err)
+			return err
 		},
 	}
 	cmd.Flags().StringVar(&model, "model", "auto", "LLM model alias: auto, fast, think")
@@ -754,35 +735,64 @@ activated and unit-tested. Failures go back to the agent for up to
 	return cmd
 }
 
-func abapEventPrinter(verbose bool) func(agent.Event) {
-	return func(ev agent.Event) {
-		switch ev.Type {
-		case "text":
-			fmt.Print(ev.Text)
-		case "tool_use":
-			fmt.Fprintf(os.Stderr, "\n▸ %s %s\n", ev.ToolName, tools.ExtractPrimaryArg(ev.ToolName, ev.ToolInput))
-		case "tool_result":
-			if verbose || strings.HasPrefix(ev.ToolOutput, "Error:") {
-				fmt.Fprintf(os.Stderr, "  %s\n", truncate(ev.ToolOutput, 400))
-			}
-		case "error":
-			fmt.Fprintf(os.Stderr, "\nError: %v\n", ev.Err)
+// runABAPCode runs the headless ABAP agent on prompt, then the verify gate.
+func runABAPCode(prompt, model string, maxTurns int, noVerify bool, repairTurns int, rep codeReporter) error {
+	unregister, err := tools.RegisterPack(abap.Pack(abapEnv))
+	if err != nil {
+		return err
+	}
+	defer unregister()
+	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt)
+	defer cancel()
+
+	system := ""
+	if reg, err := abap.LoadSystems(); err == nil {
+		if sys := reg.ActiveSystem(); sys != nil {
+			system = sys.Name
 		}
 	}
+	cwd, _ := os.Getwd()
+	rep.Start(model, system, cwd)
+
+	runner := agent.New(agent.Options{
+		Model:    model,
+		MaxTurns: maxTurns,
+		// The headless agent cannot ask for approval; deny the
+		// sub-agent tool so it doesn't spawn a child without the pack.
+		Deny:    []string{"task"},
+		OnEvent: rep.Event,
+	})
+	defer func() { _ = runner.Close() }()
+
+	abapTracker.Reset()
+	run := func(prompt string) error { return runner.Run(ctx, prompt) }
+	if err := run(prompt); err != nil {
+		return err
+	}
+	objs := abapTracker.Objects()
+	rep.Objects(objs)
+	if noVerify || len(objs) == 0 {
+		return failedDeploys(objs)
+	}
+	c, err := newABAPClient()
+	if err != nil {
+		return fmt.Errorf("verification: %w", err)
+	}
+	return verifyAndRepair(ctx, c, run, repairTurns, rep)
 }
 
-func verifyAndRepair(ctx context.Context, c abap.Checker, run func(string) error, repairTurns int) error {
+func verifyAndRepair(ctx context.Context, c abap.Checker, run func(string) error, repairTurns int, rep codeReporter) error {
 	for round := 0; ; round++ {
-		fmt.Fprintln(os.Stderr, "\nVerifying SAP objects…")
+		rep.Verifying()
 		results := abap.Verify(c, abapTracker.Objects())
-		fmt.Fprintln(os.Stderr, abap.Report(results))
+		rep.Verified(round, results)
 		if abap.AllPassed(results) {
 			return nil
 		}
 		if round >= repairTurns {
 			return fmt.Errorf("verification failed after %d repair round(s)", repairTurns)
 		}
-		fmt.Fprintf(os.Stderr, "\nRepair round %d of %d…\n", round+1, repairTurns)
+		rep.Repairing(round+1, repairTurns)
 		if err := run(abap.RepairPrompt(results)); err != nil {
 			if ctx.Err() != nil {
 				return ctx.Err()

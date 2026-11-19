@@ -29,4 +29,7 @@ Thumbs.db
 
 # Build artifacts
 dist/
-.claude/
+
+# Claude Code: local settings stay untracked; shared slash commands are tracked
+.claude/*
+!.claude/commands/

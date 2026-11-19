@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.65.0](https://github.com/bluefunda/bluefunda-ai/compare/v1.64.1...v1.65.0) (2026-11-19)
+
+
+### Features
+
+* **tui:** collapse narration between tool calls, toggle with Ctrl+O ([#402](https://github.com/bluefunda/bluefunda-ai/issues/402)) ([abd5e65](https://github.com/bluefunda/bluefunda-ai/commit/abd5e65d6ea829dd0154626643e80a23e72bfac8))
+
 ## [1.64.1](https://github.com/bluefunda/bluefunda-ai/compare/v1.64.0...v1.64.1) (2026-11-10)
 
 

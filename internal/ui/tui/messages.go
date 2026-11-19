@@ -44,6 +44,13 @@ type ChatMessage struct {
 	Timestamp   time.Time
 	rendered    string // cached glamour-rendered form of Content (assistant only)
 	renderWidth int    // width used when rendered was produced
+	renderFull  bool   // whether rendered covers the full Content or only the answer
+
+	// narrationEnd is len(Content) when the most recent tool call arrived.
+	// Text before it preceded further tool calls in the same turn, so it is
+	// treated as narration and collapsed by default (#330); text after it is
+	// the answer (or narration still streaming).
+	narrationEnd int
 }
 
 func newUserMessage(text string) ChatMessage {
@@ -96,6 +103,42 @@ func (m *ChatMessage) appendChunk(chunk string) {
 // addToolEvent appends a tool event to the message.
 func (m *ChatMessage) addToolEvent(ev ToolEvent) {
 	m.ToolEvents = append(m.ToolEvents, ev)
+	if ev.Kind == ToolCall && m.narrationEnd != len(m.Content) {
+		m.narrationEnd = len(m.Content)
+		m.rendered = ""
+	}
+}
+
+// splitNarration splits Content into the narration that preceded the turn's
+// last tool call and the answer that follows it. The split is a heuristic:
+// the BFF streams reasoning as plain content with no distinct event type, so
+// "text followed by another tool call" is the only signal available (#330).
+func (m *ChatMessage) splitNarration() (narration, answer string) {
+	end := m.narrationEnd
+	if end > len(m.Content) {
+		end = len(m.Content)
+	}
+	narration = m.Content[:end]
+	if strings.TrimSpace(narration) == "" {
+		return "", m.Content
+	}
+	return narration, m.Content[end:]
+}
+
+// narrationSummary is the one-line indicator shown in place of collapsed
+// narration.
+func narrationSummary(narration string) string {
+	lines := 0
+	for _, l := range strings.Split(strings.TrimSpace(narration), "\n") {
+		if strings.TrimSpace(l) != "" {
+			lines++
+		}
+	}
+	unit := "lines"
+	if lines == 1 {
+		unit = "line"
+	}
+	return fmt.Sprintf("✻ %d %s of narration hidden (ctrl+o to expand)", lines, unit)
 }
 
 // finishStreaming marks the message as no longer streaming.

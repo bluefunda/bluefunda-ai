@@ -262,6 +262,10 @@ type Model struct {
 	vpReady  bool
 	atBottom bool
 
+	// showNarration expands assistant narration that preceded tool calls
+	// (toggled with Ctrl+O, #330). Collapsed by default.
+	showNarration bool
+
 	// Input area
 	textarea     textarea.Model
 	inputHistory []string
@@ -620,6 +624,13 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		// Clear conversation display
 		m.messages = m.messages[:0]
 		m.messages = append(m.messages, newSystemMessage("Screen cleared."))
+		m.refreshViewport()
+		return m, nil
+
+	case "ctrl+o":
+		// Toggle collapsed inter-tool-call narration (#330), like Claude Code's
+		// Ctrl+O transcript toggle.
+		m.showNarration = !m.showNarration
 		m.refreshViewport()
 		return m, nil
 
@@ -1372,6 +1383,7 @@ func helpText() string {
 		"  Ctrl+C          Interrupt turn (or quit when idle)",
 		"  Ctrl+D          Quit",
 		"  Ctrl+Y          Copy last response",
+		"  Ctrl+O          Show/hide narration between tool calls",
 		"  PgUp/PgDn      Scroll conversation",
 		"",
 		"  Slash commands",

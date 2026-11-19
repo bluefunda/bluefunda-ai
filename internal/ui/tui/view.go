@@ -160,9 +160,14 @@ func (m *Model) renderMessageAt(idx, width int) string {
 			sb.WriteByte('\n')
 		}
 
-		if msg.Content != "" {
+		narration, answer := msg.splitNarration()
+		if narration != "" && !m.showNarration {
+			sb.WriteString("  " + th.ToolDim.Render(narrationSummary(narration)) + "\n")
+		}
+
+		if (m.showNarration && msg.Content != "") || answer != "" {
 			sb.WriteString(m.renderMarkdownAt(idx, width))
-		} else if msg.Streaming && len(msg.ToolEvents) == 0 {
+		} else if msg.Content == "" && msg.Streaming && len(msg.ToolEvents) == 0 {
 			sb.WriteString("  " + th.ToolDim.Render("working..."))
 		}
 
@@ -176,14 +181,20 @@ func (m *Model) renderMessageAt(idx, width int) string {
 // width) so we don't re-render on every spinner tick.
 func (m *Model) renderMarkdownAt(i, width int) string {
 	msg := &m.messages[i]
-	if msg.rendered != "" && msg.renderWidth == width {
+	full := m.showNarration
+	if msg.rendered != "" && msg.renderWidth == width && msg.renderFull == full {
 		return msg.rendered
 	}
 
-	rendered := renderMixed(msg.Content, width, m.theme)
+	content := msg.Content
+	if !full {
+		_, content = msg.splitNarration()
+	}
+	rendered := renderMixed(content, width, m.theme)
 
 	msg.rendered = rendered
 	msg.renderWidth = width
+	msg.renderFull = full
 	return rendered
 }
 

@@ -1104,8 +1104,8 @@ func agenticLoopTUI(
 					}
 					return history, fmt.Errorf(
 						"context window limit hit %d times for %s (est. %dk tokens) — "+
-							"try a model with a larger context window or use --max-context-tokens",
-						maxContextRetries, mdl, estimateTokens(history)/1000,
+							"try a model with a larger context window or use --max-context-tokens (last error: %v)",
+						maxContextRetries, mdl, estimateTokens(history)/1000, err,
 					)
 				}
 				ch <- tui.StreamEvent{Kind: "chunk", Chunk: "\n⚠ Context too large — dropping older messages and retrying...\n"}
@@ -1179,14 +1179,8 @@ func agenticLoopTUI(
 				Content:    r.result,
 				ToolCallID: tc.ID,
 			})
-			if r.err != nil {
-				ch <- tui.StreamEvent{
-					Kind:     "tool_exec",
-					ToolName: tc.Name,
-					Status:   "error",
-					Summary:  r.err.Error(),
-				}
-			}
+			// Failures were already reported by executeWithApprovalTUI: a
+			// second report would mark the next call of the tool as failed.
 		}
 	}
 
@@ -1379,23 +1373,6 @@ func estimateTokens(history []codeMessage) int {
 	return chars / 4
 }
 
-// dropOldestTurns removes non-system messages from the front of history until
-// estimateTokens is below targetTokens. System messages are always preserved.
-func dropOldestTurns(history []codeMessage, targetTokens int) []codeMessage {
-	var sysMsgs, convo []codeMessage
-	for _, m := range history {
-		if m.Role == "system" {
-			sysMsgs = append(sysMsgs, m)
-		} else {
-			convo = append(convo, m)
-		}
-	}
-	for len(convo) > 0 && estimateTokens(append(sysMsgs, convo...)) > targetTokens {
-		convo = convo[1:]
-	}
-	return append(sysMsgs, convo...)
-}
-
 // modelPrice holds approximate per-million-token pricing for one model.
 type modelPrice struct {
 	inputPerMToken  float64 // USD per 1M prompt tokens
@@ -1521,16 +1498,7 @@ summarised:
 		Role:    "system",
 		Content: "[Conversation summary]\n" + summary,
 	})
-	tail := history
-	if len(tail) > 4 {
-		tail = tail[len(tail)-4:]
-	}
-	// Drop leading non-user messages from the tail so the first turn after
-	// the summary is always a user turn, preserving proper alternation.
-	for len(tail) > 0 && tail[0].Role != "user" {
-		tail = tail[1:]
-	}
-	compact = append(compact, tail...)
+	compact = append(compact, recentTail(history, 4)...)
 	return compact, nil
 }
 
@@ -1771,11 +1739,16 @@ func executeWithApprovalTUI(
 	p *ui.Printer,
 	ch chan<- tui.StreamEvent,
 ) (string, error) {
+	if strings.TrimSpace(tc.Arguments) == "" {
+		tc.Arguments = "{}" // no-argument call sent as "" by some models
+	}
+
 	// --- Plan mode (hard policy — checked before hooks/permissions/--auto) ---
 	if planMode && isPlanModeBlocked(tc.Name, tc.Arguments) {
 		msg := fmt.Sprintf("📝 Blocked by plan mode (read-only): %s — type /plan to allow changes.", tc.Name)
 		auditLog.LogToolCall(tc.Name, tc.Arguments, false, false)
 		auditLog.LogToolResult(tc.Name, 0, false)
+		reportNotRun(ch, tc.Name, "blocked by plan mode")
 		return msg, nil
 	}
 
@@ -1788,6 +1761,7 @@ func executeWithApprovalTUI(
 		}
 		auditLog.LogToolCall(tc.Name, tc.Arguments, false, false)
 		auditLog.LogToolResult(tc.Name, 0, false)
+		reportNotRun(ch, tc.Name, "blocked by pre-tool hook")
 		return msg, nil
 	}
 	// Use modified input if hook rewrote it.
@@ -1807,6 +1781,7 @@ func executeWithApprovalTUI(
 	case tools.PermitDeny:
 		auditLog.LogToolCall(tc.Name, argsJSON, false, false)
 		auditLog.LogToolResult(tc.Name, 0, false)
+		reportNotRun(ch, tc.Name, "blocked by permissions policy")
 		return fmt.Sprintf("Tool call blocked by permissions policy: %s", tc.Name), nil
 	case tools.PermitAuto:
 		effectiveAutoApply = true
@@ -1853,8 +1828,10 @@ func executeWithApprovalTUI(
 			auditLog.LogToolCall(tc.Name, argsJSON, false, false)
 			auditLog.LogToolResult(tc.Name, 0, false)
 			if fb := strings.TrimSpace(decision.Feedback); fb != "" {
+				reportNotRun(ch, tc.Name, "declined")
 				return "User declined to execute this tool and said what to do instead: " + fb, nil
 			}
+			reportNotRun(ch, tc.Name, "declined")
 			return "User declined to execute this tool.", nil
 		}
 	}
@@ -1899,9 +1876,15 @@ func executeWithApprovalTUI(
 	}
 
 	if execErr != nil {
-		return "Error: " + execErr.Error(), execErr
+		return "Error: " + tools.CapOutput(execErr.Error(), tools.MaxOutputChars), execErr
 	}
-	return result, nil
+	return tools.CapOutput(result, tools.MaxOutputChars), nil
+}
+
+// reportNotRun tells the UI a tool call ended without running, so its row
+// doesn't stay "running". Every call gets exactly one tool_exec event.
+func reportNotRun(ch chan<- tui.StreamEvent, name, why string) {
+	ch <- tui.StreamEvent{Kind: "tool_exec", ToolName: name, Status: "error", Summary: why}
 }
 
 // buildCodeRequest constructs the gRPC ChatRequest for one agentic iteration.

@@ -47,6 +47,9 @@ var pathArgNames = map[string]string{
 // Execute dispatches a tool call to the appropriate local implementation.
 // Arguments is the JSON string from the LLM tool call.
 func Execute(name, argumentsJSON string) (string, error) {
+	if strings.TrimSpace(argumentsJSON) == "" {
+		argumentsJSON = "{}" // no-argument call sent as "" by some models
+	}
 	if t, ok := lookupPackTool(name); ok {
 		return t.Handler(context.Background(), argumentsJSON)
 	}

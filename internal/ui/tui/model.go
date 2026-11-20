@@ -44,6 +44,7 @@ type StreamDoneMsg struct{ Err error }
 type InterruptedMsg struct{}
 type StreamErrorMsg struct{ Msg string }
 type ApprovalRequestMsg struct {
+	ToolID      string
 	ToolName    string
 	Args        string
 	ReplyCh     chan ApprovalDecision
@@ -204,7 +205,7 @@ type UsageInfo struct {
 // StreamEvent is a discriminated union of all events that can arrive from a
 // gRPC stream. The BubbleTea cmd reads one event from the channel per tick.
 type StreamEvent struct {
-	Kind string // "chunk"|"tool_call"|"tool_exec"|"progress"|"heartbeat"|"approval"|"done"|"error"|"rate_limited"|"usage_warning"|"live_usage_pct"
+	Kind string // "chunk"|"tool_call"|"tool_start"|"tool_exec"|"progress"|"heartbeat"|"approval"|"done"|"error"|"rate_limited"|"usage_warning"|"live_usage_pct"
 	// chunk
 	Chunk string
 	// tool_call / tool_exec / approval
@@ -1502,15 +1503,22 @@ func (m *Model) handleStreamEvent(ev StreamEvent) []tea.Cmd {
 		last := m.ensureAssistantMsg()
 		m.messages[last].addToolEvent(ToolEvent{
 			Kind: ToolCall,
+			ID:   ev.ToolID,
 			Name: ev.ToolName,
 			Args: ev.ToolArgs,
 		})
+		cmds = append(cmds, waitForStreamEvent(m.streamCh, m.streamStop))
+
+	case "tool_start":
+		last := m.ensureAssistantMsg()
+		m.messages[last].addToolEvent(ToolEvent{Kind: ToolStart, ID: ev.ToolID, Name: ev.ToolName})
 		cmds = append(cmds, waitForStreamEvent(m.streamCh, m.streamStop))
 
 	case "tool_exec":
 		last := m.ensureAssistantMsg()
 		m.messages[last].addToolEvent(ToolEvent{
 			Kind:       ToolExec,
+			ID:         ev.ToolID,
 			Name:       ev.ToolName,
 			Status:     ev.Status,
 			DurationMs: ev.DurationMs,
@@ -1538,7 +1546,7 @@ func (m *Model) handleStreamEvent(ev StreamEvent) []tea.Cmd {
 	case "approval":
 		// The stream goroutine already created a reply channel; store it.
 		// The stream pump is suspended until handleApprovalKey sends the answer.
-		ap := ApprovalRequestMsg{ToolName: ev.ToolName, Args: ev.ToolArgs, ReplyCh: ev.ReplyCh, AlwaysLabel: ev.AlwaysLabel}
+		ap := ApprovalRequestMsg{ToolID: ev.ToolID, ToolName: ev.ToolName, Args: ev.ToolArgs, ReplyCh: ev.ReplyCh, AlwaysLabel: ev.AlwaysLabel}
 		m.pendingApproval = &ap
 		m.approvalIdx = 0
 		*m = m.handleResize()

@@ -19,6 +19,7 @@ const (
 // ToolEvent holds a single tool-lifecycle event within an assistant turn.
 type ToolEvent struct {
 	Kind       ToolEventKind
+	ID         string // the call's ID; pairs results and notes with their call
 	Name       string
 	Args       string
 	Status     string // "ok" | "error"
@@ -35,6 +36,7 @@ const (
 	ToolExec     ToolEventKind = iota
 	ToolProgress ToolEventKind = iota
 	ToolNote     ToolEventKind = iota // approval outcome, shown under its call
+	ToolStart    ToolEventKind = iota // the call began executing
 )
 
 // ChatMessage is one logical message in the conversation.
@@ -226,7 +228,9 @@ func toolArgSummary(argsJSON string) string {
 
 // toolRow is one tool call as displayed: the call merged with its result.
 type toolRow struct {
+	id         string
 	name, args string
+	queued     bool // waiting for an earlier call of the same round to finish
 	done       bool
 	ok         bool
 	durationMs int64
@@ -234,35 +238,65 @@ type toolRow struct {
 	note       string // approval outcome, e.g. "declined: use make clean"
 }
 
-// toolRows merges the message's tool events into one row per call: a call
-// is paired with the first later result for the same tool. Progress events
-// are dropped — the rows themselves show progress.
+// toolRows merges the message's tool events into one row per call. A result,
+// start or note goes to the call with the same ID; events without an ID
+// (server-side tools) fall back to the oldest unfinished call of that name.
+// Once the producer reports starts, unstarted calls show as queued. Progress
+// events are dropped — the rows themselves show progress.
 func toolRows(events []ToolEvent) []toolRow {
 	var rows []toolRow
+	starts := false
+	find := func(ev ToolEvent, open bool) int {
+		if ev.ID != "" {
+			for i := range rows {
+				if rows[i].id == ev.ID {
+					return i
+				}
+			}
+		}
+		for i := range rows {
+			if rows[i].name == ev.Name && (!open || !rows[i].done) && (ev.ID == "" || rows[i].id == "") {
+				return i
+			}
+		}
+		return -1
+	}
 	for _, ev := range events {
 		switch ev.Kind {
 		case ToolCall:
-			rows = append(rows, toolRow{name: ev.Name, args: ev.Args})
+			rows = append(rows, toolRow{id: ev.ID, name: ev.Name, args: ev.Args, queued: true})
+		case ToolStart:
+			starts = true
+			if i := find(ev, true); i >= 0 {
+				rows[i].queued = false
+			}
 		case ToolExec:
-			paired := false
-			for i := range rows {
-				if !rows[i].done && rows[i].name == ev.Name {
-					rows[i].done, rows[i].ok = true, ev.Status == "ok"
-					rows[i].durationMs, rows[i].summary = ev.DurationMs, ev.Summary
-					paired = true
-					break
-				}
+			i := find(ev, true)
+			if i < 0 { // result without a call event (e.g. server-side tool)
+				rows = append(rows, toolRow{id: ev.ID, name: ev.Name})
+				i = len(rows) - 1
 			}
-			if !paired { // result without a call event (e.g. server-side tool)
-				rows = append(rows, toolRow{name: ev.Name, done: true, ok: ev.Status == "ok", durationMs: ev.DurationMs, summary: ev.Summary})
-			}
+			r := &rows[i]
+			r.queued, r.done, r.ok = false, true, ev.Status == "ok"
+			r.durationMs, r.summary = ev.DurationMs, ev.Summary
 		case ToolNote:
-			for i := len(rows) - 1; i >= 0; i-- {
-				if rows[i].name == ev.Name {
-					rows[i].note = ev.Summary
-					break
+			i := -1
+			if ev.ID != "" {
+				i = find(ev, false)
+			}
+			for j := len(rows) - 1; i < 0 && j >= 0; j-- {
+				if rows[j].name == ev.Name {
+					i = j
 				}
 			}
+			if i >= 0 {
+				rows[i].note = ev.Summary
+			}
+		}
+	}
+	if !starts {
+		for i := range rows {
+			rows[i].queued = false
 		}
 	}
 	return rows
@@ -379,6 +413,8 @@ func formatToolSummary(rows []toolRow, width int, th Theme) string {
 func formatToolRow(r toolRow, width int, th Theme) string {
 	var icon string
 	switch {
+	case r.queued:
+		icon = th.ToolDim.Render("○")
 	case !r.done:
 		icon = th.ToolIcon.Render("●")
 	case r.ok:
@@ -388,6 +424,9 @@ func formatToolRow(r toolRow, width int, th Theme) string {
 	}
 	line := "  " + icon + " " + th.ToolName.Render(r.name)
 	tail := ""
+	if r.queued {
+		tail = "  · queued"
+	}
 	if r.done {
 		tail = fmt.Sprintf("  · %.1fs", float64(r.durationMs)/1000)
 		if !r.ok && r.summary != "" {
@@ -400,7 +439,7 @@ func formatToolRow(r toolRow, width int, th Theme) string {
 	}
 	if tail != "" {
 		style := th.ToolDim
-		if !r.ok {
+		if r.done && !r.ok {
 			style = th.ToolError
 		}
 		line += style.Render(truncate(tail, max(width-10, 20)))

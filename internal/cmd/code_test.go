@@ -54,7 +54,7 @@ func TestExecuteTools_ParallelUnderAutoApply(t *testing.T) {
 	mcpMgr := mcp.NewManager(context.Background(), nil)
 	pluginMgr := plugins.NewManager(t.TempDir())
 	printer := &ui.Printer{Out: io.Discard, Err: io.Discard}
-	ch := make(chan tui.StreamEvent, n)
+	ch := make(chan tui.StreamEvent, 2*n) // tool_start + tool_exec per call
 
 	start := time.Now()
 	results := executeTools(toolCalls, nil, nil, true, false, nil, auditLog, hookRunner, mcpMgr, pluginMgr, printer, ch)

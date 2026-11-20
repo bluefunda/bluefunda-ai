@@ -1816,7 +1816,7 @@ func executeWithApprovalTUI(
 		msg := fmt.Sprintf("📝 Blocked by plan mode (read-only): %s — type /plan to allow changes.", tc.Name)
 		auditLog.LogToolCall(tc.Name, tc.Arguments, false, false)
 		auditLog.LogToolResult(tc.Name, 0, false)
-		reportNotRun(ch, tc.Name, "blocked by plan mode")
+		reportNotRun(ch, tc, "blocked by plan mode")
 		return msg, nil
 	}
 
@@ -1829,7 +1829,7 @@ func executeWithApprovalTUI(
 		}
 		auditLog.LogToolCall(tc.Name, tc.Arguments, false, false)
 		auditLog.LogToolResult(tc.Name, 0, false)
-		reportNotRun(ch, tc.Name, "blocked by pre-tool hook")
+		reportNotRun(ch, tc, "blocked by pre-tool hook")
 		return msg, nil
 	}
 	// Use modified input if hook rewrote it.
@@ -1849,7 +1849,7 @@ func executeWithApprovalTUI(
 	case tools.PermitDeny:
 		auditLog.LogToolCall(tc.Name, argsJSON, false, false)
 		auditLog.LogToolResult(tc.Name, 0, false)
-		reportNotRun(ch, tc.Name, "blocked by permissions policy")
+		reportNotRun(ch, tc, "blocked by permissions policy")
 		return fmt.Sprintf("Tool call blocked by permissions policy: %s", tc.Name), nil
 	case tools.PermitAuto:
 		effectiveAutoApply = true
@@ -1882,6 +1882,7 @@ func executeWithApprovalTUI(
 		_, _, alwaysLabel := alwaysScope(tc.Name, argsJSON)
 		ch <- tui.StreamEvent{
 			Kind:        "approval",
+			ToolID:      tc.ID,
 			ToolName:    tc.Name,
 			ToolArgs:    argsJSON,
 			ReplyCh:     replyCh,
@@ -1896,10 +1897,10 @@ func executeWithApprovalTUI(
 			auditLog.LogToolCall(tc.Name, argsJSON, false, false)
 			auditLog.LogToolResult(tc.Name, 0, false)
 			if fb := strings.TrimSpace(decision.Feedback); fb != "" {
-				reportNotRun(ch, tc.Name, "declined")
+				reportNotRun(ch, tc, "declined")
 				return "User declined to execute this tool and said what to do instead: " + fb, nil
 			}
-			reportNotRun(ch, tc.Name, "declined")
+			reportNotRun(ch, tc, "declined")
 			return "User declined to execute this tool.", nil
 		}
 	}
@@ -1907,6 +1908,9 @@ func executeWithApprovalTUI(
 	auditLog.LogToolCall(tc.Name, argsJSON, approved, autoApproved)
 
 	// --- Execute ---
+	// The row turns from queued to running (several calls from one round
+	// run one at a time).
+	ch <- tui.StreamEvent{Kind: "tool_start", ToolID: tc.ID, ToolName: tc.Name}
 	start := time.Now()
 	var result string
 	var execErr error
@@ -1937,6 +1941,7 @@ func executeWithApprovalTUI(
 	}
 	ch <- tui.StreamEvent{
 		Kind:       "tool_exec",
+		ToolID:     tc.ID,
 		ToolName:   tc.Name,
 		Status:     status,
 		DurationMs: elapsed.Milliseconds(),
@@ -1951,8 +1956,8 @@ func executeWithApprovalTUI(
 
 // reportNotRun tells the UI a tool call ended without running, so its row
 // doesn't stay "running". Every call gets exactly one tool_exec event.
-func reportNotRun(ch chan<- tui.StreamEvent, name, why string) {
-	ch <- tui.StreamEvent{Kind: "tool_exec", ToolName: name, Status: "error", Summary: why}
+func reportNotRun(ch chan<- tui.StreamEvent, tc ui.ToolCallEvent, why string) {
+	ch <- tui.StreamEvent{Kind: "tool_exec", ToolID: tc.ID, ToolName: tc.Name, Status: "error", Summary: why}
 }
 
 // buildCodeRequest constructs the gRPC ChatRequest for one agentic iteration.

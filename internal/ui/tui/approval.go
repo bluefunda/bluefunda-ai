@@ -156,7 +156,7 @@ func (m Model) answerApproval(d ApprovalDecision) (tea.Model, tea.Cmd) {
 		// Under the call's row, not as a message of its own: a message here
 		// would end the response and start a new one for the next events.
 		if i := m.streamingAssistant(); i >= 0 {
-			m.messages[i].addToolEvent(ToolEvent{Kind: ToolNote, Name: name, Summary: note})
+			m.messages[i].addToolEvent(ToolEvent{Kind: ToolNote, ID: ap.ToolID, Name: name, Summary: note})
 		} else {
 			m.messages = append(m.messages, newSystemMessage("  "+note))
 		}

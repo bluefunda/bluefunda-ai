@@ -1179,11 +1179,29 @@ func (m *Model) updateSlashMenu() {
 	}
 }
 
-func (m *Model) ensureAssistantMsg() {
-	if len(m.messages) == 0 || m.messages[len(m.messages)-1].Role != RoleAssistant ||
-		!m.messages[len(m.messages)-1].Streaming {
-		m.messages = append(m.messages, newAssistantMessage())
+// ensureAssistantMsg returns the index of the response being streamed,
+// starting one if there is none. Notes added after it (a usage warning)
+// don't split the response: events keep going to the same message.
+func (m *Model) ensureAssistantMsg() int {
+	if i := m.streamingAssistant(); i >= 0 {
+		return i
 	}
+	m.messages = append(m.messages, newAssistantMessage())
+	return len(m.messages) - 1
+}
+
+// streamingAssistant returns the index of the assistant message still
+// streaming in the current turn, or -1.
+func (m *Model) streamingAssistant() int {
+	for i := len(m.messages) - 1; i >= 0; i-- {
+		switch {
+		case m.messages[i].Role == RoleUser:
+			return -1
+		case m.messages[i].Role == RoleAssistant && m.messages[i].Streaming:
+			return i
+		}
+	}
+	return -1
 }
 
 // effectiveInputRows computes the visual row count for the current textarea
@@ -1476,14 +1494,12 @@ func (m *Model) handleStreamEvent(ev StreamEvent) []tea.Cmd {
 
 	switch ev.Kind {
 	case "chunk":
-		m.ensureAssistantMsg()
-		last := len(m.messages) - 1
+		last := m.ensureAssistantMsg()
 		m.messages[last].appendChunk(ev.Chunk)
 		cmds = append(cmds, waitForStreamEvent(m.streamCh, m.streamStop))
 
 	case "tool_call":
-		m.ensureAssistantMsg()
-		last := len(m.messages) - 1
+		last := m.ensureAssistantMsg()
 		m.messages[last].addToolEvent(ToolEvent{
 			Kind: ToolCall,
 			Name: ev.ToolName,
@@ -1492,8 +1508,7 @@ func (m *Model) handleStreamEvent(ev StreamEvent) []tea.Cmd {
 		cmds = append(cmds, waitForStreamEvent(m.streamCh, m.streamStop))
 
 	case "tool_exec":
-		m.ensureAssistantMsg()
-		last := len(m.messages) - 1
+		last := m.ensureAssistantMsg()
 		m.messages[last].addToolEvent(ToolEvent{
 			Kind:       ToolExec,
 			Name:       ev.ToolName,
@@ -1504,8 +1519,7 @@ func (m *Model) handleStreamEvent(ev StreamEvent) []tea.Cmd {
 		cmds = append(cmds, waitForStreamEvent(m.streamCh, m.streamStop))
 
 	case "progress":
-		m.ensureAssistantMsg()
-		last := len(m.messages) - 1
+		last := m.ensureAssistantMsg()
 		m.messages[last].addToolEvent(ToolEvent{
 			Kind:      ToolProgress,
 			Iteration: ev.Iteration,
@@ -1514,8 +1528,7 @@ func (m *Model) handleStreamEvent(ev StreamEvent) []tea.Cmd {
 		cmds = append(cmds, waitForStreamEvent(m.streamCh, m.streamStop))
 
 	case "thinking":
-		m.ensureAssistantMsg()
-		last := len(m.messages) - 1
+		last := m.ensureAssistantMsg()
 		m.messages[last].appendThinking(ev.Chunk)
 		cmds = append(cmds, waitForStreamEvent(m.streamCh, m.streamStop))
 

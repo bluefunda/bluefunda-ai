@@ -34,6 +34,7 @@ const (
 	ToolCall     ToolEventKind = iota
 	ToolExec     ToolEventKind = iota
 	ToolProgress ToolEventKind = iota
+	ToolNote     ToolEventKind = iota // approval outcome, shown under its call
 )
 
 // ChatMessage is one logical message in the conversation.
@@ -223,10 +224,6 @@ func toolArgSummary(argsJSON string) string {
 	return argsJSON
 }
 
-// visibleToolRows is how many of the most recent tool calls an assistant
-// message shows while collapsed; older ones fold into one summary line.
-const visibleToolRows = 5
-
 // toolRow is one tool call as displayed: the call merged with its result.
 type toolRow struct {
 	name, args string
@@ -234,6 +231,7 @@ type toolRow struct {
 	ok         bool
 	durationMs int64
 	summary    string
+	note       string // approval outcome, e.g. "declined: use make clean"
 }
 
 // toolRows merges the message's tool events into one row per call: a call
@@ -258,39 +256,122 @@ func toolRows(events []ToolEvent) []toolRow {
 			if !paired { // result without a call event (e.g. server-side tool)
 				rows = append(rows, toolRow{name: ev.Name, done: true, ok: ev.Status == "ok", durationMs: ev.DurationMs, summary: ev.Summary})
 			}
+		case ToolNote:
+			for i := len(rows) - 1; i >= 0; i-- {
+				if rows[i].name == ev.Name {
+					rows[i].note = ev.Summary
+					break
+				}
+			}
 		}
 	}
 	return rows
 }
 
-// renderToolRows draws a message's tool calls, one line each. Collapsed, only
-// the last visibleToolRows are shown under a "… N earlier tool calls" line.
+// collapsedToolRows is how many finished calls are still listed one per
+// line while collapsed; more than that fold into one summary line.
+const collapsedToolRows = 2
+
+// renderToolRows draws a message's tool calls. Expanded (Ctrl+O), every call
+// gets a line. Collapsed, as in Claude Code, finished calls fold into one
+// line ("ran 4 commands, read 3 files · 1 failed") and only calls still
+// running are listed.
 func renderToolRows(events []ToolEvent, expanded bool, width int, th Theme) string {
 	rows := toolRows(events)
 	if len(rows) == 0 {
 		return ""
 	}
-	var sb strings.Builder
-	if !expanded && len(rows) > visibleToolRows {
-		hidden := rows[:len(rows)-visibleToolRows]
-		failed := 0
-		for _, r := range hidden {
-			if r.done && !r.ok {
-				failed++
-			}
-		}
-		line := fmt.Sprintf("… %d earlier tool calls", len(hidden))
-		if failed > 0 {
-			line += fmt.Sprintf(", %d failed", failed)
-		}
-		sb.WriteString("  " + th.ToolDim.Render(line+"  (ctrl+o to expand)") + "\n")
-		rows = rows[len(rows)-visibleToolRows:]
-	}
+	var done, running []toolRow
 	for _, r := range rows {
+		if r.done {
+			done = append(done, r)
+		} else {
+			running = append(running, r)
+		}
+	}
+	var sb strings.Builder
+	list := rows
+	if !expanded && len(done) > collapsedToolRows {
+		sb.WriteString(formatToolSummary(done, width, th))
+		sb.WriteByte('\n')
+		list = running
+	}
+	for _, r := range list {
 		sb.WriteString(formatToolRow(r, width, th))
 		sb.WriteByte('\n')
+		if r.note != "" {
+			sb.WriteString("    " + th.ToolDim.Render(truncate("⎿ "+r.note, max(width-6, 20))) + "\n")
+		}
 	}
 	return sb.String()
+}
+
+// toolVerbs groups tools under the phrase the summary line uses for them.
+var toolVerbs = map[string][2]string{ // name → {singular, plural} with %d
+	"bash":           {"ran %d command", "ran %d commands"},
+	"read_file":      {"read %d file", "read %d files"},
+	"read_notebook":  {"read %d file", "read %d files"},
+	"list_dir":       {"listed %d directory", "listed %d directories"},
+	"search_files":   {"searched %d time", "searched %d times"},
+	"search_content": {"searched %d time", "searched %d times"},
+	"write_file":     {"edited %d file", "edited %d files"},
+	"edit_file":      {"edited %d file", "edited %d files"},
+	"patch_file":     {"edited %d file", "edited %d files"},
+	"edit_notebook":  {"edited %d file", "edited %d files"},
+	"web_fetch":      {"fetched %d page", "fetched %d pages"},
+	"web_search":     {"searched the web %d time", "searched the web %d times"},
+	"task":           {"ran %d subagent", "ran %d subagents"},
+}
+
+// toolSummary phrases finished calls by kind, in order of first use:
+// "Ran 4 commands, read 3 files, called memory_list 2 times".
+func toolSummary(rows []toolRow) string {
+	type group struct {
+		one, many string
+		n         int
+	}
+	var groups []*group
+	byKey := map[string]*group{}
+	for _, r := range rows {
+		one, many := "called "+r.name, "called "+r.name+" %d times"
+		if v, ok := toolVerbs[r.name]; ok {
+			one, many = v[0], v[1]
+		}
+		g := byKey[many] // tools sharing a phrase share a count
+		if g == nil {
+			g = &group{one: one, many: many}
+			byKey[many] = g
+			groups = append(groups, g)
+		}
+		g.n++
+	}
+	parts := make([]string, len(groups))
+	for i, g := range groups {
+		if g.n == 1 {
+			parts[i] = strings.Replace(g.one, "%d", "1", 1)
+		} else {
+			parts[i] = fmt.Sprintf(g.many, g.n)
+		}
+	}
+	s := strings.Join(parts, ", ")
+	return strings.ToUpper(s[:1]) + s[1:]
+}
+
+// formatToolSummary is the collapsed line for finished calls.
+func formatToolSummary(rows []toolRow, width int, th Theme) string {
+	failed := 0
+	for _, r := range rows {
+		if !r.ok {
+			failed++
+		}
+	}
+	icon := th.ToolSuccess.Render("✓")
+	text := toolSummary(rows)
+	if failed > 0 {
+		icon = th.ToolError.Render("✓")
+		text += fmt.Sprintf(" · %d failed", failed)
+	}
+	return "  " + icon + " " + th.ToolDim.Render(truncate(text, max(width-24, 20))+"  (ctrl+o to expand)")
 }
 
 // formatToolRow renders one call: icon, tool, its key argument, then the

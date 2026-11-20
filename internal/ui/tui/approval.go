@@ -146,13 +146,21 @@ func (m Model) answerApproval(d ApprovalDecision) (tea.Model, tea.Cmd) {
 		}
 		note = "✓ " + name + " allowed (won't ask again for " + scope + " this session)"
 	case d.Approved:
-		note = "✓ " + name + " allowed"
+		// Plain yes: the call's own row shows it running; no note needed.
 	case d.Feedback != "":
 		note = "✗ " + name + " declined: " + d.Feedback
 	default:
 		note = "✗ " + name + " declined"
 	}
-	m.messages = append(m.messages, newSystemMessage("  "+note))
+	if note != "" {
+		// Under the call's row, not as a message of its own: a message here
+		// would end the response and start a new one for the next events.
+		if i := m.streamingAssistant(); i >= 0 {
+			m.messages[i].addToolEvent(ToolEvent{Kind: ToolNote, Name: name, Summary: note})
+		} else {
+			m.messages = append(m.messages, newSystemMessage("  "+note))
+		}
+	}
 
 	m.pendingApproval = nil
 	m.approvalIdx = 0

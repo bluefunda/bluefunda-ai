@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -1511,50 +1512,106 @@ type toolResult struct {
 	err    error
 }
 
-// sessionAllowSet tracks exact tool-name+arguments pairs approved via "always
-// allow for this session" (the 'a' key in the approval dialog). Deliberately
-// separate from the glob-based permissions.allow system (tools.CheckPermissions):
-// exact match means a command's own literal '*'/'?' characters are never
-// misinterpreted as wildcards, and approving one specific command never
-// silently broadens to riskier variants of it. A nil *sessionAllowSet behaves
-// as an always-empty set (contains = false) and a no-op add, so callers that
-// don't need this feature (e.g. tests) can pass nil safely.
+// sessionAllowSet holds the session's "don't ask again" approvals (option 2
+// in the permission dialog). Each approval is remembered at the broadest
+// scope that is still safe to state plainly in the dialog:
+//
+//   - bash: the command prefix of each segment that needed approval ("gh api",
+//     "python3"), matched segment by segment, so approving "gh api x" covers
+//     later "gh api y" calls but never "gh api y; rm -rf ~";
+//   - file-editing tools: all of them, like Claude Code's accept-edits mode
+//     (paths are still confined to the workspace by the tools themselves);
+//   - any other tool (MCP, plugin, task, memory): that tool.
+//
+// A bash command that can't be generalised safely (command substitution,
+// file redirection, …) falls back to its exact text. A nil *sessionAllowSet
+// is an always-empty set with a no-op add, so tests can pass nil.
 type sessionAllowSet struct {
-	mu    sync.Mutex
-	exact map[string]bool // key: toolName + "\x00" + argsJSON
+	mu           sync.Mutex
+	exact        map[string]bool // toolName + "\x00" + argsJSON
+	tools        map[string]bool // whole tools
+	bashPrefixes []string
 
-	// persistPath, when non-empty, opts this set into also writing "always
-	// allow" approvals to the local config at this path (#331) — set only
-	// when the project has explicitly enabled permissions.persist_always_allow
-	// and the workspace trust gate has been satisfied. Session-scoped
-	// behavior (the exact map above) is unconditional and unchanged either way.
+	// persistPath, when non-empty, opts this set into also writing approvals
+	// to the local config at this path (#331) — set only when the project
+	// enabled permissions.persist_always_allow and the workspace is trusted.
 	persistPath string
 }
 
+// editTools are approved together by "allow all edits".
+var editTools = []string{"write_file", "edit_file", "patch_file", "edit_notebook"}
+
 func newSessionAllowSet() *sessionAllowSet {
-	return &sessionAllowSet{exact: make(map[string]bool)}
+	return &sessionAllowSet{exact: make(map[string]bool), tools: make(map[string]bool)}
+}
+
+// alwaysScope works out what a "don't ask again" approval of this call
+// covers: the bash prefixes, the tools, and the label shown in the dialog.
+// Empty prefixes and tools mean "this exact call".
+func alwaysScope(toolName, argsJSON string) (prefixes, toolNames []string, label string) {
+	switch {
+	case toolName == "bash":
+		prefixes = tools.SuggestBashPrefixes(tools.ExtractPrimaryArg("bash", argsJSON))
+		if len(prefixes) == 0 {
+			return nil, nil, ""
+		}
+		quoted := make([]string, len(prefixes))
+		for i, p := range prefixes {
+			quoted[i] = "`" + p + "`"
+		}
+		return prefixes, nil, strings.Join(quoted, ", ") + " commands"
+	case slices.Contains(editTools, toolName):
+		return nil, editTools, "file edits"
+	default:
+		return nil, []string{toolName}, toolName
+	}
 }
 
 func (s *sessionAllowSet) add(toolName, argsJSON string) {
 	if s == nil {
 		return
 	}
+	prefixes, toolNames, _ := alwaysScope(toolName, argsJSON)
 	s.mu.Lock()
-	s.exact[toolName+"\x00"+argsJSON] = true
+	switch {
+	case len(prefixes) > 0:
+		for _, p := range prefixes {
+			if !slices.Contains(s.bashPrefixes, p) {
+				s.bashPrefixes = append(s.bashPrefixes, p)
+			}
+		}
+	case len(toolNames) > 0:
+		for _, t := range toolNames {
+			s.tools[t] = true
+		}
+	default:
+		s.exact[toolName+"\x00"+argsJSON] = true
+	}
 	persistPath := s.persistPath
 	s.mu.Unlock()
 	if persistPath != "" {
-		persistAlwaysAllow(persistPath, toolName, argsJSON)
+		persistAlwaysAllow(persistPath, toolName, argsJSON, prefixes, toolNames)
 	}
 }
 
-// persistAlwaysAllow writes a literal "<tool>:<arg>" rule (or bare "<tool>"
-// when there's no meaningful argument) to the local config at path. If the
-// extracted argument contains '*' or '?', it's skipped silently — the glob
-// matcher in internal/tools/permissions.go has no escape syntax, so there is
-// no safe literal representation, and the approval simply stays session-only
-// as it would have before this feature existed.
-func persistAlwaysAllow(path, toolName, argsJSON string) {
+// persistAlwaysAllow writes the approval as permissions.allow rules in the
+// local config at path: "bash:<prefix> *" per bash prefix (matched per
+// segment by tools.CheckPermissions), a bare tool name per tool, or else a
+// literal "<tool>:<arg>" rule. A literal argument containing '*' or '?' is
+// skipped — the glob matcher has no escape syntax — and stays session-only.
+func persistAlwaysAllow(path, toolName, argsJSON string, prefixes, toolNames []string) {
+	switch {
+	case len(prefixes) > 0:
+		for _, p := range prefixes {
+			_ = config.AddLocalAllowRule(path, "bash:"+p+" *")
+		}
+		return
+	case len(toolNames) > 0:
+		for _, t := range toolNames {
+			_ = config.AddLocalAllowRule(path, t)
+		}
+		return
+	}
 	arg := tools.ExtractPrimaryArg(toolName, argsJSON)
 	if strings.ContainsAny(arg, "*?") {
 		return
@@ -1572,7 +1629,11 @@ func (s *sessionAllowSet) contains(toolName, argsJSON string) bool {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return s.exact[toolName+"\x00"+argsJSON]
+	if s.exact[toolName+"\x00"+argsJSON] || s.tools[toolName] {
+		return true
+	}
+	return toolName == "bash" && len(s.bashPrefixes) > 0 &&
+		tools.BashAllowedByPrefixes(tools.ExtractPrimaryArg("bash", argsJSON), s.bashPrefixes)
 }
 
 // executeTools runs toolCalls sequentially or concurrently depending on whether
@@ -1747,11 +1808,13 @@ func executeWithApprovalTUI(
 	approved := !needsApproval || effectiveAutoApply || sessionApproved
 	if needsApproval && !effectiveAutoApply && !sessionApproved {
 		replyCh := make(chan tui.ApprovalDecision, 1)
+		_, _, alwaysLabel := alwaysScope(tc.Name, argsJSON)
 		ch <- tui.StreamEvent{
-			Kind:     "approval",
-			ToolName: tc.Name,
-			ToolArgs: argsJSON,
-			ReplyCh:  replyCh,
+			Kind:        "approval",
+			ToolName:    tc.Name,
+			ToolArgs:    argsJSON,
+			ReplyCh:     replyCh,
+			AlwaysLabel: alwaysLabel,
 		}
 		decision := <-replyCh
 		approved = decision.Approved

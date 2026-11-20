@@ -45,16 +45,17 @@ type StreamDoneMsg struct{ Err error }
 type InterruptedMsg struct{}
 type StreamErrorMsg struct{ Msg string }
 type ApprovalRequestMsg struct {
-	ToolName string
-	Args     string
-	ReplyCh  chan ApprovalDecision
+	ToolName    string
+	Args        string
+	ReplyCh     chan ApprovalDecision
+	AlwaysLabel string // option 2's scope, e.g. "`gh api` commands"; "" = this exact call
 }
 type ApprovalResponseMsg struct{ Approved bool }
 
 // ApprovalDecision is the user's response to a tool-approval prompt.
 type ApprovalDecision struct {
 	Approved    bool
-	AlwaysAllow bool   // remember this exact tool+args for the rest of the session
+	AlwaysAllow bool   // don't ask again this session for the scope in AlwaysLabel
 	Feedback    string // on decline: what the user wants done instead (option 3)
 }
 
@@ -216,8 +217,9 @@ type StreamEvent struct {
 	// progress
 	Iteration int
 	Tools     []string
-	// approval: reply channel
-	ReplyCh chan ApprovalDecision
+	// approval: reply channel, and what option 2 ("don't ask again") covers
+	ReplyCh     chan ApprovalDecision
+	AlwaysLabel string
 	// done / error
 	Err    error
 	ErrMsg string
@@ -1648,7 +1650,7 @@ func (m *Model) handleStreamEvent(ev StreamEvent) []tea.Cmd {
 	case "approval":
 		// The stream goroutine already created a reply channel; store it.
 		// The stream pump is suspended until handleApprovalKey sends the answer.
-		ap := ApprovalRequestMsg{ToolName: ev.ToolName, Args: ev.ToolArgs, ReplyCh: ev.ReplyCh}
+		ap := ApprovalRequestMsg{ToolName: ev.ToolName, Args: ev.ToolArgs, ReplyCh: ev.ReplyCh, AlwaysLabel: ev.AlwaysLabel}
 		m.pendingApproval = &ap
 		m.approvalIdx = 0
 		*m = m.handleResize()

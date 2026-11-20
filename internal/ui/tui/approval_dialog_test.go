@@ -147,3 +147,19 @@ func TestApprovalDialog_FeedbackModeFitsTerminal(t *testing.T) {
 		t.Errorf("feedback view is %d lines tall in a %d-line terminal", h, m.height)
 	}
 }
+
+func TestApprovalDialog_AlwaysOptionNamesItsScope(t *testing.T) {
+	m := newTestModel("")
+	m.streaming = true
+	m.streamCh = make(chan StreamEvent)
+	m.streamStop = make(chan struct{})
+	m.handleStreamEvent(StreamEvent{Kind: "approval", ToolName: "bash", ToolArgs: `{"command":"gh pr create"}`,
+		ReplyCh: make(chan ApprovalDecision, 1), AlwaysLabel: "`gh pr` commands"})
+	if v := m.renderApproval(); !strings.Contains(v, "don't ask again for `gh pr` commands this session") {
+		t.Errorf("option 2 should name its scope:\n%s", v)
+	}
+	m.pendingApproval.AlwaysLabel = ""
+	if v := m.renderApproval(); !strings.Contains(v, "this exact call") {
+		t.Errorf("without a scope, option 2 should say exact call:\n%s", v)
+	}
+}

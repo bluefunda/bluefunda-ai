@@ -347,33 +347,14 @@ func IsReadOnlyTool(toolName string) bool {
 	return false
 }
 
-// safeBashPrefixes lists command prefixes that are safe to auto-approve without a
-// TUI confirmation prompt. Commands that mutate shared state (rm, git push, git reset)
-// are deliberately excluded.
-var safeBashPrefixes = []string{
-	"git status", "git log", "git diff", "git show", "git branch", "git stash list",
-	"git remote", "git tag", "git describe", "git rev-parse",
-	"go vet", "go build", "go test", "go mod tidy", "go mod verify", "go mod graph",
-	"go run", "go generate", "go list", "golangci-lint",
-	"make build", "make test", "make lint", "make vet", "make check", "make clean",
-	"ls", "ls -", "find ", "cat ", "head ", "tail ", "wc ", "stat ",
-	"echo ", "pwd", "which ", "env", "printenv",
-	"grep ", "rg ", "sed ", "awk ",
-	"npm test", "npm run", "npx ",
-}
-
-// IsSafeBashCommand returns true when the bash command JSON matches a known-safe
-// prefix and should be executed without a user approval prompt.
+// IsSafeBashCommand reports whether a bash tool call (its JSON arguments)
+// only reads state and can run without an approval prompt. Every segment of
+// a compound command must be read-only — see BashReadOnly.
 func IsSafeBashCommand(argumentsJSON string) bool {
 	var args map[string]any
 	if err := json.Unmarshal([]byte(argumentsJSON), &args); err != nil {
 		return false
 	}
-	cmd := strings.TrimSpace(fmt.Sprintf("%v", args["command"]))
-	for _, prefix := range safeBashPrefixes {
-		if strings.HasPrefix(cmd, prefix) {
-			return true
-		}
-	}
-	return false
+	cmd, _ := args["command"].(string)
+	return BashReadOnly(strings.TrimSpace(cmd))
 }

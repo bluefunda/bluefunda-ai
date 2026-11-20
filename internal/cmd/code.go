@@ -342,6 +342,13 @@ func runAgenticSession(args []string) error {
 		permAllow = projCfg.Permissions.Allow
 		permDeny = projCfg.Permissions.Deny
 	}
+	// User-wide rules from ~/.bai/settings.yaml apply in every directory.
+	if us, _, err := config.LoadUserSettings(); err != nil {
+		return fmt.Errorf("user settings: %w", err)
+	} else {
+		permAllow = mergePermissionRules(permAllow, us.Permissions.Allow)
+		permDeny = mergePermissionRules(permDeny, us.Permissions.Deny)
+	}
 	permDeny = mergePermissionRules(permDeny, sessionDeny)
 	permAllow = mergePermissionRules(permAllow, codeAllowedTools)
 	permDeny = mergePermissionRules(permDeny, codeDisallowedTools)

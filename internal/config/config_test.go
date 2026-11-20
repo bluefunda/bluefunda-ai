@@ -1023,3 +1023,28 @@ func TestLoad_MigratesFileTokensIntoWorkingKeychain(t *testing.T) {
 		t.Errorf("file should no longer hold tokens after migration:\n%s", raw)
 	}
 }
+
+func TestLoadUserSettings(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	s, path, err := LoadUserSettings()
+	if err != nil || len(s.Permissions.Allow) != 0 {
+		t.Fatalf("missing file should give empty settings: %v %+v", err, s)
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("permissions:\n  allow:\n    - \"bash:git fetch *\"\n  deny:\n    - \"bash:rm -rf *\"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	s, _, err = LoadUserSettings()
+	if err != nil || len(s.Permissions.Allow) != 1 || s.Permissions.Deny[0] != "bash:rm -rf *" {
+		t.Fatalf("got %+v, %v", s, err)
+	}
+	if err := os.WriteFile(path, []byte("permissions: [oops"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := LoadUserSettings(); err == nil {
+		t.Error("a broken settings file must be an error, not silently ignored")
+	}
+}

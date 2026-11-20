@@ -220,6 +220,16 @@ func wordsReadOnly(words []string) bool {
 		return false
 	}
 	switch prog {
+	case "for":
+		// The header of a for loop over literal words: for n in 1 2 3.
+		// (Command substitution was already rejected by ShellSegments.)
+		return len(args) >= 2 && args[1] == "in"
+	case "do":
+		// Loop body on the same line is judged as its own command; a bare
+		// "do" line (body on the next lines) runs nothing itself.
+		return len(args) == 0 || wordsReadOnly(args)
+	case "done":
+		return len(args) == 0
 	case "find":
 		return !has("-delete", "-exec", "-execdir", "-ok", "-okdir", "-fprint", "-fprint0", "-fprintf", "-fls")
 	case "sort":
@@ -329,9 +339,20 @@ sub:
 	case "stash":
 		return len(rest) > 0 && (rest[0] == "list" || rest[0] == "show")
 	case "config":
-		return len(rest) > 0 && (rest[0] == "--get" || rest[0] == "--list" || rest[0] == "-l" || rest[0] == "--get-all")
+		// Read forms only, after any scope/format options:
+		// git config --global --get user.email, git config -l.
+		for len(rest) > 0 && slices.Contains([]string{"--global", "--local", "--system", "--worktree",
+			"--show-origin", "--show-scope", "--name-only", "--includes", "-z", "--null"}, rest[0]) {
+			rest = rest[1:]
+		}
+		return len(rest) > 0 && slices.Contains([]string{"--get", "--get-all", "--get-regexp", "--list", "-l"}, rest[0])
 	case "reflog":
-		return len(rest) == 0 || rest[0] == "show"
+		// git reflog [show] [-N] [ref]; expire and delete rewrite it.
+		return len(rest) == 0 || (rest[0] != "expire" && rest[0] != "delete")
+	case "worktree":
+		return len(rest) > 0 && rest[0] == "list"
+	case "ls-remote":
+		return true
 	}
 	return false
 }

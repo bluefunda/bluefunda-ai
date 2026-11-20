@@ -1,6 +1,7 @@
 package config
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -424,6 +425,40 @@ func FindProjectConfig(cwd string) *ProjectConfig {
 		abs = parent
 	}
 	return nil
+}
+
+// UserSettings is the user-wide counterpart to the project settings: the
+// permissions in ~/.bai/settings.yaml apply in every directory, like Claude
+// Code's ~/.claude/settings.json. It is the user's own file, so unlike
+// .bai/settings.local.yaml it needs no workspace trust prompt.
+type UserSettings struct {
+	Permissions struct {
+		Allow []string `yaml:"allow"`
+		Deny  []string `yaml:"deny"`
+	} `yaml:"permissions"`
+}
+
+// LoadUserSettings reads ~/.bai/settings.yaml. A missing file yields empty
+// settings and no error; a file that doesn't parse is an error, so a typo
+// can't silently drop deny rules.
+func LoadUserSettings() (*UserSettings, string, error) {
+	dir, err := configDir()
+	if err != nil {
+		return nil, "", err
+	}
+	path := filepath.Join(dir, "settings.yaml")
+	var s UserSettings
+	data, err := os.ReadFile(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return &s, path, nil
+	}
+	if err != nil {
+		return nil, path, err
+	}
+	if err := yaml.Unmarshal(data, &s); err != nil {
+		return nil, path, fmt.Errorf("%s: %w", path, err)
+	}
+	return &s, path, nil
 }
 
 // Load reads the config from ~/.bai/config.yaml.

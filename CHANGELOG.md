@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.66.0](https://github.com/bluefunda/bluefunda-ai/compare/v1.65.0...v1.66.0) (2026-11-20)
+
+
+### Features
+
+* **code:** --allowed-tools / --disallowed-tools flags for per-run tool permissions ([#409](https://github.com/bluefunda/bluefunda-ai/issues/409)) ([29ab1b4](https://github.com/bluefunda/bluefunda-ai/commit/29ab1b454ff7831236873bc2a07cfbe3f05806d1))
+
 ## [1.65.0](https://github.com/bluefunda/bluefunda-ai/compare/v1.64.1...v1.65.0) (2026-11-19)
 
 

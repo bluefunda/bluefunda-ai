@@ -4,6 +4,7 @@ import (
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/x/ansi"
 )
 
 // The conversation is rendered the way Claude Code renders it: each finished
@@ -15,6 +16,18 @@ import (
 // scrollbackDoneMsg reports that a scrollback write has been handed to the
 // renderer, so the next one may start.
 type scrollbackDoneMsg struct{}
+
+// fitWidth hard-wraps every line of s to the terminal width. A line wider
+// than the terminal would be wrapped by the terminal itself, taking more rows
+// than the renderer counted, and the next redraw would overwrite the wrong
+// rows. Rendering aims to stay narrower; this catches what doesn't (long
+// URLs, keys, hashes).
+func (m Model) fitWidth(s string) string {
+	if m.width <= 0 {
+		return s
+	}
+	return ansi.Hardwrap(s, m.width, true)
+}
 
 // contentWidth is the width messages are rendered at.
 func (m Model) contentWidth() int {
@@ -52,7 +65,7 @@ func (m Model) flushScrollback() (Model, tea.Cmd) {
 	}
 	m.printing = true
 	text := strings.TrimRight(strings.Join(parts, "\n"), "\n")
-	return m, tea.Sequence(tea.Println(text), func() tea.Msg { return scrollbackDoneMsg{} })
+	return m, tea.Sequence(tea.Println(m.fitWidth(text)), func() tea.Msg { return scrollbackDoneMsg{} })
 }
 
 // renderLive renders the messages not yet printed to scrollback.
@@ -83,7 +96,7 @@ func (m *Model) printDetails() tea.Cmd {
 			return nil // nothing was collapsed
 		}
 		head := "\n  " + m.theme.ToolDim.Render("── last response in full (ctrl+o to collapse new ones) ──")
-		return tea.Println(head + m.renderMessageAt(i, m.contentWidth()))
+		return tea.Println(m.fitWidth(head + m.renderMessageAt(i, m.contentWidth())))
 	}
 	return nil
 }

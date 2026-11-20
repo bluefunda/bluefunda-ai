@@ -54,7 +54,7 @@ func (m Model) View() string {
 	// scrollback (flushScrollback), where they can be scrolled and selected.
 	// The live part is clipped to its last lines so the input and dialog
 	// always stay on screen; it is printed in full once it finishes.
-	live := m.renderLive()
+	live := m.fitWidth(m.renderLive())
 	if live == "" {
 		return bottom
 	}

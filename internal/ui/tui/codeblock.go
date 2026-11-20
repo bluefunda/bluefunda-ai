@@ -8,6 +8,7 @@ import (
 	"github.com/alecthomas/chroma/v2/lexers"
 	"github.com/alecthomas/chroma/v2/styles"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
 )
 
 // renderCodeBlock renders a fenced code block with:
@@ -18,7 +19,12 @@ import (
 func renderCodeBlock(lang, code string, width int, th Theme) string {
 	code = strings.TrimRight(code, "\n")
 
+	// Wrap long lines inside the box (border 2 + padding 4) instead of
+	// letting the box grow past the terminal.
 	highlighted := highlight(lang, code)
+	if inner := width - 6; inner >= 10 {
+		highlighted = ansi.Hardwrap(highlighted, inner, true)
+	}
 
 	// Build content: optional lang header + highlighted code.
 	// The lang label sits on its own line above the code, separated by a blank.

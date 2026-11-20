@@ -219,40 +219,106 @@ func toolArgSummary(argsJSON string) string {
 	return argsJSON
 }
 
-// formatToolEventLine renders a ToolEvent as a compact single line.
-func formatToolEventLine(ev ToolEvent, th Theme) string {
-	switch ev.Kind {
-	case ToolCall:
-		icon := th.ToolIcon.Render("●")
-		name := th.ToolName.Render(ev.Name)
-		args := ""
-		if short := toolArgSummary(ev.Args); short != "" {
-			args = th.ToolArg.Render("  " + truncate(short, 70))
-		}
-		return fmt.Sprintf("  %s %s%s", icon, name, args)
+// visibleToolRows is how many of the most recent tool calls an assistant
+// message shows while collapsed; older ones fold into one summary line.
+const visibleToolRows = 5
 
-	case ToolExec:
-		var icon string
-		if ev.Status == "ok" {
-			icon = th.ToolSuccess.Render("  ✓")
-		} else {
-			icon = th.ToolError.Render("  ✗")
-		}
-		dur := fmt.Sprintf("%.1fs", float64(ev.DurationMs)/1000)
-		line := fmt.Sprintf("%s  %s", icon, th.ToolDim.Render(ev.Name+"  "+dur))
-		if ev.Summary != "" {
-			s := ev.Summary
-			if len(s) > 55 {
-				s = s[:52] + "..."
+// toolRow is one tool call as displayed: the call merged with its result.
+type toolRow struct {
+	name, args string
+	done       bool
+	ok         bool
+	durationMs int64
+	summary    string
+}
+
+// toolRows merges the message's tool events into one row per call: a call
+// is paired with the first later result for the same tool. Progress events
+// are dropped — the rows themselves show progress.
+func toolRows(events []ToolEvent) []toolRow {
+	var rows []toolRow
+	for _, ev := range events {
+		switch ev.Kind {
+		case ToolCall:
+			rows = append(rows, toolRow{name: ev.Name, args: ev.Args})
+		case ToolExec:
+			paired := false
+			for i := range rows {
+				if !rows[i].done && rows[i].name == ev.Name {
+					rows[i].done, rows[i].ok = true, ev.Status == "ok"
+					rows[i].durationMs, rows[i].summary = ev.DurationMs, ev.Summary
+					paired = true
+					break
+				}
 			}
-			line += th.ToolDim.Render("  —  " + s)
+			if !paired { // result without a call event (e.g. server-side tool)
+				rows = append(rows, toolRow{name: ev.Name, done: true, ok: ev.Status == "ok", durationMs: ev.DurationMs, summary: ev.Summary})
+			}
 		}
-		return line
-
-	case ToolProgress:
-		icon := th.ToolDim.Render("  ↻")
-		label := fmt.Sprintf("  [%d]  %s", ev.Iteration, strings.Join(ev.Tools, ", "))
-		return icon + th.ToolDim.Render(label)
 	}
-	return ""
+	return rows
+}
+
+// renderToolRows draws a message's tool calls, one line each. Collapsed, only
+// the last visibleToolRows are shown under a "… N earlier tool calls" line.
+func renderToolRows(events []ToolEvent, expanded bool, width int, th Theme) string {
+	rows := toolRows(events)
+	if len(rows) == 0 {
+		return ""
+	}
+	var sb strings.Builder
+	if !expanded && len(rows) > visibleToolRows {
+		hidden := rows[:len(rows)-visibleToolRows]
+		failed := 0
+		for _, r := range hidden {
+			if r.done && !r.ok {
+				failed++
+			}
+		}
+		line := fmt.Sprintf("… %d earlier tool calls", len(hidden))
+		if failed > 0 {
+			line += fmt.Sprintf(", %d failed", failed)
+		}
+		sb.WriteString("  " + th.ToolDim.Render(line+"  (ctrl+o to expand)") + "\n")
+		rows = rows[len(rows)-visibleToolRows:]
+	}
+	for _, r := range rows {
+		sb.WriteString(formatToolRow(r, width, th))
+		sb.WriteByte('\n')
+	}
+	return sb.String()
+}
+
+// formatToolRow renders one call: icon, tool, its key argument, then the
+// duration (and the error summary when it failed).
+func formatToolRow(r toolRow, width int, th Theme) string {
+	var icon string
+	switch {
+	case !r.done:
+		icon = th.ToolIcon.Render("●")
+	case r.ok:
+		icon = th.ToolSuccess.Render("✓")
+	default:
+		icon = th.ToolError.Render("✗")
+	}
+	line := "  " + icon + " " + th.ToolName.Render(r.name)
+	tail := ""
+	if r.done {
+		tail = fmt.Sprintf("  · %.1fs", float64(r.durationMs)/1000)
+		if !r.ok && r.summary != "" {
+			tail += " — " + r.summary
+		}
+	}
+	room := max(width-len([]rune(r.name))-6-len([]rune(tail)), 10)
+	if a := toolArgSummary(r.args); a != "" {
+		line += th.ToolArg.Render("  " + truncate(a, room))
+	}
+	if tail != "" {
+		style := th.ToolDim
+		if !r.ok {
+			style = th.ToolError
+		}
+		line += style.Render(truncate(tail, max(width-10, 20)))
+	}
+	return line
 }

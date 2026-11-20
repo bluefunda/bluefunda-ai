@@ -160,10 +160,7 @@ func (m *Model) renderMessageAt(idx, width int) string {
 			sb.WriteString(m.renderThinking(&msg, width))
 		}
 
-		for _, ev := range msg.ToolEvents {
-			sb.WriteString(formatToolEventLine(ev, th))
-			sb.WriteByte('\n')
-		}
+		sb.WriteString(renderToolRows(msg.ToolEvents, m.showNarration, width, th))
 
 		narration, answer := msg.splitNarration()
 		if narration != "" && !m.showNarration {

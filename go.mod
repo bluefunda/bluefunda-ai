@@ -1,6 +1,6 @@
 module github.com/bluefunda/bluefunda-ai
 
-go 1.26.10
+go 1.26.11
 
 require (
 	github.com/alecthomas/chroma/v2 v2.27.0

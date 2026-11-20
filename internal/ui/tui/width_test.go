@@ -8,8 +8,8 @@ import (
 	"github.com/charmbracelet/x/ansi"
 )
 
-// A code line longer than the terminal wraps inside the box: no rendered
-// line may be wider than the width it was given.
+// A code block has no border (selecting it copies only the code), and a line
+// longer than the terminal wraps: no rendered line is wider than the width.
 func TestCodeBlockFitsWidth(t *testing.T) {
 	key := `expiry-time="20270213" ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIFcP02TxH+TK417qrvD60j35ezXD6lz3fFiH46Rl6gti user@host`
 	const width = 60
@@ -18,6 +18,12 @@ func TestCodeBlockFitsWidth(t *testing.T) {
 		if w := lipgloss.Width(line); w > width {
 			t.Fatalf("line is %d wide, want <= %d:\n%s", w, width, out)
 		}
+	}
+	if strings.ContainsAny(ansi.Strip(out), "╭│╰") {
+		t.Errorf("code block should have no border:\n%s", ansi.Strip(out))
+	}
+	if tabbed := renderCodeBlock("go", "\tx := 1", width, DefaultTheme()); strings.Contains(tabbed, "\t") {
+		t.Error("tabs should be expanded so wrapping counts them right")
 	}
 	if !strings.Contains(ansi.Strip(out), "@host") {
 		t.Errorf("wrapped content lost text:\n%s", ansi.Strip(out))

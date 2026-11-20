@@ -7,48 +7,26 @@ import (
 	"github.com/alecthomas/chroma/v2/formatters"
 	"github.com/alecthomas/chroma/v2/lexers"
 	"github.com/alecthomas/chroma/v2/styles"
-	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
 )
 
-// renderCodeBlock renders a fenced code block with:
-//   - language label as a dim header line inside the box
-//   - rounded border in muted color
-//   - chroma syntax highlighting (no lipgloss background — avoids ANSI reset conflicts)
-//   - streaming-safe (works on partial/unclosed fences)
-func renderCodeBlock(lang, code string, width int, th Theme) string {
+// renderCodeBlock renders a fenced code block the way Claude Code does:
+// syntax-highlighted and indented like the prose around it, with no border
+// or label, so selecting it copies the code and nothing else. Lines longer
+// than the width wrap. Streaming-safe (works on partial/unclosed fences).
+func renderCodeBlock(lang, code string, width int, _ Theme) string {
 	code = strings.TrimRight(code, "\n")
-
-	// Wrap long lines inside the box (border 2 + padding 4) instead of
-	// letting the box grow past the terminal.
+	// A tab is one column to the wrapper but up to eight on screen.
+	code = strings.ReplaceAll(code, "\t", "    ")
 	highlighted := highlight(lang, code)
-	if inner := width - 6; inner >= 10 {
+	if inner := width - len(codeIndent); inner >= 10 {
 		highlighted = ansi.Hardwrap(highlighted, inner, true)
 	}
-
-	// Build content: optional lang header + highlighted code.
-	// The lang label sits on its own line above the code, separated by a blank.
-	var content string
-	if lang != "" {
-		label := lipgloss.NewStyle().
-			Foreground(th.Secondary).
-			Render(lang)
-		content = label + "\n\n" + highlighted
-	} else {
-		content = highlighted
-	}
-
-	// Border-only box: no Background so chroma's ANSI colors render cleanly.
-	// Background mixing with chroma's ESC[0m resets causes color corruption.
-	return lipgloss.NewStyle().
-		BorderStyle(lipgloss.RoundedBorder()).
-		BorderForeground(th.Muted).
-		PaddingLeft(2).
-		PaddingRight(2).
-		PaddingTop(1).
-		PaddingBottom(1).
-		Render(content)
+	return indentLines(highlighted, codeIndent)
 }
+
+// codeIndent lines code up with glamour's paragraph margin.
+const codeIndent = "  "
 
 // highlight applies chroma syntax highlighting and returns the result with
 // ANSI color codes. Falls back to plain text if the language is unknown.

@@ -54,7 +54,8 @@ type ApprovalResponseMsg struct{ Approved bool }
 // ApprovalDecision is the user's response to a tool-approval prompt.
 type ApprovalDecision struct {
 	Approved    bool
-	AlwaysAllow bool // remember this exact tool+args for the rest of the session
+	AlwaysAllow bool   // remember this exact tool+args for the rest of the session
+	Feedback    string // on decline: what the user wants done instead (option 3)
 }
 
 // SessionsLoadedMsg is the async result of listing sessions for /sessions.
@@ -280,7 +281,9 @@ type Model struct {
 	liveUsagePct float64 // live usage % updated every ~25 tokens during streaming (0 = inactive)
 
 	// Approval prompt (tool confirmation)
-	pendingApproval *ApprovalRequestMsg
+	pendingApproval  *ApprovalRequestMsg
+	approvalIdx      approvalChoice // highlighted option in the permission dialog
+	approvalFeedback bool           // option 3 chosen: input box collects the note
 
 	// Slash command menu
 	showSlash    bool
@@ -395,6 +398,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tickMsg:
 		if m.streaming {
 			m.spinnerIdx++
+			// Redraw so the spinner and the live "Thinking… Ns" timer move
+			// between stream events (rendered markdown is cached per message).
+			m.refreshViewport()
 		}
 		cmds = append(cmds, tickCmd())
 
@@ -734,53 +740,6 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	m.updateSlashMenu()
 
 	return m, tea.Batch(cmds...)
-}
-
-func (m Model) handleApprovalKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	switch strings.ToLower(msg.String()) {
-	case "y":
-		ch := m.streamCh
-		replyCh := m.pendingApproval.ReplyCh
-		m.pendingApproval = nil
-		m.messages = append(m.messages, newSystemMessage("  Applied."))
-		m.refreshViewport()
-		// Send approval answer (unblocks code goroutine) then resume stream pump.
-		stop := m.streamStop
-		return m, func() tea.Msg {
-			replyCh <- ApprovalDecision{Approved: true}
-			return waitForStreamEvent(ch, stop)()
-		}
-	case "a":
-		ch := m.streamCh
-		replyCh := m.pendingApproval.ReplyCh
-		m.pendingApproval = nil
-		m.messages = append(m.messages, newSystemMessage("  Applied. Always allowing this exact command for the rest of the session."))
-		m.refreshViewport()
-		stop := m.streamStop
-		return m, func() tea.Msg {
-			replyCh <- ApprovalDecision{Approved: true, AlwaysAllow: true}
-			return waitForStreamEvent(ch, stop)()
-		}
-	case "n", "esc":
-		ch := m.streamCh
-		stop := m.streamStop
-		replyCh := m.pendingApproval.ReplyCh
-		m.pendingApproval = nil
-		m.messages = append(m.messages, newSystemMessage("  Skipped."))
-		m.refreshViewport()
-		return m, func() tea.Msg {
-			replyCh <- ApprovalDecision{Approved: false}
-			return waitForStreamEvent(ch, stop)()
-		}
-	case "ctrl+c":
-		m.quit = true
-		if m.pendingApproval != nil {
-			m.pendingApproval.ReplyCh <- ApprovalDecision{Approved: false}
-			m.pendingApproval = nil
-		}
-		return m, tea.Quit
-	}
-	return m, nil
 }
 
 func (m Model) handleModelPickerKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
@@ -1330,6 +1289,16 @@ func (m Model) handleResize() Model {
 		countH = 1
 	}
 	inputH := rows + 2 + countH // content rows + top/bottom border + optional count
+	if m.pendingApproval != nil {
+		// The permission dialog takes the input box's place: size the
+		// conversation around whichever is shown.
+		dialogH := lipgloss.Height(m.renderApproval())
+		if m.approvalFeedback {
+			inputH += dialogH
+		} else {
+			inputH = dialogH
+		}
+	}
 	vpH := m.height - headerHeight - footerHeight - inputH - 2
 	if vpH < 4 {
 		vpH = 4
@@ -1383,7 +1352,7 @@ func helpText() string {
 		"  Ctrl+C          Interrupt turn (or quit when idle)",
 		"  Ctrl+D          Quit",
 		"  Ctrl+Y          Copy last response",
-		"  Ctrl+O          Show/hide narration between tool calls",
+		"  Ctrl+O          Show/hide thinking and narration between tool calls",
 		"  PgUp/PgDn      Scroll conversation",
 		"",
 		"  Slash commands",
@@ -1663,6 +1632,16 @@ func (m *Model) handleStreamEvent(ev StreamEvent) []tea.Cmd {
 		m.refreshViewport()
 		cmds = append(cmds, waitForStreamEvent(m.streamCh, m.streamStop))
 
+	case "thinking":
+		m.ensureAssistantMsg()
+		last := len(m.messages) - 1
+		m.messages[last].appendThinking(ev.Chunk)
+		m.refreshViewport()
+		if m.atBottom {
+			m.viewport.GotoBottom()
+		}
+		cmds = append(cmds, waitForStreamEvent(m.streamCh, m.streamStop))
+
 	case "heartbeat":
 		cmds = append(cmds, waitForStreamEvent(m.streamCh, m.streamStop))
 
@@ -1671,7 +1650,9 @@ func (m *Model) handleStreamEvent(ev StreamEvent) []tea.Cmd {
 		// The stream pump is suspended until handleApprovalKey sends the answer.
 		ap := ApprovalRequestMsg{ToolName: ev.ToolName, Args: ev.ToolArgs, ReplyCh: ev.ReplyCh}
 		m.pendingApproval = &ap
-		m.refreshViewport()
+		m.approvalIdx = 0
+		*m = m.handleResize()
+		m.viewport.GotoBottom()
 		// No next-read cmd here — handleApprovalKey will resume the stream pump.
 
 	case "rate_limited":

@@ -579,6 +579,7 @@ func runAgenticSession(args []string) error {
 	maxTurnsState := interactiveMaxTurns(codeMaxTurns, maxTurnsRequested)
 	turns := 0
 	isFirstTurn := true
+	var turnMu sync.Mutex
 
 	submitFn := func(cid, mdl, input string, isNew bool) <-chan tui.StreamEvent {
 		if conn.TS.NearExpiry(2 * time.Minute) {
@@ -599,6 +600,10 @@ func runAgenticSession(args []string) error {
 
 		go func() {
 			defer close(ch)
+			// Held for the whole turn so /compact can't rewrite history
+			// under a running turn.
+			turnMu.Lock()
+			defer turnMu.Unlock()
 			// user-prompt-submit hooks (#407) run here, off the TUI's update
 			// loop, since a script may take up to the hook timeout.
 			userMsg, blocked := applyPromptHooks(hookRunner, input)
@@ -649,16 +654,30 @@ func runAgenticSession(args []string) error {
 	}
 
 	tuiCfg := tui.SessionConfig{
-		ChatID:             chatID,
-		Model:              model,
-		IsCode:             true,
-		WorkDir:            workDir,
-		Version:            formatVersion(Version),
-		AutoApply:          codeAutoApply,
-		PlanMode:           codePlanMode,
-		InitialPrompt:      initialPrompt,
-		RepoName:           gitRepoName(),
-		CustomCommands:     append(loadCustomSlashCommands("."), sessionSlashCommands...),
+		ChatID:        chatID,
+		Model:         model,
+		IsCode:        true,
+		WorkDir:       workDir,
+		Version:       formatVersion(Version),
+		AutoApply:     codeAutoApply,
+		PlanMode:      codePlanMode,
+		InitialPrompt: initialPrompt,
+		RepoName:      gitRepoName(),
+		CustomCommands: append(append(loadCustomSlashCommands("."), sessionSlashCommands...),
+			compactCommand(&turnMu, func(focus string) (string, error) {
+				before := estimateTokens(history)
+				if lastUserIndex(history) < 0 {
+					return "Nothing to compact yet.", nil
+				}
+				compacted, err := compactHistory(conn, chatID, model, history, focus, 0)
+				if err != nil {
+					return "", err
+				}
+				history = compacted
+				session.Save(sessPath, toSessionMsgs(history)) //nolint:errcheck
+				return fmt.Sprintf("Compacted the conversation into a summary: ~%s → ~%s tokens.",
+					humanTokens(before), humanTokens(estimateTokens(history))), nil
+			})),
 		RetryFn:            retryFn,
 		DisableUpdateCheck: !cfg.UpdateCheckEnabled(),
 		AccountFn: func() (*tui.AccountInfo, error) {
@@ -1091,7 +1110,7 @@ func agenticLoopTUI(
 					"\n⚡ Context at ~%dk tokens — compacting history...\n",
 					estTokens/1000,
 				)}
-				if compacted, compactErr := compactHistory(conn, chatID, model, history); compactErr == nil {
+				if compacted, compactErr := compactHistory(conn, chatID, model, history, "", 4); compactErr == nil {
 					history = compacted
 					lastPromptTokens = 0
 					session.Save(sessPath, toSessionMsgs(history)) //nolint:errcheck
@@ -1494,15 +1513,25 @@ const compactionSafeTokens = 50_000
 // compactHistory sends the full history to the LLM with a summarisation prompt
 // (no tools, single turn) and returns a trimmed history containing only system
 // messages, the summary, and the last four messages (two exchanges).
+//
+// focus adds the user's instructions for what the summary should keep
+// (/compact <focus>). tail is how many recent assistant rounds to keep
+// verbatim after the summary: auto-compaction mid-turn keeps a few so the
+// turn can go on; a manual /compact keeps none, as in Claude Code.
 func compactHistory(
 	conn *caigrpc.Conn,
 	chatID, model string,
 	history []codeMessage,
+	focus string,
+	tail int,
 ) ([]codeMessage, error) {
-	const summaryPrompt = "Summarise the conversation so far in a single assistant message. " +
+	summaryPrompt := "Summarise the conversation so far in a single assistant message. " +
 		"Include: the overall goal, key decisions, every file created or modified (with paths), " +
 		"tool results that matter, and any open questions. Be concise but complete enough that " +
 		"the session can continue without the original messages."
+	if focus = strings.TrimSpace(focus); focus != "" {
+		summaryPrompt += "\n\nThe user asked the summary to focus on: " + focus
+	}
 
 	// Pre-truncate so the compaction request itself stays below server size limits.
 	// We keep the most recent messages (most context-relevant) and system messages.
@@ -1566,7 +1595,9 @@ summarised:
 		Role:    "system",
 		Content: "[Conversation summary]\n" + summary,
 	})
-	compact = append(compact, recentTail(history, 4)...)
+	if tail > 0 {
+		compact = append(compact, recentTail(history, tail)...)
+	}
 	return compact, nil
 }
 

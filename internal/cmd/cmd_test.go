@@ -464,7 +464,7 @@ func TestCompactHistory_SummaryIsSystemRole(t *testing.T) {
 		{Role: "user", Content: "Latest prompt"},
 	}
 
-	result, err := compactHistory(conn, "test-chat", "", history)
+	result, err := compactHistory(conn, "test-chat", "", history, "", 4)
 	if err != nil {
 		t.Fatalf("compactHistory: %v", err)
 	}

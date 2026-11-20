@@ -62,8 +62,26 @@ func promptCommands() []tui.SlashCommand {
 			Description: "Write or improve AGENTS.md with what an agent needs to work in this repo",
 			Prompt:      initPrompt,
 		},
+		{
+			Name:        "/review",
+			Description: "Review the current changes, or a PR  /review 123",
+			Prompt:      reviewPrompt,
+		},
 	}
 }
+
+// reviewPrompt reviews read-only. What to review comes after the command: a
+// PR number, a branch, a path, or nothing for the work in progress.
+const reviewPrompt = `Review code changes for bugs. Do not modify any files.
+
+What to review: $ARGUMENTS
+- A number means that pull request: read it with ` + "`gh pr view <n>`" + ` and ` + "`gh pr diff <n>`" + `.
+- A branch or path means the changes there.
+- Nothing means the work in progress: this branch's commits since it left the default branch (` + "`git merge-base`" + ` with origin's default branch) plus uncommitted changes.
+
+Read enough of the surrounding code to understand each change; a diff alone hides most bugs. Look for: wrong logic and edge cases, error handling that loses or ignores errors, concurrency problems, resource leaks, broken callers of a changed function, security issues, and missing tests for new behaviour. Check the change against the project's own instructions (AGENTS.md or .bai/context.md) where it has them.
+
+Report only real problems, most severe first. For each: file:line, what is wrong, and a concrete input or sequence that triggers it. Leave out style preferences unless they hide a bug. If you find nothing worth fixing, say so plainly rather than padding the list.`
 
 // initPrompt asks for the project instructions file bai loads at session
 // start (findContextFile: .bai/context.md, else AGENTS.md).

@@ -42,3 +42,13 @@ func TestMaxTurnsSlashCommand_UnavailableOutsideCode(t *testing.T) {
 		t.Errorf("got %q", lastSystem(m))
 	}
 }
+
+// The max-turns notice streams as Markdown: its suggested command must
+// survive rendering (a "<n>" placeholder was dropped as an HTML tag).
+func TestMaxTurnsNoticeSurvivesMarkdown(t *testing.T) {
+	notice := "⚠  Paused after 50 steps (max-turns limit). Type `continue` to keep going, or `/max-turns 100` to raise the limit for this session."
+	out := renderMixed(notice, 100, DefaultTheme())
+	if !strings.Contains(out, "/max-turns 100") || !strings.Contains(out, "continue") {
+		t.Errorf("suggestion lost in rendering:\n%s", out)
+	}
+}

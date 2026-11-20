@@ -1174,7 +1174,9 @@ func agenticLoopTUI(
 	}
 
 	// Not an error: the work so far is in history, so the user can resume.
-	hint := "Type \"continue\" to keep going, or /max-turns <n> to raise the limit for this session."
+	// The notice is rendered as Markdown, which would drop a "<n>"
+	// placeholder as an HTML tag: suggest a concrete value in a code span.
+	hint := fmt.Sprintf("Type `continue` to keep going, or `/max-turns %d` to raise the limit for this session.", maxTurns*2)
 	if codePrint {
 		hint = "Rerun with --max-turns N (or --continue) to keep going."
 	}

@@ -205,7 +205,7 @@ type UsageInfo struct {
 // StreamEvent is a discriminated union of all events that can arrive from a
 // gRPC stream. The BubbleTea cmd reads one event from the channel per tick.
 type StreamEvent struct {
-	Kind string // "chunk"|"tool_call"|"tool_start"|"tool_exec"|"progress"|"heartbeat"|"approval"|"done"|"error"|"rate_limited"|"usage_warning"|"live_usage_pct"
+	Kind string // "chunk"|"tool_call"|"tool_start"|"tool_progress"|"tool_exec"|"progress"|"heartbeat"|"approval"|"done"|"error"|"rate_limited"|"usage_warning"|"live_usage_pct"
 	// chunk
 	Chunk string
 	// tool_call / tool_exec / approval
@@ -1512,6 +1512,11 @@ func (m *Model) handleStreamEvent(ev StreamEvent) []tea.Cmd {
 	case "tool_start":
 		last := m.ensureAssistantMsg()
 		m.messages[last].addToolEvent(ToolEvent{Kind: ToolStart, ID: ev.ToolID, Name: ev.ToolName})
+		cmds = append(cmds, waitForStreamEvent(m.streamCh, m.streamStop))
+
+	case "tool_progress":
+		last := m.ensureAssistantMsg()
+		m.messages[last].addToolEvent(ToolEvent{Kind: ToolActivity, ID: ev.ToolID, Name: ev.ToolName, Summary: ev.Summary})
 		cmds = append(cmds, waitForStreamEvent(m.streamCh, m.streamStop))
 
 	case "tool_exec":

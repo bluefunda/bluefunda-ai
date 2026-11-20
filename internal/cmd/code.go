@@ -1920,7 +1920,11 @@ func executeWithApprovalTUI(
 	case plugins.IsPluginTool(tc.Name):
 		result, execErr = pluginMgr.Execute(context.Background(), tc.Name, argsJSON)
 	default:
-		result, execErr = tools.Execute(tc.Name, argsJSON)
+		// A task call streams its subagent's activity under its row.
+		ctx := tools.WithProgress(context.Background(), func(line string) {
+			ch <- tui.StreamEvent{Kind: "tool_progress", ToolID: tc.ID, ToolName: tc.Name, Summary: line}
+		})
+		result, execErr = tools.ExecuteContext(ctx, tc.Name, argsJSON)
 	}
 	elapsed := time.Since(start)
 	auditLog.LogToolResult(tc.Name, elapsed.Milliseconds(), execErr == nil)

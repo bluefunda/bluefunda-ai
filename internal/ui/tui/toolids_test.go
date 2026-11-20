@@ -62,3 +62,22 @@ func TestToolRows_QueuedUntilStarted(t *testing.T) {
 		t.Errorf("rows = %+v, want a done and b running", rows)
 	}
 }
+
+// A running subagent's latest activity shows under its task row and goes
+// away once the task finishes.
+func TestToolRows_SubagentActivity(t *testing.T) {
+	events := []ToolEvent{
+		{Kind: ToolCall, ID: "t1", Name: "task", Args: `{"prompt":"find foo"}`},
+		{Kind: ToolStart, ID: "t1", Name: "task"},
+		{Kind: ToolActivity, ID: "t1", Name: "task", Summary: "1 tool call · search_content foo"},
+		{Kind: ToolActivity, ID: "t1", Name: "task", Summary: "2 tool calls · read_file a.go"},
+	}
+	out := renderToolRows(events, false, 80, DefaultTheme())
+	if !strings.Contains(out, "2 tool calls · read_file a.go") || strings.Contains(out, "search_content") {
+		t.Errorf("want only the latest activity:\n%s", out)
+	}
+	out = renderToolRows(append(events, ToolEvent{Kind: ToolExec, ID: "t1", Name: "task", Status: "ok"}), true, 80, DefaultTheme())
+	if strings.Contains(out, "tool calls") {
+		t.Errorf("activity should go once the task is done:\n%s", out)
+	}
+}

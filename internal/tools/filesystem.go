@@ -47,6 +47,12 @@ var pathArgNames = map[string]string{
 // Execute dispatches a tool call to the appropriate local implementation.
 // Arguments is the JSON string from the LLM tool call.
 func Execute(name, argumentsJSON string) (string, error) {
+	return ExecuteContext(context.Background(), name, argumentsJSON)
+}
+
+// ExecuteContext is Execute with a context. A task call reports its
+// subagent's activity to the context's ProgressFunc (see WithProgress).
+func ExecuteContext(ctx context.Context, name, argumentsJSON string) (string, error) {
 	if strings.TrimSpace(argumentsJSON) == "" {
 		argumentsJSON = "{}" // no-argument call sent as "" by some models
 	}
@@ -157,7 +163,7 @@ func Execute(name, argumentsJSON string) (string, error) {
 		if err != nil {
 			return "", err
 		}
-		return RunTask(context.Background(), agent, prompt, workDir, int(maxTurnsF), useWorktree)
+		return RunTask(ctx, agent, prompt, workDir, int(maxTurnsF), useWorktree)
 	default:
 		return "", fmt.Errorf("unknown tool: %s", name)
 	}

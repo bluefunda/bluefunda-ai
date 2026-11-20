@@ -37,6 +37,7 @@ const (
 	ToolProgress ToolEventKind = iota
 	ToolNote     ToolEventKind = iota // approval outcome, shown under its call
 	ToolStart    ToolEventKind = iota // the call began executing
+	ToolActivity ToolEventKind = iota // a running call's latest activity (a subagent's tool calls)
 )
 
 // ChatMessage is one logical message in the conversation.
@@ -236,6 +237,7 @@ type toolRow struct {
 	durationMs int64
 	summary    string
 	note       string // approval outcome, e.g. "declined: use make clean"
+	activity   string // latest progress while running, e.g. "3 tool calls · bash go test"
 }
 
 // toolRows merges the message's tool events into one row per call. A result,
@@ -265,6 +267,10 @@ func toolRows(events []ToolEvent) []toolRow {
 		switch ev.Kind {
 		case ToolCall:
 			rows = append(rows, toolRow{id: ev.ID, name: ev.Name, args: ev.Args, queued: true})
+		case ToolActivity:
+			if i := find(ev, true); i >= 0 {
+				rows[i].activity, rows[i].queued = ev.Summary, false
+			}
 		case ToolStart:
 			starts = true
 			if i := find(ev, true); i >= 0 {
@@ -335,6 +341,9 @@ func renderToolRows(events []ToolEvent, expanded bool, width int, th Theme) stri
 		sb.WriteByte('\n')
 		if r.note != "" {
 			sb.WriteString("    " + th.ToolDim.Render(truncate("⎿ "+r.note, max(width-6, 20))) + "\n")
+		}
+		if !r.done && r.activity != "" {
+			sb.WriteString("    " + th.ToolDim.Render(truncate("⎿ "+r.activity, max(width-6, 20))) + "\n")
 		}
 	}
 	return sb.String()

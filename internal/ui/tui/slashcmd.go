@@ -30,7 +30,6 @@ var builtinCommands = []SlashCommand{
 	{Name: "/code", Description: "Switch to code mode and load file system tools"},
 	{Name: "/chat", Description: "Switch to chat mode and unload file tools"},
 	{Name: "/auto", Description: "Toggle auto-apply for code tools (code sessions only)"},
-	{Name: "/mouse", Description: "Toggle mouse-wheel scrolling (off by default so you can select text to copy)"},
 	{Name: "/max-turns", Description: "Show or set the agentic step limit for this session  /max-turns 100"},
 	{Name: "/plan", Description: "Toggle plan mode — read-only tools until you exit it"},
 	{Name: "/mcp", Description: "List or activate MCP servers  /mcp github"},

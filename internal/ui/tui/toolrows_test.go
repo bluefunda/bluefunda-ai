@@ -42,7 +42,7 @@ func TestToolRows_CollapseOlderCallsAndCtrlOExpands(t *testing.T) {
 		m.handleStreamEvent(StreamEvent{Kind: "tool_exec", ToolName: "bash", Status: status})
 		m.handleStreamEvent(StreamEvent{Kind: "progress", Iteration: i, Tools: []string{"bash"}})
 	}
-	conv := m.renderConversation()
+	conv := m.renderLive()
 	if !strings.Contains(conv, "7 earlier tool calls, 1 failed") {
 		t.Errorf("expected a folded summary line:\n%s", conv)
 	}
@@ -57,7 +57,7 @@ func TestToolRows_CollapseOlderCallsAndCtrlOExpands(t *testing.T) {
 	}
 
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyCtrlO})
-	conv = m.renderConversation()
+	conv = m.renderLive()
 	if n := strings.Count(conv, "step-"); n != 12 || strings.Contains(conv, "earlier tool calls") {
 		t.Errorf("ctrl+o should list all 12 calls, got %d:\n%s", n, conv)
 	}

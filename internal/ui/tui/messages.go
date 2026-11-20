@@ -47,6 +47,10 @@ type ChatMessage struct {
 	renderWidth int    // width used when rendered was produced
 	renderFull  bool   // whether rendered covers the full Content or only the answer
 
+	// printed is set once the message has been written to the terminal
+	// scrollback; View no longer draws it.
+	printed bool
+
 	// narrationEnd is len(Content) when the most recent tool call arrived.
 	// Text before it preceded further tool calls in the same turn, so it is
 	// treated as narration and collapsed by default (#330); text after it is

@@ -32,7 +32,7 @@ func TestThinkingCollapsedLiveThenDoneThenExpanded(t *testing.T) {
 	m.streaming = true
 	m.handleStreamEvent(StreamEvent{Kind: "thinking", Chunk: "THOUGHTMARKER considering options"})
 
-	conv := m.renderConversation()
+	conv := m.renderLive()
 	if !strings.Contains(conv, "Thinking…") || strings.Contains(conv, "THOUGHTMARKER") {
 		t.Errorf("live thinking should show a collapsed line only:\n%s", conv)
 	}
@@ -41,7 +41,7 @@ func TestThinkingCollapsedLiveThenDoneThenExpanded(t *testing.T) {
 	}
 
 	m.handleStreamEvent(StreamEvent{Kind: "chunk", Chunk: "ANSWER"})
-	conv = m.renderConversation()
+	conv = m.renderLive()
 	if !strings.Contains(conv, "Thought for") || !strings.Contains(conv, "ctrl+o") {
 		t.Errorf("finished thinking should collapse to a summary:\n%s", conv)
 	}
@@ -50,7 +50,7 @@ func TestThinkingCollapsedLiveThenDoneThenExpanded(t *testing.T) {
 	}
 
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyCtrlO})
-	if conv = m.renderConversation(); !strings.Contains(conv, "THOUGHTMARKER") {
+	if conv = m.renderLive(); !strings.Contains(conv, "THOUGHTMARKER") {
 		t.Errorf("ctrl+o should expand the thinking text:\n%s", conv)
 	}
 }
@@ -85,7 +85,7 @@ func TestExpandedNarrationStaysSeparateFromAnswer(t *testing.T) {
 	m.handleStreamEvent(StreamEvent{Kind: "tool_call", ToolName: "bash", ToolArgs: `{"command":"ls"}`})
 	m.handleStreamEvent(StreamEvent{Kind: "chunk", Chunk: "ANS."})
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyCtrlO})
-	if strings.Contains(m.renderConversation(), "NARR. ANS.") {
+	if strings.Contains(m.renderLive(), "NARR. ANS.") {
 		t.Error("expanded narration and answer should render as separate paragraphs")
 	}
 }

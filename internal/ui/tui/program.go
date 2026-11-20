@@ -20,10 +20,9 @@ func Run(m Model) error {
 	fmt.Fprint(os.Stdout, cursorBar)
 	defer fmt.Fprint(os.Stdout, cursorDefault)
 
-	// The mouse is NOT captured by default, so the terminal's own text
-	// selection and copy work as in any shell (and as in Claude Code).
-	// PgUp/PgDn scroll the conversation; /mouse turns wheel scrolling on,
-	// at the cost of needing Shift (Option on macOS) to select text.
+	// Inline mode, no mouse capture: finished messages are printed into the
+	// terminal's scrollback (see scrollback.go), so the terminal's own
+	// scrolling, search and text selection work on them, as in Claude Code.
 	p := tea.NewProgram(m)
 
 	finalModel, err := p.Run()

@@ -56,7 +56,7 @@ func TestNarrationCollapsedAndCtrlOToggles(t *testing.T) {
 		m.handleStreamEvent(ev)
 	}
 
-	conv := m.renderConversation()
+	conv := m.renderLive()
 	if strings.Contains(conv, "NARRATIONMARKER") {
 		t.Error("narration should be collapsed by default")
 	}
@@ -68,7 +68,7 @@ func TestNarrationCollapsedAndCtrlOToggles(t *testing.T) {
 	}
 
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyCtrlO})
-	conv = m.renderConversation()
+	conv = m.renderLive()
 	if !strings.Contains(conv, "NARRATIONMARKER") || !strings.Contains(conv, "ANSWERMARKER") {
 		t.Error("ctrl+o should expand narration")
 	}
@@ -77,7 +77,7 @@ func TestNarrationCollapsedAndCtrlOToggles(t *testing.T) {
 	}
 
 	m, _ = update(m, tea.KeyMsg{Type: tea.KeyCtrlO})
-	if strings.Contains(m.renderConversation(), "NARRATIONMARKER") {
+	if strings.Contains(m.renderLive(), "NARRATIONMARKER") {
 		t.Error("second ctrl+o should collapse again")
 	}
 }

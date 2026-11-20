@@ -14,21 +14,11 @@ var spinnerFrames = []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "�
 
 // View implements tea.Model — the top-level render function.
 func (m Model) View() string {
-	if !m.vpReady || m.width == 0 {
+	if !m.ready || m.width == 0 {
 		return ""
 	}
 
 	var b strings.Builder
-
-	// Header
-	b.WriteString(m.renderHeader())
-	b.WriteByte('\n')
-
-	// Use the viewport's own renderer so that the scroll position (YOffset)
-	// set by scrollToMessageStart / GotoBottom is actually respected.
-	// Content is kept current via refreshViewport → viewport.SetContent.
-	b.WriteString(m.viewport.View())
-	b.WriteByte('\n')
 
 	// Slash menu (shown above input when active)
 	if m.showSlash && len(m.slashMatches) > 0 {
@@ -53,10 +43,30 @@ func (m Model) View() string {
 		b.WriteByte('\n')
 	}
 
-	// Footer hints
+	// Status line and footer hints
+	b.WriteString(m.renderHeader())
+	b.WriteByte('\n')
 	b.WriteString(m.renderFooter())
+	bottom := b.String()
 
-	return b.String()
+	// Above it, only what is still live: the streaming response and any
+	// messages after it. Finished messages are already in the terminal
+	// scrollback (flushScrollback), where they can be scrolled and selected.
+	// The live part is clipped to its last lines so the input and dialog
+	// always stay on screen; it is printed in full once it finishes.
+	live := m.renderLive()
+	if live == "" {
+		return bottom
+	}
+	budget := m.height - lipgloss.Height(bottom)
+	if budget <= 0 {
+		return bottom
+	}
+	lines := strings.Split(live, "\n")
+	if len(lines) > budget {
+		lines = lines[len(lines)-budget:]
+	}
+	return strings.Join(lines, "\n") + "\n" + bottom
 }
 
 // ──────────────────────────────────────────────
@@ -93,7 +103,7 @@ func (m Model) renderHeader() string {
 	spacer := strings.Repeat(" ", max(0, m.width-lipgloss.Width(left)-lipgloss.Width(right)-2))
 	line := " " + left + spacer + right
 
-	return th.Header.Width(m.width).Render(line)
+	return th.Header.BorderBottom(false).Width(m.width).Render(line)
 }
 
 // shortPath returns the last 2 path segments for compact display.

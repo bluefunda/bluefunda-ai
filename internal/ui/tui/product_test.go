@@ -33,7 +33,7 @@ func TestProductIdentity_BrandsHeaderPlaceholderAndAccent(t *testing.T) {
 
 func TestRunSlashCommand_ShowsOutputAsSystemMessage(t *testing.T) {
 	m := newTestModel("")
-	m.vpReady = true
+	m.ready = true
 	var gotArgs string
 	m.cfg.CustomCommands = []SlashCommand{{
 		Name: "/source",
@@ -62,7 +62,7 @@ func TestRunSlashCommand_ShowsOutputAsSystemMessage(t *testing.T) {
 
 func TestRunSlashCommand_ErrorIsReported(t *testing.T) {
 	m := newTestModel("")
-	m.vpReady = true
+	m.ready = true
 	m.cfg.CustomCommands = []SlashCommand{{
 		Name: "/activate",
 		Run:  func(string) (string, error) { return "", errors.New("no active SAP system") },

@@ -32,7 +32,7 @@ func TestLastUserMessageIndex(t *testing.T) {
 
 func TestRetrySlashCommand_UnavailableWhenRetryFnNil(t *testing.T) {
 	m := newTestModel("")
-	m.vpReady = true
+	m.ready = true
 	m.cfg.RetryFn = nil
 
 	m.textarea.SetValue("/retry")
@@ -46,7 +46,7 @@ func TestRetrySlashCommand_UnavailableWhenRetryFnNil(t *testing.T) {
 
 func TestRetrySlashCommand_PropagatesError(t *testing.T) {
 	m := newTestModel("")
-	m.vpReady = true
+	m.ready = true
 	m.cfg.RetryFn = func(modelOverride string) (<-chan StreamEvent, string, error) {
 		return nil, "", errors.New("no previous turn to retry")
 	}
@@ -65,7 +65,7 @@ func TestRetrySlashCommand_PropagatesError(t *testing.T) {
 
 func TestRetrySlashCommand_ReplacesLastResponseInPlace(t *testing.T) {
 	m := newTestModel("")
-	m.vpReady = true
+	m.ready = true
 	m.messages = append(m.messages, newUserMessage("first prompt"), newAssistantMessage())
 
 	var gotModelOverride string
@@ -102,7 +102,7 @@ func TestRetrySlashCommand_ReplacesLastResponseInPlace(t *testing.T) {
 
 func TestRetrySlashCommand_ModelOverride(t *testing.T) {
 	m := newTestModel("")
-	m.vpReady = true
+	m.ready = true
 	m.messages = append(m.messages, newUserMessage("first prompt"))
 
 	var gotModelOverride string
@@ -127,7 +127,7 @@ func TestRetrySlashCommand_ModelOverride(t *testing.T) {
 
 func TestRetrySlashCommand_BadUsageDoesNotCallRetryFn(t *testing.T) {
 	m := newTestModel("")
-	m.vpReady = true
+	m.ready = true
 	m.cfg.RetryFn = func(modelOverride string) (<-chan StreamEvent, string, error) {
 		t.Fatal("RetryFn should not be called for malformed input")
 		return nil, "", nil

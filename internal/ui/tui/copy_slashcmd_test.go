@@ -81,7 +81,7 @@ func withStubClipboard(t *testing.T, fn func(string) (string, error)) {
 
 func TestCopySlashCommand_BareCopyUsesLastResponse(t *testing.T) {
 	m := newTestModel("")
-	m.vpReady = true
+	m.ready = true
 	m.messages = append(m.messages, newUserMessage("prompt"), newAssistantMessage())
 	m.messages[len(m.messages)-1].Content = "the response"
 
@@ -105,7 +105,7 @@ func TestCopySlashCommand_BareCopyUsesLastResponse(t *testing.T) {
 
 func TestCopySlashCommand_NumberedMessage(t *testing.T) {
 	m := newTestModel("")
-	m.vpReady = true
+	m.ready = true
 	m.messages = append(m.messages, newUserMessage("first"), newAssistantMessage())
 	m.messages[len(m.messages)-1].Content = "first reply"
 	m.messages = append(m.messages, newUserMessage("second"), newAssistantMessage())
@@ -131,7 +131,7 @@ func TestCopySlashCommand_NumberedMessage(t *testing.T) {
 
 func TestCopySlashCommand_CodeBlock(t *testing.T) {
 	m := newTestModel("")
-	m.vpReady = true
+	m.ready = true
 	m.messages = append(m.messages, newUserMessage("prompt"), newAssistantMessage())
 	m.messages[len(m.messages)-1].Content = "intro\n```go\nfunc main() {}\n```\noutro"
 
@@ -152,7 +152,7 @@ func TestCopySlashCommand_CodeBlock(t *testing.T) {
 
 func TestCopySlashCommand_NothingToCopy(t *testing.T) {
 	m := newTestModel("")
-	m.vpReady = true
+	m.ready = true
 
 	withStubClipboard(t, func(text string) (string, error) {
 		t.Fatal("clipboard should not be invoked when there's nothing to copy")
@@ -170,7 +170,7 @@ func TestCopySlashCommand_NothingToCopy(t *testing.T) {
 
 func TestCopySlashCommand_ClipboardErrorSurfaced(t *testing.T) {
 	m := newTestModel("")
-	m.vpReady = true
+	m.ready = true
 	m.messages = append(m.messages, newUserMessage("prompt"), newAssistantMessage())
 	m.messages[len(m.messages)-1].Content = "reply"
 

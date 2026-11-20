@@ -703,7 +703,7 @@ func runAgenticSession(args []string) error {
 		// First wins on a name clash: the user's .bai/commands override
 		// the built-in commands.
 		CustomCommands: mergeSlashCommands(loadCustomSlashCommands("."), sessionSlashCommands, promptCommands(),
-			[]tui.SlashCommand{permissionsCommand(permSources, sessionAllow), agentsCommand(), compactCmd}),
+			[]tui.SlashCommand{permissionsCommand(permSources, sessionAllow), agentsCommand(), todosCommand(), compactCmd}),
 		RetryFn: retryFn,
 		FilesFn: mentionCandidates,
 		ShellFn: func(command string) (string, error) {

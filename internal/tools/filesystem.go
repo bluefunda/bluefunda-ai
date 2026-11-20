@@ -145,6 +145,8 @@ func ExecuteContext(ctx context.Context, name, argumentsJSON string) (string, er
 		return MemoryRead(key)
 	case "memory_list":
 		return MemoryList()
+	case "todo_write":
+		return TodoWrite(argumentsJSON)
 	case "memory_write":
 		key, _ := args["key"].(string)
 		content, _ := args["content"].(string)

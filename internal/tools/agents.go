@@ -28,11 +28,12 @@ type AgentType struct {
 // DefaultAgentType is used when the task call names no subagent_type.
 const DefaultAgentType = "general"
 
-// readOnlyToolNames are the built-in tools that never change state. It backs
+// readOnlyToolNames are the built-in tools that never change files or run
+// commands (todo_write only updates the session's task list). It backs
 // IsReadOnlyTool and the explore/plan agent types.
 var readOnlyToolNames = []string{
 	"read_file", "list_dir", "search_files", "search_content", "read_notebook",
-	"web_fetch", "web_search", "memory_read", "memory_list",
+	"web_fetch", "web_search", "memory_read", "memory_list", "todo_write",
 }
 
 // BuiltinAgentTypes returns the agent types every session has.

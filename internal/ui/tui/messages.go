@@ -317,9 +317,9 @@ const collapsedToolRows = 2
 // line ("ran 4 commands, read 3 files · 1 failed") and only calls still
 // running are listed.
 func renderToolRows(events []ToolEvent, expanded bool, width int, th Theme) string {
-	rows := toolRows(events)
+	rows, todos := splitTodoRows(toolRows(events))
 	if len(rows) == 0 {
-		return ""
+		return renderTodos(todos, width, th)
 	}
 	var done, running []toolRow
 	for _, r := range rows {
@@ -346,6 +346,7 @@ func renderToolRows(events []ToolEvent, expanded bool, width int, th Theme) stri
 			sb.WriteString("    " + th.ToolDim.Render(truncate("⎿ "+r.activity, max(width-6, 20))) + "\n")
 		}
 	}
+	sb.WriteString(renderTodos(todos, width, th))
 	return sb.String()
 }
 

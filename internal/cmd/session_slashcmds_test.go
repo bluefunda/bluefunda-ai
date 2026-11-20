@@ -178,3 +178,13 @@ func TestShellContext(t *testing.T) {
 		t.Errorf("fence must outlast the output's own fences:\n%s", got)
 	}
 }
+
+func TestTodosReport(t *testing.T) {
+	if !strings.Contains(todosReport(nil), "No todos") {
+		t.Error("empty")
+	}
+	out := todosReport([]tools.TodoItem{{Content: "a", Status: "completed"}, {Content: "b", Status: "in_progress"}, {Content: "c", Status: "pending"}})
+	if out != "Todos:\n  ☒ a\n  ▶ b\n  ☐ c" {
+		t.Errorf("got %q", out)
+	}
+}

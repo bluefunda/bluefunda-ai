@@ -226,3 +226,27 @@ func statusLines(ctxLine string, allow, deny []string, servers []mcp.ServerStatu
 func shellContext(command, output string) string {
 	return fenced("I ran this command in my shell:\n$ "+command, output)
 }
+
+// todosCommand is /todos: the task list the model keeps with todo_write.
+func todosCommand() tui.SlashCommand {
+	return tui.SlashCommand{
+		Name:        "/todos",
+		Description: "Show the current task list",
+		Instant:     true,
+		Run: func(string) (string, error) {
+			return todosReport(tools.Todos()), nil
+		},
+	}
+}
+
+func todosReport(todos []tools.TodoItem) string {
+	if len(todos) == 0 {
+		return "No todos. The model keeps a task list for multi-step work."
+	}
+	mark := map[string]string{"completed": "☒", "in_progress": "▶", "pending": "☐"}
+	lines := []string{"Todos:"}
+	for _, t := range todos {
+		lines = append(lines, "  "+mark[t.Status]+" "+t.Content)
+	}
+	return strings.Join(lines, "\n")
+}

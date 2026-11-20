@@ -252,6 +252,35 @@ func builtinSchemas() []ToolSchema {
 		{
 			Type: "function",
 			Function: FunctionDef{
+				Name: "todo_write",
+				Description: "Keep a visible task list for the current work; the user sees it as a checklist. " +
+					"Use it for work with 3 or more steps, or when the user gives several tasks: write the list up front, " +
+					"mark one task in_progress before starting it, and mark it completed as soon as it is done (not in batches). " +
+					"Add tasks you discover along the way. Skip it for a single quick task or a question. " +
+					"Each call replaces the whole list.",
+				Parameters: json.RawMessage(`{
+					"type": "object",
+					"properties": {
+						"todos": {
+							"type": "array",
+							"items": {
+								"type": "object",
+								"properties": {
+									"content":    {"type": "string", "description": "The task, imperative: \"Run the tests\"."},
+									"status":     {"type": "string", "enum": ["pending", "in_progress", "completed"]},
+									"activeForm": {"type": "string", "description": "Present continuous, shown while in progress: \"Running the tests\"."}
+								},
+								"required": ["content", "status"]
+							}
+						}
+					},
+					"required": ["todos"]
+				}`),
+			},
+		},
+		{
+			Type: "function",
+			Function: FunctionDef{
 				Name:        "memory_list",
 				Description: "List all persistent memory keys (project and user level) with a one-line preview of each. Use memory_read to get an entry's full content.",
 				Parameters:  json.RawMessage(`{"type": "object", "properties": {}}`),

@@ -191,6 +191,17 @@ func configDir() (string, error) {
 	return dir, nil
 }
 
+// FileExists reports whether the user config file has been written yet (it
+// is created on first `login` or `config set`; until then defaults apply).
+func FileExists() bool {
+	path, err := configPath()
+	if err != nil {
+		return false
+	}
+	_, err = os.Stat(path)
+	return err == nil
+}
+
 // configPath returns the full path to the config file.
 func configPath() (string, error) {
 	dir, err := configDir()
@@ -484,21 +495,17 @@ func Load() (*Config, error) {
 
 	// Load tokens: prefer OS keychain, fall back to file-based encryption.
 	if keychain.Available() {
-		if tok, err := keychain.Get("access_token"); err == nil {
-			cfg.Auth.AccessToken = tok
-		}
-		if tok, err := keychain.Get("refresh_token"); err == nil {
-			cfg.Auth.RefreshToken = tok
-		}
-		// Migrate enc: tokens from the YAML file into the keychain on first use.
-		if cfg.Auth.AccessToken == "" {
-			raw := rawAccessToken(&data)
-			if raw != "" {
-				if dec, err := crypto.Decrypt(raw); err == nil && dec != "" {
-					cfg.Auth.AccessToken = dec
-					_ = Save(&cfg) // re-save moves the token into the keychain
-				}
-			}
+		// A token is read from the keychain when it's there; otherwise from
+		// the YAML file, where Save keeps it whenever the keychain write
+		// failed (e.g. a headless session with no unlocked keyring).
+		fromFile := false
+		cfg.Auth.AccessToken, fromFile = loadToken("access_token", cfg.Auth.AccessToken)
+		var refreshFromFile bool
+		cfg.Auth.RefreshToken, refreshFromFile = loadToken("refresh_token", cfg.Auth.RefreshToken)
+		// Migrate file tokens into the keychain (Save leaves them in the file
+		// if the keychain still can't take them).
+		if fromFile || refreshFromFile {
+			_ = Save(&cfg)
 		}
 	} else {
 		// File-based path: decrypt enc: prefixed values.
@@ -551,28 +558,16 @@ func Save(cfg *Config) error {
 
 	toSave := *cfg
 
-	if keychain.Available() {
-		// Store tokens in the OS keychain; write empty strings to YAML.
-		if cfg.Auth.AccessToken != "" {
-			_ = keychain.Set("access_token", cfg.Auth.AccessToken)
-		}
-		if cfg.Auth.RefreshToken != "" {
-			_ = keychain.Set("refresh_token", cfg.Auth.RefreshToken)
-		}
-		toSave.Auth.AccessToken = ""
-		toSave.Auth.RefreshToken = ""
-	} else {
-		// File-based path: encrypt tokens before writing.
-		if toSave.Auth.AccessToken != "" {
-			if enc, err := crypto.Encrypt(toSave.Auth.AccessToken); err == nil {
-				toSave.Auth.AccessToken = enc
-			}
-		}
-		if toSave.Auth.RefreshToken != "" {
-			if enc, err := crypto.Encrypt(toSave.Auth.RefreshToken); err == nil {
-				toSave.Auth.RefreshToken = enc
-			}
-		}
+	// Each token goes to the OS keychain when it's available and the write
+	// verifiably took; otherwise it is encrypted into the YAML file. Never
+	// drop a token just because the keychain exists: on a headless session
+	// secret-tool can be installed with no usable keyring behind it.
+	var err2 error
+	if toSave.Auth.AccessToken, err2 = storeToken("access_token", cfg.Auth.AccessToken); err2 != nil {
+		return err2
+	}
+	if toSave.Auth.RefreshToken, err2 = storeToken("refresh_token", cfg.Auth.RefreshToken); err2 != nil {
+		return err2
 	}
 
 	data, err := yaml.Marshal(&toSave)
@@ -583,6 +578,40 @@ func Save(cfg *Config) error {
 		return fmt.Errorf("write config: %w", err)
 	}
 	return nil
+}
+
+// storeToken returns the value to write to the YAML file for a token: "" when
+// the token is empty or was stored in the keychain (and reads back intact),
+// else the token encrypted.
+func storeToken(key, value string) (string, error) {
+	if value == "" {
+		return "", nil
+	}
+	if keychain.Available() && keychain.Set(key, value) == nil {
+		if got, err := keychain.Get(key); err == nil && got == value {
+			return "", nil
+		}
+	}
+	enc, err := crypto.Encrypt(value)
+	if err != nil {
+		return "", fmt.Errorf("encrypt %s: %w", key, err)
+	}
+	return enc, nil
+}
+
+// loadToken returns a token from the keychain, or else decrypted from its
+// YAML value fileVal; fromFile reports the latter (so it can be migrated).
+func loadToken(key, fileVal string) (tok string, fromFile bool) {
+	if tok, err := keychain.Get(key); err == nil && tok != "" {
+		return tok, false
+	}
+	if fileVal == "" {
+		return "", false
+	}
+	if dec, err := crypto.Decrypt(fileVal); err == nil && dec != "" {
+		return dec, true
+	}
+	return "", false
 }
 
 // rawAccessToken extracts the raw access_token value from YAML bytes

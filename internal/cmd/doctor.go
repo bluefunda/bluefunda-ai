@@ -51,8 +51,10 @@ func runDoctor(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		checks = append(checks, checkResult{"Config file", "error", err.Error()})
 		errors++
+	} else if !config.FileExists() {
+		checks = append(checks, checkResult{"Config file", "info", "~/" + app.Current().Dir + "/config.yaml not created yet — using defaults"})
 	} else {
-		checks = append(checks, checkResult{"Config file", "ok", "~/.bai/config.yaml"})
+		checks = append(checks, checkResult{"Config file", "ok", "~/" + app.Current().Dir + "/config.yaml"})
 	}
 
 	// 2. Authentication

@@ -55,23 +55,34 @@ func csvField(s string) string {
 // taskArgs builds the child's command line: headless, auto-approved, with the
 // parent's deny rules, and the prompt last after "--" so a prompt starting
 // with "-" isn't read as a flag.
-func taskArgs(prompt string, maxTurns int, useWorktree bool) []string {
+func taskArgs(agent AgentType, prompt string, maxTurns int, useWorktree bool) []string {
 	args := []string{"--print", "--output-format", "stream-json", "--auto"}
 	args = append(args, taskDisallowedArgs()...)
+	// The agent type's limits (#408): its tool allow-list and model.
+	if len(agent.Tools) > 0 {
+		fields := make([]string, len(agent.Tools))
+		for i, t := range agent.Tools {
+			fields[i] = csvField(t)
+		}
+		args = append(args, "--tools="+strings.Join(fields, ","))
+	}
+	if agent.Model != "" {
+		args = append(args, "--model", agent.Model)
+	}
 	if maxTurns > 0 {
 		args = append(args, "--max-turns", fmt.Sprintf("%d", maxTurns))
 	}
 	if useWorktree {
 		args = append(args, "--worktree")
 	}
-	return append(args, "--", prompt)
+	return append(args, "--", taskPrompt(agent, prompt))
 }
 
 // RunTask spawns a headless bai subprocess with the given prompt and returns
 // its final text output as the tool result. The child runs with --auto so it
 // never blocks waiting for approval. Budget controls are NOT inherited from the
 // parent to avoid double-counting costs.
-func RunTask(ctx context.Context, prompt, workDir string, maxTurns int, useWorktree bool) (string, error) {
+func RunTask(ctx context.Context, agent AgentType, prompt, workDir string, maxTurns int, useWorktree bool) (string, error) {
 	self, err := os.Executable()
 	if err != nil {
 		self, err = exec.LookPath("bai")
@@ -80,7 +91,7 @@ func RunTask(ctx context.Context, prompt, workDir string, maxTurns int, useWorkt
 		}
 	}
 
-	args := taskArgs(prompt, maxTurns, useWorktree)
+	args := taskArgs(agent, prompt, maxTurns, useWorktree)
 
 	taskCtx, cancel := context.WithTimeout(ctx, taskTimeout)
 	defer cancel()

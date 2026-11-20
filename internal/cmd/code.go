@@ -54,7 +54,10 @@ var (
 	// settings-file rules using the same pattern syntax.
 	codeAllowedTools    []string
 	codeDisallowedTools []string
-	codeRetryMode       bool // set by `bai chat retry <id>`: derive the prompt
+	// codeTools limits the session to these tools (--tools, #408). Empty
+	// means every tool. task subagents of a restricted type run with it.
+	codeTools     []string
+	codeRetryMode bool // set by `bai chat retry <id>`: derive the prompt
 	// from the last turn in the resumed session instead of requiring one on
 	// the command line.
 )
@@ -128,6 +131,53 @@ func init() {
 	codeCmd.Flags().StringVar(&codeResume, "resume", "", "Resume a previous session by ID")
 	codeCmd.Flags().BoolVarP(&codeContinue, "continue", "c", false, "Resume the most recent code session")
 	registerPermissionFlags(codeCmd.Flags(), &codeAllowedTools, &codeDisallowedTools)
+	registerToolsFlag(codeCmd.Flags(), &codeTools)
+}
+
+// registerToolsFlag adds --tools, which limits the session to the named
+// tools (Claude Code's --tools). The task tool passes it to subagents of a
+// restricted type such as explore (#408).
+func registerToolsFlag(fs *pflag.FlagSet, dst *[]string) {
+	fs.StringSliceVar(dst, "tools", nil,
+		`Only offer these tools to the model, e.g. "read_file,search_content" (default: all)`)
+}
+
+// restrictTools keeps only the tools named in only, and returns the names it
+// removed so they can also be denied: a model that calls a hidden tool anyway
+// is refused rather than obeyed.
+func restrictTools(schemas string, only []string) (string, []string, error) {
+	if len(only) == 0 || schemas == "" {
+		return schemas, nil, nil
+	}
+	keep := make(map[string]bool, len(only))
+	for _, n := range only {
+		if n = strings.TrimSpace(n); n != "" {
+			keep[n] = true
+		}
+	}
+	return tools.FilterSchemas(schemas, func(name string) bool { return keep[name] })
+}
+
+// loadAgentTypes registers the task tool's agent types: the built-ins, then
+// ~/.bai/agents/*.md, then <project>/.bai/agents/*.md (project wins). Files
+// that fail to parse are reported and skipped.
+func loadAgentTypes(errW io.Writer) {
+	var dirs []string
+	if d, err := app.HomePath("agents"); err == nil {
+		dirs = append(dirs, d)
+	}
+	root, err := worktree.GitRoot()
+	if err != nil {
+		root, _ = os.Getwd()
+	}
+	if root != "" {
+		dirs = append(dirs, filepath.Join(root, app.Current().Dir, "agents"))
+	}
+	types, errs := tools.LoadAgentTypes(dirs...)
+	for _, e := range errs {
+		fmt.Fprintf(errW, "[%s] skipping agent definition: %v\n", app.Current().Name, e)
+	}
+	tools.SetAgentTypes(types)
 }
 
 // registerPermissionFlags adds --allowed-tools / --disallowed-tools to fs,
@@ -306,6 +356,7 @@ func runAgenticSession(args []string) error {
 
 	var toolSchemas string
 	if !codeNoTools {
+		loadAgentTypes(os.Stderr)
 		var err error
 		toolSchemas, err = tools.LocalToolSchemas()
 		if err != nil {
@@ -399,6 +450,16 @@ func runAgenticSession(args []string) error {
 		for _, p := range pluginMgr.All() {
 			fmt.Printf("[bai] plugin %s: loaded (%s)\n", p.Manifest.Name, p.SourcePath)
 		}
+	}
+
+	// --- Tool restriction (--tools, #408) ---
+	// Applied after MCP and plugin tools are merged so it covers them too.
+	if filtered, dropped, err := restrictTools(toolSchemas, codeTools); err != nil {
+		return fmt.Errorf("--tools: %w", err)
+	} else if len(dropped) > 0 {
+		toolSchemas = filtered
+		permDeny = append(permDeny, dropped...)
+		tools.SetTaskDisallowedTools(permDeny)
 	}
 
 	// --- Session persistence (#82) ---

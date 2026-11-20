@@ -15,7 +15,7 @@ func TestTaskArgs_ForwardsDenyRulesIntact(t *testing.T) {
 	SetTaskDisallowedTools(rules)
 	t.Cleanup(func() { SetTaskDisallowedTools(nil) })
 
-	args := taskArgs("-v looks like a flag", 7, true)
+	args := taskArgs(AgentType{}, "-v looks like a flag", 7, true)
 
 	fs := pflag.NewFlagSet("child", pflag.ContinueOnError)
 	var deny []string
@@ -45,7 +45,7 @@ func TestTaskArgs_ForwardsDenyRulesIntact(t *testing.T) {
 func TestTaskArgs_NoDenyRules(t *testing.T) {
 	SetTaskDisallowedTools(nil)
 	want := []string{"--print", "--output-format", "stream-json", "--auto", "--", "do it"}
-	if got := taskArgs("do it", 0, false); !reflect.DeepEqual(got, want) {
+	if got := taskArgs(AgentType{}, "do it", 0, false); !reflect.DeepEqual(got, want) {
 		t.Errorf("args = %q, want %q", got, want)
 	}
 }

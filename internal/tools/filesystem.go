@@ -152,7 +152,12 @@ func Execute(name, argumentsJSON string) (string, error) {
 		workDir, _ := args["working_directory"].(string)
 		maxTurnsF, _ := args["max_turns"].(float64)
 		useWorktree, _ := args["use_worktree"].(bool)
-		return RunTask(context.Background(), prompt, workDir, int(maxTurnsF), useWorktree)
+		agentName, _ := args["subagent_type"].(string)
+		agent, err := lookupAgentType(agentName)
+		if err != nil {
+			return "", err
+		}
+		return RunTask(context.Background(), agent, prompt, workDir, int(maxTurnsF), useWorktree)
 	default:
 		return "", fmt.Errorf("unknown tool: %s", name)
 	}

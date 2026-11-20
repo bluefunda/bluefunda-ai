@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.68.0](https://github.com/bluefunda/bluefunda-ai/compare/v1.67.0...v1.68.0) (2026-11-20)
+
+
+### Features
+
+* **tui:** permission dialog with previews, collapsible thinking ([#413](https://github.com/bluefunda/bluefunda-ai/issues/413)) ([2fa6794](https://github.com/bluefunda/bluefunda-ai/commit/2fa6794077548a51ea60685939fa86eac25fc215))
+
 ## [1.67.0](https://github.com/bluefunda/bluefunda-ai/compare/v1.66.0...v1.67.0) (2026-11-20)
 
 

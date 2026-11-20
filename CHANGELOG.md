@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.67.0](https://github.com/bluefunda/bluefunda-ai/compare/v1.66.0...v1.67.0) (2026-11-20)
+
+
+### Features
+
+* **hooks:** user-prompt-submit hook phase (block or add context to each prompt) ([#411](https://github.com/bluefunda/bluefunda-ai/issues/411)) ([73c205c](https://github.com/bluefunda/bluefunda-ai/commit/73c205c24d3535b9c34059e9413edee49adc345c))
+
 ## [1.66.0](https://github.com/bluefunda/bluefunda-ai/compare/v1.65.0...v1.66.0) (2026-11-20)
 
 

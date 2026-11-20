@@ -140,7 +140,11 @@ type SessionConfig struct {
 	MaxTurns       int                           // current agentic step limit per request (shown by /max-turns)
 	SetMaxTurnsFn  func(n int)                   // nil = /max-turns not available
 	SetPlanModeFn  func(enabled bool)            // nil = plan mode not available (non-code sessions)
-	SetCodeModeFn  func(enabled bool)            // nil = mode switch not supported in this session
+	// AcceptEdits auto-approves file edits (Claude Code's accept-edits
+	// mode); SetAcceptEditsFn applies a change. nil = not available.
+	AcceptEdits      bool
+	SetAcceptEditsFn func(enabled bool)
+	SetCodeModeFn    func(enabled bool) // nil = mode switch not supported in this session
 	// StatusFn adds the session's own lines to /status (context size,
 	// settings files, MCP servers…). Called on the UI goroutine.
 	StatusFn       func() []string
@@ -614,6 +618,13 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.messages = m.messages[:0]
 		m.messages = append(m.messages, newSystemMessage("Screen cleared."))
 		return m, tea.ClearScreen
+
+	case "shift+tab":
+		// Cycle the permission mode, as in Claude Code.
+		if m.cfg.IsCode && !m.showSlash {
+			m.setMode(m.mode().next())
+		}
+		return m, nil
 
 	case "ctrl+o":
 		// Toggle collapsed thinking, narration and tool calls (#330), like
@@ -1275,6 +1286,7 @@ func helpText() string {
 		"  Ctrl+D          Quit",
 		"  Ctrl+Y          Copy last response",
 		"  Ctrl+O          Show/hide thinking and narration between tool calls",
+		"  Shift+Tab       Cycle mode: default → accept edits → plan (code sessions)",
 		"  Scroll/select  The conversation is in your terminal's scrollback: scroll and select as usual",
 		"",
 		"  Slash commands",

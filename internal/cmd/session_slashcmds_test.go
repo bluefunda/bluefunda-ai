@@ -150,3 +150,24 @@ func TestStatusLines(t *testing.T) {
 		}
 	}
 }
+
+// Accept-edits mode approves file edits but nothing else.
+func TestAcceptEditsMode(t *testing.T) {
+	sa := newSessionAllowSet()
+	if sa.contains("write_file", `{"path":"a"}`) {
+		t.Fatal("edits approved before the mode is on")
+	}
+	sa.setAcceptEdits(true)
+	for _, tool := range editTools {
+		if !sa.contains(tool, `{"path":"a"}`) {
+			t.Errorf("%s not approved in accept-edits mode", tool)
+		}
+	}
+	if sa.contains("bash", `{"command":"rm -rf x"}`) {
+		t.Error("accept-edits must not approve bash")
+	}
+	sa.setAcceptEdits(false)
+	if sa.contains("edit_file", `{"path":"a"}`) {
+		t.Error("still approving after the mode is off")
+	}
+}

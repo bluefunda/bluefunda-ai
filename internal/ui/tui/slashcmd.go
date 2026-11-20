@@ -78,13 +78,7 @@ func matchSlashCommands(filter string, custom []SlashCommand) []SlashCommand {
 // statusText is /status: what this session is running with, like Claude
 // Code's /status.
 func (m Model) statusText() string {
-	mode := "default (asks before changes)"
-	switch {
-	case m.cfg.PlanMode:
-		mode = "plan (read-only)"
-	case m.cfg.AutoApply:
-		mode = "auto (runs tools without asking)"
-	}
+	mode := m.mode().describe()
 	turns := "no limit"
 	if m.cfg.MaxTurns > 0 {
 		turns = fmt.Sprintf("%d steps", m.cfg.MaxTurns)

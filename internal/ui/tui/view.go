@@ -374,7 +374,13 @@ func (m Model) renderFooter() string {
 	if m.streaming {
 		hint = "Ctrl+C to interrupt turn  ·  Ctrl+O show/hide details  ·  Ctrl+D to quit"
 	}
+	if m.cfg.IsCode {
+		hint += "  ·  Shift+Tab mode"
+	}
 	left := "  " + th.Footer.Render(hint)
+	if label := m.mode().label(); label != "" {
+		left = "  " + lipgloss.NewStyle().Foreground(th.Warning).Render(label) + th.Footer.Render("  (shift+tab to cycle)")
+	}
 	if m.updateAvailable == "" {
 		return left
 	}

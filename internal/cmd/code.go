@@ -769,6 +769,7 @@ func runAgenticSession(args []string) error {
 		SetPlanModeFn: func(enabled bool) {
 			planModeState = enabled
 		},
+		SetAcceptEditsFn: sessionAllow.setAcceptEdits,
 		SetCodeModeFn: func(enabled bool) {
 			if enabled {
 				toolSchemasState = toolSchemas // restore full tool schemas
@@ -1648,6 +1649,9 @@ type sessionAllowSet struct {
 	exact        map[string]bool // toolName + "\x00" + argsJSON
 	tools        map[string]bool // whole tools
 	bashPrefixes []string
+	// acceptEdits approves every file edit: Claude Code's accept-edits
+	// mode, switched with Shift+Tab.
+	acceptEdits bool
 
 	// persistPath, when non-empty, opts this set into also writing approvals
 	// to the local config at this path (#331) — set only when the project
@@ -1765,6 +1769,13 @@ func persistAlwaysAllow(path, toolName, argsJSON string, prefixes, toolNames []s
 	_ = config.AddLocalAllowRule(path, pattern)
 }
 
+// setAcceptEdits turns accept-edits mode on or off.
+func (s *sessionAllowSet) setAcceptEdits(on bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.acceptEdits = on
+}
+
 func (s *sessionAllowSet) contains(toolName, argsJSON string) bool {
 	if s == nil {
 		return false
@@ -1772,6 +1783,9 @@ func (s *sessionAllowSet) contains(toolName, argsJSON string) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.exact[toolName+"\x00"+argsJSON] || s.tools[toolName] {
+		return true
+	}
+	if s.acceptEdits && slices.Contains(editTools, toolName) {
 		return true
 	}
 	return toolName == "bash" && len(s.bashPrefixes) > 0 &&

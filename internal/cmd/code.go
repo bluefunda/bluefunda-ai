@@ -456,7 +456,7 @@ func runAgenticSession(args []string) error {
 		if idx < 0 {
 			return fmt.Errorf("no previous turn found to retry in session %s", sessionID)
 		}
-		initialPrompt = history[idx].Content
+		initialPrompt = stripPromptContext(history[idx].Content)
 		history = history[:idx]
 	}
 
@@ -504,7 +504,6 @@ func runAgenticSession(args []string) error {
 			}
 		}
 
-		history = append(history, codeMessage{Role: "user", Content: input})
 		ch := make(chan tui.StreamEvent, 64)
 		currentAutoApply := autoApplyState // snapshot at turn start
 		currentPlanMode := planModeState   // snapshot at turn start
@@ -512,6 +511,15 @@ func runAgenticSession(args []string) error {
 
 		go func() {
 			defer close(ch)
+			// user-prompt-submit hooks (#407) run here, off the TUI's update
+			// loop, since a script may take up to the hook timeout.
+			userMsg, blocked := applyPromptHooks(hookRunner, input)
+			if blocked != "" {
+				ch <- tui.StreamEvent{Kind: "error", ErrMsg: blocked}
+				ch <- tui.StreamEvent{Kind: "done"}
+				return
+			}
+			history = append(history, codeMessage{Role: "user", Content: userMsg})
 			newHistory, loopErr := agenticLoopTUI(
 				conn, cfg, cid, mdl, currentSchemas,
 				history, isFirstTurn && isNew, permAllow, permDeny, currentAutoApply, currentPlanMode, sessionAllow,
@@ -543,7 +551,7 @@ func runAgenticSession(args []string) error {
 		if idx < 0 {
 			return nil, "", fmt.Errorf("no previous turn to retry")
 		}
-		prompt := history[idx].Content
+		prompt := stripPromptContext(history[idx].Content)
 		history = history[:idx]
 		useModel := model
 		if modelOverride != "" {
@@ -708,7 +716,21 @@ func runCodePrint(
 	pluginMgr *plugins.Manager,
 	p *ui.Printer,
 ) error {
-	history = append(history, codeMessage{Role: "user", Content: prompt})
+	userMsg, blocked := applyPromptHooks(hookRunner, prompt)
+	if blocked != "" {
+		// Close the session the audit log and session-end hooks saw start.
+		auditLog.LogSessionEnd(0, "blocked")
+		hookRunner.SessionEnd(0, "blocked")
+		ch := make(chan tui.StreamEvent, 2)
+		ch <- tui.StreamEvent{Kind: "error", ErrMsg: blocked}
+		ch <- tui.StreamEvent{Kind: "done"}
+		close(ch)
+		if exitCode := drainPrintStream(ch, outputFormat, os.Stdout, os.Stderr); exitCode != 0 {
+			os.Exit(exitCode)
+		}
+		return nil
+	}
+	history = append(history, codeMessage{Role: "user", Content: userMsg})
 
 	ch := make(chan tui.StreamEvent, 128)
 	go func() {
@@ -737,6 +759,41 @@ func runCodePrint(
 		os.Exit(exitCode)
 	}
 	return nil
+}
+
+// Hook context is appended to the user turn inside these tags, the same
+// framing Claude Code uses for UserPromptSubmit output, so the model can tell
+// it apart from what the user typed and /retry can strip it back off.
+const (
+	promptHookOpen  = "\n\n<user-prompt-submit-hook>\n"
+	promptHookClose = "\n</user-prompt-submit-hook>"
+)
+
+// applyPromptHooks runs user-prompt-submit hooks (#407) for prompt. It returns
+// the user message to send (prompt plus any hook context) or, when a hook
+// blocked the prompt, a non-empty reason to show instead of sending it.
+func applyPromptHooks(r *hooks.Runner, prompt string) (userMsg, blocked string) {
+	res := r.UserPromptSubmit(prompt)
+	if res.Block {
+		return "", "Prompt blocked by user-prompt-submit hook: " + res.SystemMessage
+	}
+	if res.AdditionalContext == "" {
+		return prompt, ""
+	}
+	return prompt + promptHookOpen + res.AdditionalContext + promptHookClose, ""
+}
+
+// stripPromptContext removes hook context added by applyPromptHooks, giving
+// back the text the user typed — so a retry re-runs the hooks on the original
+// prompt instead of stacking a second copy of the context.
+func stripPromptContext(msg string) string {
+	if !strings.HasSuffix(msg, promptHookClose) {
+		return msg
+	}
+	if i := strings.LastIndex(msg, promptHookOpen); i >= 0 {
+		return msg[:i]
+	}
+	return msg
 }
 
 // drainPrintStream reads StreamEvents from ch and writes formatted output.

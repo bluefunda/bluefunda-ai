@@ -50,6 +50,20 @@
 //	{"hook":"pre-compact","session_id":"…","cwd":"…","estimated_tokens":12345}
 //
 // Pre-compact exit 2 skips compaction for that round.
+//
+// User-prompt-submit stdin (runs on every prompt, before it is sent):
+//
+//	{"hook":"user-prompt-submit","session_id":"…","cwd":"…","prompt":"…"}
+//
+// User-prompt-submit stdout (optional, exit 0):
+//
+//	{"additional_context":"text added to this prompt's turn"}
+//
+// User-prompt-submit exit 2 blocks the prompt: it is not sent or kept in
+// history, and the reason is shown to the user.
+//
+// On exit 2 in any phase, the block reason is stdout's "system_message", or
+// else the script's stderr.
 package hooks
 
 import (
@@ -71,16 +85,18 @@ const hookTimeout = 10 * time.Second
 // Phases lists every hook phase directory name under .bai/hooks/. Exported so
 // callers (e.g. `bai doctor`) can enumerate configured hooks without
 // duplicating this list.
-var Phases = []string{"pre-tool", "post-tool", "session-start", "session-end", "stop", "pre-compact"}
+var Phases = []string{"pre-tool", "post-tool", "session-start", "session-end", "stop", "pre-compact", "user-prompt-submit"}
 
-// Result is the outcome of running pre-tool hooks.
+// Result is the outcome of running a phase's hooks.
 type Result struct {
 	// ModifiedInput replaces the original tool input when non-nil.
 	ModifiedInput map[string]any
 	// SystemMessage is fed back to the LLM when Block is true.
 	SystemMessage string
-	// Block prevents the tool from executing.
+	// Block prevents the tool from executing (or the prompt from being sent).
 	Block bool
+	// AdditionalContext is extra text for the current turn (user-prompt-submit).
+	AdditionalContext string
 }
 
 // Runner discovers and executes hook scripts for a project.
@@ -246,6 +262,34 @@ func (r *Runner) Stop() Result {
 	return Result{}
 }
 
+// UserPromptSubmit runs user-prompt-submit hooks for a prompt the user is
+// about to send. Scripts run in directory order; the first one that exits 2
+// blocks the prompt. Otherwise any additional_context they emit is joined
+// and returned for the caller to add to the turn.
+func (r *Runner) UserPromptSubmit(prompt string) Result {
+	scripts := r.findLifecycleScripts("user-prompt-submit")
+	if len(scripts) == 0 {
+		return Result{}
+	}
+	payload := map[string]any{
+		"hook":       "user-prompt-submit",
+		"session_id": r.sessionID,
+		"cwd":        r.cwd,
+		"prompt":     prompt,
+	}
+	var parts []string
+	for _, script := range scripts {
+		out, block, msg := runScript(script, payload)
+		if block {
+			return Result{Block: true, SystemMessage: msg}
+		}
+		if ctx, ok := out["additional_context"].(string); ok && strings.TrimSpace(ctx) != "" {
+			parts = append(parts, ctx)
+		}
+	}
+	return Result{AdditionalContext: strings.Join(parts, "\n\n")}
+}
+
 // PreCompact runs pre-compact hooks before context compaction. A script
 // exiting 2 blocks compaction for this round.
 func (r *Runner) PreCompact(estimatedTokens int) Result {
@@ -354,7 +398,10 @@ func runScript(script string, payload map[string]any) (map[string]any, bool, str
 			}
 		}
 		if msg == "" {
-			msg = fmt.Sprintf("hook %s blocked tool execution", filepath.Base(script))
+			msg = strings.TrimSpace(stderr.String())
+		}
+		if msg == "" {
+			msg = fmt.Sprintf("hook %s blocked this action", filepath.Base(script))
 		}
 		return nil, true, msg
 	}

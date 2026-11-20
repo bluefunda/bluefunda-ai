@@ -36,6 +36,21 @@ func TestMaxTurnsSlashCommand(t *testing.T) {
 	}
 }
 
+func TestMaxTurnsSlashCommand_NoLimit(t *testing.T) {
+	m := newTestModel("")
+	got := -1
+	m.cfg.SetMaxTurnsFn = func(n int) { got = n }
+	m = runSlash(t, m, "/max-turns")
+	if !strings.Contains(lastSystem(m), "no limit") {
+		t.Errorf("unlimited session should say so, got %q", lastSystem(m))
+	}
+	m.cfg.MaxTurns = 30
+	m = runSlash(t, m, "/max-turns 0")
+	if got != 0 || m.cfg.MaxTurns != 0 || !strings.Contains(lastSystem(m), "no limit") {
+		t.Errorf("/max-turns 0 should remove the limit: fn %d, cfg %d, %q", got, m.cfg.MaxTurns, lastSystem(m))
+	}
+}
+
 func TestMaxTurnsSlashCommand_UnavailableOutsideCode(t *testing.T) {
 	m := runSlash(t, newTestModel(""), "/max-turns 10")
 	if !strings.Contains(lastSystem(m), "only available") {

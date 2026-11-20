@@ -86,6 +86,7 @@ func runDefault(cmd *cobra.Command, args []string) error {
 	if rootMaxTurns > 0 {
 		codeMaxTurns = rootMaxTurns
 	}
+	codeMaxTurnsSet = cmd.Flags().Changed("max-turns")
 	if rootMaxContextTokens > 0 {
 		codeMaxContextTokens = rootMaxContextTokens
 	}

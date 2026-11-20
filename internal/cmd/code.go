@@ -65,6 +65,10 @@ var (
 var (
 	sessionSlashCommands []tui.SlashCommand
 	sessionDeny          []string
+
+	// codeMaxTurnsSet records whether --max-turns was passed, so an
+	// interactive session without it runs with no step limit.
+	codeMaxTurnsSet bool
 )
 
 // defaultMaxTurnsFlag is the --max-turns default, shared by both flag
@@ -87,6 +91,15 @@ func resolveMaxTurns(flagValue, projectMaxTurns int) int {
 	return flagValue
 }
 
+// interactiveMaxTurns returns the step limit for an interactive session:
+// none (0) unless the user asked for one.
+func interactiveMaxTurns(resolved int, requested bool) int {
+	if !requested {
+		return 0
+	}
+	return resolved
+}
+
 // codeCmd is a deprecated alias for the root 'bai' command.
 // It is hidden from help but preserved for backward compatibility.
 var codeCmd = &cobra.Command{
@@ -96,6 +109,7 @@ var codeCmd = &cobra.Command{
 	Args:   cobra.ArbitraryArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		fmt.Fprintln(os.Stderr, "Note: 'bai code' is now just 'bai'. This alias will be removed in a future release.")
+		codeMaxTurnsSet = cmd.Flags().Changed("max-turns")
 		return runAgenticSession(args)
 	},
 }
@@ -261,8 +275,10 @@ func runAgenticSession(args []string) error {
 	}
 
 	// Apply project-level max_turns override if the flag wasn't set explicitly.
+	maxTurnsRequested := codeMaxTurnsSet
 	if projCfgEarly := config.FindProjectConfig("."); projCfgEarly != nil {
 		codeMaxTurns = resolveMaxTurns(codeMaxTurns, projCfgEarly.MaxTurns)
+		maxTurnsRequested = maxTurnsRequested || projCfgEarly.MaxTurns > 0
 	}
 
 	// Resolve effective context token limit: CLI flag > BAI_MAX_CONTEXT_TOKENS > default.
@@ -489,7 +505,10 @@ func runAgenticSession(args []string) error {
 	autoApplyState := codeAutoApply
 	planModeState := codePlanMode
 	toolSchemasState := toolSchemas
-	maxTurnsState := codeMaxTurns
+	// Interactive sessions have no step limit unless one was asked for
+	// (--max-turns or the project's max_turns), as in Claude Code: the user
+	// is watching and can interrupt. --print keeps the default as a guard.
+	maxTurnsState := interactiveMaxTurns(codeMaxTurns, maxTurnsRequested)
 	turns := 0
 	isFirstTurn := true
 
@@ -634,7 +653,7 @@ func runAgenticSession(args []string) error {
 		SetAutoApplyFn: func(enabled bool) {
 			autoApplyState = enabled
 		},
-		MaxTurns: codeMaxTurns,
+		MaxTurns: maxTurnsState,
 		SetMaxTurnsFn: func(n int) {
 			maxTurnsState = n
 		},
@@ -957,9 +976,6 @@ func agenticLoopTUI(
 	p *ui.Printer,
 	ch chan<- tui.StreamEvent,
 ) ([]codeMessage, error) {
-	if maxTurns <= 0 {
-		maxTurns = 50
-	}
 	if maxContextTokens <= 0 {
 		maxContextTokens = defaultCompactionThreshold
 	}
@@ -988,7 +1004,8 @@ func agenticLoopTUI(
 	var lastPromptTokens int32   // prompt token count from the most recent iteration
 	var estimatedCostUSD float64 // cumulative estimated cost for this session turn
 
-	for iteration := 0; iteration < maxTurns; iteration++ {
+	// maxTurns <= 0 means no limit.
+	for iteration := 0; maxTurns <= 0 || iteration < maxTurns; iteration++ {
 		// Compact context when the client-side estimate or server-reported token count
 		// exceeds the configured limit. Client-side estimate fires even on iteration 0
 		// (e.g. resumed history already large). Server count is a secondary signal.

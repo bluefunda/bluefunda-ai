@@ -1001,10 +1001,16 @@ func (m Model) handleSlashCommand(input string) (tea.Model, tea.Cmd) {
 		switch n, err := strconv.Atoi(arg); {
 		case m.cfg.SetMaxTurnsFn == nil:
 			m.messages = append(m.messages, newSystemMessage("/max-turns is only available in code sessions"))
+		case arg == "" && m.cfg.MaxTurns <= 0:
+			m.messages = append(m.messages, newSystemMessage("Max turns: no limit. Set one with /max-turns <n>."))
 		case arg == "":
-			m.messages = append(m.messages, newSystemMessage(fmt.Sprintf("Max turns: %d agentic steps per request. Set with /max-turns <n>.", m.cfg.MaxTurns)))
-		case err != nil || n < 1:
-			m.messages = append(m.messages, newSystemMessage("Usage: /max-turns <n>  (a positive number)"))
+			m.messages = append(m.messages, newSystemMessage(fmt.Sprintf("Max turns: %d agentic steps per request. Set with /max-turns <n> (0 = no limit).", m.cfg.MaxTurns)))
+		case err != nil || n < 0:
+			m.messages = append(m.messages, newSystemMessage("Usage: /max-turns <n>  (0 = no limit)"))
+		case n == 0:
+			m.cfg.MaxTurns = 0
+			m.cfg.SetMaxTurnsFn(0)
+			m.messages = append(m.messages, newSystemMessage("Max turns: no limit for this session. Type \"continue\" to resume a paused request."))
 		default:
 			m.cfg.MaxTurns = n
 			m.cfg.SetMaxTurnsFn(n)
@@ -1242,7 +1248,7 @@ func helpText() string {
 		"  /model [name]    Show or switch model",
 		"  /copy [n|code [n]]  Copy last response, an earlier one, or a code block",
 		"  /retry [--model <name>]  Resend the last message, replacing the response",
-		"  /max-turns [n]   Show or set the agentic step limit for this session",
+		"  /max-turns [n]   Show or set the agentic step limit (0 = no limit)",
 		"  /sessions        List recent sessions",
 		"  /resume <id|n>   Resume a session",
 		"  /code            Switch to code mode (file tools)",

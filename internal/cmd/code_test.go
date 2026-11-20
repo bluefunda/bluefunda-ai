@@ -229,3 +229,12 @@ func TestResolveMaxTurns(t *testing.T) {
 		})
 	}
 }
+
+func TestInteractiveMaxTurns(t *testing.T) {
+	if got := interactiveMaxTurns(defaultMaxTurnsFlag, false); got != 0 {
+		t.Errorf("no limit requested: got %d, want 0 (unlimited)", got)
+	}
+	if got := interactiveMaxTurns(30, true); got != 30 {
+		t.Errorf("--max-turns 30 requested: got %d", got)
+	}
+}

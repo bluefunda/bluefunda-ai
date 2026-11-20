@@ -589,6 +589,12 @@ func runAgenticSession(args []string) error {
 	turns := 0
 	isFirstTurn := true
 	var turnMu sync.Mutex
+	// pendingShell holds "!" commands the user ran since the last message,
+	// with their output; they go to the model ahead of the next message.
+	var (
+		pendingMu    sync.Mutex
+		pendingShell []string
+	)
 
 	submitFn := func(cid, mdl, input string, isNew bool) <-chan tui.StreamEvent {
 		if conn.TS.NearExpiry(2 * time.Minute) {
@@ -621,6 +627,12 @@ func runAgenticSession(args []string) error {
 				ch <- tui.StreamEvent{Kind: "done"}
 				return
 			}
+			pendingMu.Lock()
+			if len(pendingShell) > 0 {
+				userMsg = strings.Join(pendingShell, "\n\n") + "\n\n" + userMsg
+				pendingShell = nil
+			}
+			pendingMu.Unlock()
 			history = append(history, codeMessage{Role: "user", Content: userMsg})
 			newHistory, loopErr := agenticLoopTUI(
 				conn, cfg, cid, mdl, currentSchemas,
@@ -692,6 +704,17 @@ func runAgenticSession(args []string) error {
 		CustomCommands: mergeSlashCommands(loadCustomSlashCommands("."), sessionSlashCommands, promptCommands(),
 			[]tui.SlashCommand{permissionsCommand(permSources, sessionAllow), agentsCommand(), compactCmd}),
 		RetryFn: retryFn,
+		ShellFn: func(command string) (string, error) {
+			out, err := tools.Bash(command)
+			if err != nil {
+				return "", err
+			}
+			out = tools.CapOutput(out, tools.MaxOutputChars)
+			pendingMu.Lock()
+			pendingShell = append(pendingShell, shellContext(command, out))
+			pendingMu.Unlock()
+			return out, nil
+		},
 		StatusFn: func() []string {
 			ctxLine := "Context:    a turn is running"
 			if turnMu.TryLock() {

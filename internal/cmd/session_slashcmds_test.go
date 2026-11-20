@@ -171,3 +171,10 @@ func TestAcceptEditsMode(t *testing.T) {
 		t.Error("still approving after the mode is off")
 	}
 }
+
+func TestShellContext(t *testing.T) {
+	got := shellContext("cat x.md", "a\n```go\ncode\n```\n")
+	if !strings.Contains(got, "$ cat x.md\n````\na\n") || !strings.HasSuffix(got, "\n````") {
+		t.Errorf("fence must outlast the output's own fences:\n%s", got)
+	}
+}

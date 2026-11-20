@@ -221,3 +221,14 @@ func statusLines(ctxLine string, allow, deny []string, servers []mcp.ServerStatu
 	}
 	return append(lines, "Agents:     "+strings.Join(names, ", ")+" (/agents)")
 }
+
+// shellContext tells the model about a command the user ran with "!".
+// The fence is longer than any run of backticks in the output so the
+// output can't close it early.
+func shellContext(command, output string) string {
+	fence := "```"
+	for strings.Contains(output, fence) {
+		fence += "`"
+	}
+	return "I ran this command in my shell:\n$ " + command + "\n" + fence + "\n" + strings.TrimRight(output, "\n") + "\n" + fence
+}

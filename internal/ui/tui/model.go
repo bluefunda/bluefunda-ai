@@ -145,6 +145,10 @@ type SessionConfig struct {
 	AcceptEdits      bool
 	SetAcceptEditsFn func(enabled bool)
 	SetCodeModeFn    func(enabled bool) // nil = mode switch not supported in this session
+	// ShellFn runs a command typed as "!<command>" in the user's shell and
+	// returns its output; the session passes it to the model with the next
+	// message. nil = no shell mode (chat sessions).
+	ShellFn func(command string) (string, error)
 	// StatusFn adds the session's own lines to /status (context size,
 	// settings files, MCP servers…). Called on the UI goroutine.
 	StatusFn       func() []string
@@ -434,6 +438,10 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case InterruptedMsg:
 		// Ctrl+C already handled in handleKey; nothing more to do here.
+		return m, nil
+
+	case shellDoneMsg:
+		m.messages = append(m.messages, newSystemMessage(formatShellOutput(msg.output, msg.err)))
 		return m, nil
 
 	case slashRunDoneMsg:
@@ -759,6 +767,10 @@ func (m Model) submitInput() (tea.Model, tea.Cmd) {
 	// Handle slash commands
 	if strings.HasPrefix(input, "/") {
 		return m.handleSlashCommand(input)
+	}
+	// "!<command>" runs it in the shell, as in Claude Code.
+	if command, ok := shellCommand(input); ok && m.cfg.ShellFn != nil {
+		return m.runShell(input, command)
 	}
 
 	m.textarea.Reset()
@@ -1287,6 +1299,7 @@ func helpText() string {
 		"  Ctrl+Y          Copy last response",
 		"  Ctrl+O          Show/hide thinking and narration between tool calls",
 		"  Shift+Tab       Cycle mode: default → accept edits → plan (code sessions)",
+		"  !<command>      Run a command in your shell; the model sees its output",
 		"  Scroll/select  The conversation is in your terminal's scrollback: scroll and select as usual",
 		"",
 		"  Slash commands",

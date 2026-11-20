@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	pb "github.com/bluefunda/bluefunda-ai/api/proto/bff"
+	"github.com/bluefunda/bluefunda-ai/internal/ui/tui"
 )
 
 // A manual /compact keeps only the system messages and the summary, and the
@@ -59,6 +60,33 @@ func TestHumanTokens(t *testing.T) {
 	for n, want := range map[int]string{0: "0", 999: "999", 1000: "1.0k", 12345: "12.3k"} {
 		if got := humanTokens(n); got != want {
 			t.Errorf("humanTokens(%d) = %q, want %q", n, got, want)
+		}
+	}
+}
+
+func TestMergeSlashCommands_FirstWins(t *testing.T) {
+	user := []tui.SlashCommand{{Name: "/init", Prompt: "mine"}}
+	got := mergeSlashCommands(user, nil, promptCommands())
+	n := 0
+	for _, c := range got {
+		if c.Name == "/init" {
+			n++
+			if c.Prompt != "mine" {
+				t.Errorf("a .bai/commands file should override the built-in /init")
+			}
+		}
+	}
+	if n != 1 {
+		t.Errorf("/init listed %d times", n)
+	}
+}
+
+// Every built-in prompt command has a description and a prompt that takes
+// the text typed after it.
+func TestPromptCommands(t *testing.T) {
+	for _, c := range promptCommands() {
+		if c.Description == "" || !strings.Contains(c.Prompt, "$ARGUMENTS") {
+			t.Errorf("%s: description %q, prompt without $ARGUMENTS", c.Name, c.Description)
 		}
 	}
 }

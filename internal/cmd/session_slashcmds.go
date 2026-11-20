@@ -36,3 +36,48 @@ func humanTokens(n int) string {
 	}
 	return fmt.Sprintf("%.1fk", float64(n)/1000)
 }
+
+// mergeSlashCommands concatenates command lists, keeping the first command
+// of each name.
+func mergeSlashCommands(lists ...[]tui.SlashCommand) []tui.SlashCommand {
+	seen := map[string]bool{}
+	var out []tui.SlashCommand
+	for _, l := range lists {
+		for _, c := range l {
+			if !seen[c.Name] {
+				seen[c.Name] = true
+				out = append(out, c)
+			}
+		}
+	}
+	return out
+}
+
+// promptCommands are built-in commands that send a prompt, like Claude
+// Code's /init. A file of the same name in .bai/commands replaces one.
+func promptCommands() []tui.SlashCommand {
+	return []tui.SlashCommand{
+		{
+			Name:        "/init",
+			Description: "Write or improve AGENTS.md with what an agent needs to work in this repo",
+			Prompt:      initPrompt,
+		},
+	}
+}
+
+// initPrompt asks for the project instructions file bai loads at session
+// start (findContextFile: .bai/context.md, else AGENTS.md).
+const initPrompt = `Set up this repository's agent instructions file.
+
+If .bai/context.md exists, that is the file to update; otherwise AGENTS.md at the repository root. If the file exists, read it first and improve it: keep what is still correct, fix what is wrong, add what is missing.
+
+Investigate before writing. Read the build files (Makefile, package.json, go.mod, pyproject.toml, Cargo.toml and the like), the CI configuration, the README and the top-level layout, then write down what a coding agent needs to work here:
+
+- the exact commands to build, test (including a single test), lint and format, taken from the repo, not guessed
+- how the code is organised: the main directories and what lives in each
+- conventions the code follows that aren't obvious from one file: error handling, naming, test style, commit message format
+- traps: generated files not to edit, required environment, slow or flaky steps, anything that surprised you
+
+Keep it short and specific to this repo. Skip generic advice that applies to every project, and never invent a command or rule you did not find evidence for. When you are done, say which file you wrote and summarise what is in it.
+
+$ARGUMENTS`

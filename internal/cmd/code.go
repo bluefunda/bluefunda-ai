@@ -663,21 +663,22 @@ func runAgenticSession(args []string) error {
 		PlanMode:      codePlanMode,
 		InitialPrompt: initialPrompt,
 		RepoName:      gitRepoName(),
-		CustomCommands: append(append(loadCustomSlashCommands("."), sessionSlashCommands...),
-			compactCommand(&turnMu, func(focus string) (string, error) {
-				before := estimateTokens(history)
-				if lastUserIndex(history) < 0 {
-					return "Nothing to compact yet.", nil
-				}
-				compacted, err := compactHistory(conn, chatID, model, history, focus, 0)
-				if err != nil {
-					return "", err
-				}
-				history = compacted
-				session.Save(sessPath, toSessionMsgs(history)) //nolint:errcheck
-				return fmt.Sprintf("Compacted the conversation into a summary: ~%s → ~%s tokens.",
-					humanTokens(before), humanTokens(estimateTokens(history))), nil
-			})),
+		// First wins on a name clash: the user's .bai/commands override
+		// the built-in prompt commands.
+		CustomCommands: mergeSlashCommands(loadCustomSlashCommands("."), sessionSlashCommands, promptCommands(), []tui.SlashCommand{compactCommand(&turnMu, func(focus string) (string, error) {
+			before := estimateTokens(history)
+			if lastUserIndex(history) < 0 {
+				return "Nothing to compact yet.", nil
+			}
+			compacted, err := compactHistory(conn, chatID, model, history, focus, 0)
+			if err != nil {
+				return "", err
+			}
+			history = compacted
+			session.Save(sessPath, toSessionMsgs(history)) //nolint:errcheck
+			return fmt.Sprintf("Compacted the conversation into a summary: ~%s → ~%s tokens.",
+				humanTokens(before), humanTokens(estimateTokens(history))), nil
+		})}),
 		RetryFn:            retryFn,
 		DisableUpdateCheck: !cfg.UpdateCheckEnabled(),
 		AccountFn: func() (*tui.AccountInfo, error) {

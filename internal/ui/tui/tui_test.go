@@ -398,6 +398,16 @@ func TestCustomSlashCommand_SubstitutesArguments(t *testing.T) {
 	if submitted != want {
 		t.Errorf("submitted prompt = %q, want %q", submitted, want)
 	}
+	// The conversation shows what was typed, not the expanded prompt.
+	var shown string
+	for _, msg := range m.messages {
+		if msg.Role == RoleUser {
+			shown = msg.Content
+		}
+	}
+	if shown != "/review internal/cmd/code.go" {
+		t.Errorf("shown user message = %q, want the typed command", shown)
+	}
 }
 
 func TestCustomSlashCommand_NoArgumentsLeavesPlaceholderless(t *testing.T) {

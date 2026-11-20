@@ -1083,7 +1083,9 @@ func (m Model) handleSlashCommand(input string) (tea.Model, tea.Cmd) {
 			}
 			if c.Name == cmdName && c.Prompt != "" {
 				prompt := expandArguments(c.Prompt, cmdArgs)
-				m.messages = append(m.messages, newUserMessage(prompt))
+				// Show what was typed, as Claude Code does; the model gets
+				// the expanded prompt.
+				m.messages = append(m.messages, newUserMessage(input))
 				m.streaming = true
 				isNew := m.isNewChat
 				m.isNewChat = false

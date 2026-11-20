@@ -3,7 +3,12 @@ package cmd
 import (
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
+
+	"github.com/bluefunda/bluefunda-ai/internal/app"
+	"github.com/bluefunda/bluefunda-ai/internal/mcp"
+	"github.com/bluefunda/bluefunda-ai/internal/tools"
 
 	"github.com/bluefunda/bluefunda-ai/internal/ui/tui"
 )
@@ -115,3 +120,104 @@ Investigate before writing. Read the build files (Makefile, package.json, go.mod
 Keep it short and specific to this repo. Skip generic advice that applies to every project, and never invent a command or rule you did not find evidence for. When you are done, say which file you wrote and summarise what is in it.
 
 $ARGUMENTS`
+
+// ruleSource is one place permission rules came from.
+type ruleSource struct {
+	name        string
+	allow, deny []string
+}
+
+// permissionsCommand is /permissions: the rules in force, by source, and
+// what was allowed for the rest of this session.
+func permissionsCommand(sources []ruleSource, session *sessionAllowSet) tui.SlashCommand {
+	return tui.SlashCommand{
+		Name:        "/permissions",
+		Description: "List permission rules and where they come from",
+		Instant:     true,
+		Run: func(string) (string, error) {
+			return permissionsReport(sources, session.describe()), nil
+		},
+	}
+}
+
+func permissionsReport(sources []ruleSource, session []string) string {
+	var b strings.Builder
+	b.WriteString("Permission rules (deny wins over allow; read-only tools and commands never ask):")
+	found := false
+	for _, s := range sources {
+		if len(s.allow) == 0 && len(s.deny) == 0 {
+			continue
+		}
+		found = true
+		fmt.Fprintf(&b, "\n\n%s", s.name)
+		for _, r := range s.allow {
+			fmt.Fprintf(&b, "\n  allow  %s", r)
+		}
+		for _, r := range s.deny {
+			fmt.Fprintf(&b, "\n  deny   %s", r)
+		}
+	}
+	if !found {
+		b.WriteString("\n\n(none)")
+	}
+	if len(session) > 0 {
+		b.WriteString("\n\nAllowed for this session (\"don't ask again\")")
+		for _, r := range session {
+			fmt.Fprintf(&b, "\n  allow  %s", r)
+		}
+	}
+	fmt.Fprintf(&b, "\n\nAdd rules to ~/%[1]s/settings.yaml (every project) or %[1]s/settings.yaml (this one), e.g. \"bash:make test\".", app.Current().Dir)
+	return b.String()
+}
+
+// agentsCommand is /agents: the subagent types the task tool can start.
+func agentsCommand() tui.SlashCommand {
+	return tui.SlashCommand{
+		Name:        "/agents",
+		Description: "List subagent types for the task tool",
+		Instant:     true,
+		Run: func(string) (string, error) {
+			return agentsReport(tools.AgentTypes()), nil
+		},
+	}
+}
+
+func agentsReport(types []tools.AgentType) string {
+	var b strings.Builder
+	b.WriteString("Subagent types (the model picks one with the task tool):")
+	for _, t := range types {
+		toolList := "all tools"
+		if len(t.Tools) > 0 {
+			toolList = strings.Join(t.Tools, ", ")
+		}
+		fmt.Fprintf(&b, "\n\n%s  (%s)\n  %s\n  tools: %s", t.Name, t.Source, t.Description, toolList)
+		if t.Model != "" {
+			fmt.Fprintf(&b, "\n  model: %s", t.Model)
+		}
+	}
+	fmt.Fprintf(&b, "\n\nAdd your own as ~/%[1]s/agents/<name>.md or %[1]s/agents/<name>.md: frontmatter with name, description, tools, model; the body is its instructions.", app.Current().Dir)
+	return b.String()
+}
+
+// statusLines are the session's lines for /status.
+func statusLines(ctxLine string, allow, deny []string, servers []mcp.ServerStatus) []string {
+	lines := []string{ctxLine,
+		fmt.Sprintf("Rules:      %d allow, %d deny (/permissions)", len(allow), len(deny))}
+	if len(servers) > 0 {
+		names := make([]string, 0, len(servers))
+		for _, s := range servers {
+			n := s.Name
+			if !s.Started {
+				n += " (failed)"
+			}
+			names = append(names, n)
+		}
+		lines = append(lines, "MCP:        "+strings.Join(names, ", "))
+	}
+	agents := tools.AgentTypes()
+	names := make([]string, len(agents))
+	for i, a := range agents {
+		names[i] = a.Name
+	}
+	return append(lines, "Agents:     "+strings.Join(names, ", ")+" (/agents)")
+}

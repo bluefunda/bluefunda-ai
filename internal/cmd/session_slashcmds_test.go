@@ -2,11 +2,14 @@ package cmd
 
 import (
 	"errors"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
 
 	pb "github.com/bluefunda/bluefunda-ai/api/proto/bff"
+	"github.com/bluefunda/bluefunda-ai/internal/mcp"
+	"github.com/bluefunda/bluefunda-ai/internal/tools"
 	"github.com/bluefunda/bluefunda-ai/internal/ui/tui"
 )
 
@@ -87,6 +90,63 @@ func TestPromptCommands(t *testing.T) {
 	for _, c := range promptCommands() {
 		if c.Description == "" || !strings.Contains(c.Prompt, "$ARGUMENTS") {
 			t.Errorf("%s: description %q, prompt without $ARGUMENTS", c.Name, c.Description)
+		}
+	}
+}
+
+func TestPermissionsReport(t *testing.T) {
+	sa := newSessionAllowSet()
+	sa.add("write_file", `{"path":"a"}`)
+	out := permissionsReport([]ruleSource{
+		{".bai/settings.yaml", []string{"bash:make test"}, nil},
+		{"empty", nil, nil},
+		{"--allowed-tools / --disallowed-tools", nil, []string{"bash:rm *"}},
+	}, sa.describe())
+	for _, want := range []string{".bai/settings.yaml\n  allow  bash:make test", "deny   bash:rm *", "Allowed for this session", "write_file"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("report lacks %q:\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "empty") {
+		t.Errorf("a source with no rules should be left out:\n%s", out)
+	}
+	if none := permissionsReport(nil, nil); !strings.Contains(none, "(none)") {
+		t.Errorf("no rules: %s", none)
+	}
+}
+
+func TestSessionAllowDescribe(t *testing.T) {
+	var nilSet *sessionAllowSet
+	if nilSet.describe() != nil {
+		t.Error("nil set")
+	}
+	sa := newSessionAllowSet()
+	sa.add("bash", `{"command":"make deploy"}`)
+	sa.add("web_fetch", `{"url":"x"}`)
+	sa.exact["bash\x00"+`{"command":"rm -rf build"}`] = true
+	got := sa.describe()
+	if len(got) < 3 || !strings.HasPrefix(got[0], "bash:make") || !slices.Contains(got, "web_fetch") ||
+		!slices.Contains(got, "bash rm -rf build (this exact call)") {
+		t.Errorf("describe = %q", got)
+	}
+}
+
+func TestAgentsReport(t *testing.T) {
+	out := agentsReport(append(tools.BuiltinAgentTypes(),
+		tools.AgentType{Name: "rev", Description: "Reviews", Tools: []string{"read_file"}, Model: "think", Source: "/x/rev.md"}))
+	for _, want := range []string{"general  (built-in)", "tools: all tools", "rev  (/x/rev.md)", "tools: read_file", "model: think"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("report lacks %q:\n%s", want, out)
+		}
+	}
+}
+
+func TestStatusLines(t *testing.T) {
+	lines := statusLines("Context: x", []string{"a"}, nil, []mcp.ServerStatus{{Name: "gh", Started: true}, {Name: "db"}})
+	got := strings.Join(lines, "\n")
+	for _, want := range []string{"Context: x", "1 allow, 0 deny", "gh, db (failed)", "explore"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("status lacks %q:\n%s", want, got)
 		}
 	}
 }

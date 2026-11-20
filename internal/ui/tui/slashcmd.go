@@ -1,6 +1,9 @@
 package tui
 
-import "strings"
+import (
+	"fmt"
+	"strings"
+)
 
 // SlashCommand is a command triggered by typing / in the input.
 type SlashCommand struct {
@@ -14,6 +17,9 @@ type SlashCommand struct {
 	// /system). It runs off the UI goroutine with the text typed after the
 	// command; the returned text is shown as a system message.
 	Run func(args string) (string, error)
+	// Instant runs Run on the UI goroutine and shows only its output: for
+	// quick local commands (no network) that read UI-owned state.
+	Instant bool
 }
 
 // builtinCommands is the canonical list shown in the autocomplete menu.
@@ -38,6 +44,7 @@ var builtinCommands = []SlashCommand{
 	{Name: "/usage", Description: "Show token usage and rate limits"},
 	{Name: "/tools", Description: "List available tools"},
 	{Name: "/context", Description: "Show current context info"},
+	{Name: "/status", Description: "Show version, model, mode, session and settings"},
 	{Name: "/update", Description: "Check for a newer version and upgrade"},
 	{Name: "/exit", Description: "Quit the session", Alias: "quit"},
 }
@@ -66,4 +73,33 @@ func matchSlashCommands(filter string, custom []SlashCommand) []SlashCommand {
 		}
 	}
 	return out
+}
+
+// statusText is /status: what this session is running with, like Claude
+// Code's /status.
+func (m Model) statusText() string {
+	mode := "default (asks before changes)"
+	switch {
+	case m.cfg.PlanMode:
+		mode = "plan (read-only)"
+	case m.cfg.AutoApply:
+		mode = "auto (runs tools without asking)"
+	}
+	turns := "no limit"
+	if m.cfg.MaxTurns > 0 {
+		turns = fmt.Sprintf("%d steps", m.cfg.MaxTurns)
+	}
+	lines := []string{
+		"Version:    " + m.cfg.Version,
+		"Model:      " + m.cfg.Model,
+		"Session:    " + m.cfg.ChatID,
+		"Directory:  " + m.cfg.WorkDir,
+	}
+	if m.cfg.IsCode {
+		lines = append(lines, "Mode:       "+mode, "Max turns:  "+turns)
+	}
+	if m.cfg.StatusFn != nil {
+		lines = append(lines, m.cfg.StatusFn()...)
+	}
+	return strings.Join(lines, "\n")
 }

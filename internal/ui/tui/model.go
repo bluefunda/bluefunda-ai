@@ -141,7 +141,10 @@ type SessionConfig struct {
 	SetMaxTurnsFn  func(n int)                   // nil = /max-turns not available
 	SetPlanModeFn  func(enabled bool)            // nil = plan mode not available (non-code sessions)
 	SetCodeModeFn  func(enabled bool)            // nil = mode switch not supported in this session
-	CustomCommands []SlashCommand                // loaded from .bai/commands/*.md
+	// StatusFn adds the session's own lines to /status (context size,
+	// settings files, MCP servers…). Called on the UI goroutine.
+	StatusFn       func() []string
+	CustomCommands []SlashCommand // loaded from .bai/commands/*.md
 
 	// DisableUpdateCheck skips the background update-staleness check (#287)
 	// entirely. Zero-value (false) means enabled — every existing
@@ -1060,6 +1063,9 @@ func (m Model) handleSlashCommand(input string) (tea.Model, tea.Cmd) {
 			"Available tools: read_file · edit_file · write_file · list_dir · search_files · search_content · bash · web_fetch · web_search\n"+
 				"MCP tools: mcp__<server>__<tool>  (configure in .bai/settings.yaml)"))
 
+	case input == "/status":
+		m.messages = append(m.messages, newSystemMessage(m.statusText()))
+
 	case input == "/context":
 		m.messages = append(m.messages, newSystemMessage(
 			fmt.Sprintf("Chat ID: %s  ·  Messages: %d", m.cfg.ChatID, len(m.messages))))
@@ -1073,6 +1079,14 @@ func (m Model) handleSlashCommand(input string) (tea.Model, tea.Cmd) {
 		cmdName := strings.Fields(input)[0] // e.g. "/review"
 		cmdArgs := strings.TrimSpace(strings.TrimPrefix(input, cmdName))
 		for _, c := range m.cfg.CustomCommands {
+			if c.Name == cmdName && c.Run != nil && c.Instant {
+				out, err := c.Run(cmdArgs)
+				if err != nil {
+					out = cmdName + " failed: " + err.Error()
+				}
+				m.messages = append(m.messages, newSystemMessage(out))
+				return m, nil
+			}
 			if c.Name == cmdName && c.Run != nil {
 				run := c.Run
 				m.messages = append(m.messages, newSystemMessage(cmdName+" …"))

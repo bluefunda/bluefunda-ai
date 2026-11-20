@@ -389,9 +389,12 @@ func runAgenticSession(args []string) error {
 	// --- Permission policy (#123) ---
 	// Load allow/deny lists from the project config (empty = no restrictions).
 	var permAllow, permDeny []string
+	// permSources records where each rule came from, for /permissions.
+	var permSources []ruleSource
 	if projCfg != nil {
 		permAllow = projCfg.Permissions.Allow
 		permDeny = projCfg.Permissions.Deny
+		permSources = append(permSources, ruleSource{app.Current().Dir + "/settings.yaml", permAllow, permDeny})
 	}
 	// User-wide rules from ~/.bai/settings.yaml apply in every directory.
 	if us, _, err := config.LoadUserSettings(); err != nil {
@@ -399,10 +402,14 @@ func runAgenticSession(args []string) error {
 	} else {
 		permAllow = mergePermissionRules(permAllow, us.Permissions.Allow)
 		permDeny = mergePermissionRules(permDeny, us.Permissions.Deny)
+		permSources = append(permSources, ruleSource{"~/" + app.Current().Dir + "/settings.yaml", us.Permissions.Allow, us.Permissions.Deny})
 	}
 	permDeny = mergePermissionRules(permDeny, sessionDeny)
 	permAllow = mergePermissionRules(permAllow, codeAllowedTools)
 	permDeny = mergePermissionRules(permDeny, codeDisallowedTools)
+	permSources = append(permSources,
+		ruleSource{"built in to " + app.Current().Name, nil, sessionDeny},
+		ruleSource{"--allowed-tools / --disallowed-tools", codeAllowedTools, codeDisallowedTools})
 
 	// --- Personal, local "always allow" rules + workspace trust gate (#331) ---
 	// .bai/settings.local.yaml is gitignored and holds per-developer rules
@@ -425,6 +432,7 @@ func runAgenticSession(args []string) error {
 		if localCfg.Trusted {
 			permAllow = append(permAllow, localCfg.Permissions.Allow...)
 			permDeny = append(permDeny, localCfg.Permissions.Deny...)
+			permSources = append(permSources, ruleSource{app.Current().Dir + "/settings.local.yaml", localCfg.Permissions.Allow, localCfg.Permissions.Deny})
 		}
 	}
 	// task subagents run with --auto, so the deny list is their only
@@ -459,6 +467,7 @@ func runAgenticSession(args []string) error {
 	} else if len(dropped) > 0 {
 		toolSchemas = filtered
 		permDeny = append(permDeny, dropped...)
+		permSources = append(permSources, ruleSource{"--tools (hidden tools)", nil, dropped})
 		tools.SetTaskDisallowedTools(permDeny)
 	}
 
@@ -653,6 +662,21 @@ func runAgenticSession(args []string) error {
 		return submitFn(chatID, useModel, prompt, false), prompt, nil
 	}
 
+	compactCmd := compactCommand(&turnMu, func(focus string) (string, error) {
+		before := estimateTokens(history)
+		if lastUserIndex(history) < 0 {
+			return "Nothing to compact yet.", nil
+		}
+		compacted, err := compactHistory(conn, chatID, model, history, focus, 0)
+		if err != nil {
+			return "", err
+		}
+		history = compacted
+		session.Save(sessPath, toSessionMsgs(history)) //nolint:errcheck
+		return fmt.Sprintf("Compacted the conversation into a summary: ~%s → ~%s tokens.",
+			humanTokens(before), humanTokens(estimateTokens(history))), nil
+	})
+
 	tuiCfg := tui.SessionConfig{
 		ChatID:        chatID,
 		Model:         model,
@@ -664,22 +688,19 @@ func runAgenticSession(args []string) error {
 		InitialPrompt: initialPrompt,
 		RepoName:      gitRepoName(),
 		// First wins on a name clash: the user's .bai/commands override
-		// the built-in prompt commands.
-		CustomCommands: mergeSlashCommands(loadCustomSlashCommands("."), sessionSlashCommands, promptCommands(), []tui.SlashCommand{compactCommand(&turnMu, func(focus string) (string, error) {
-			before := estimateTokens(history)
-			if lastUserIndex(history) < 0 {
-				return "Nothing to compact yet.", nil
+		// the built-in commands.
+		CustomCommands: mergeSlashCommands(loadCustomSlashCommands("."), sessionSlashCommands, promptCommands(),
+			[]tui.SlashCommand{permissionsCommand(permSources, sessionAllow), agentsCommand(), compactCmd}),
+		RetryFn: retryFn,
+		StatusFn: func() []string {
+			ctxLine := "Context:    a turn is running"
+			if turnMu.TryLock() {
+				ctxLine = fmt.Sprintf("Context:    ~%s tokens (compacts at ~%s; /compact to do it now)",
+					humanTokens(estimateTokens(history)), humanTokens(maxContextTokens))
+				turnMu.Unlock()
 			}
-			compacted, err := compactHistory(conn, chatID, model, history, focus, 0)
-			if err != nil {
-				return "", err
-			}
-			history = compacted
-			session.Save(sessPath, toSessionMsgs(history)) //nolint:errcheck
-			return fmt.Sprintf("Compacted the conversation into a summary: ~%s → ~%s tokens.",
-				humanTokens(before), humanTokens(estimateTokens(history))), nil
-		})}),
-		RetryFn:            retryFn,
+			return statusLines(ctxLine, permAllow, permDeny, mcpMgr.Status())
+		},
 		DisableUpdateCheck: !cfg.UpdateCheckEnabled(),
 		AccountFn: func() (*tui.AccountInfo, error) {
 			ctx, cancel := caigrpc.ContextWithTimeout()
@@ -1661,6 +1682,31 @@ func alwaysScope(toolName, argsJSON string) (prefixes, toolNames []string, label
 	default:
 		return nil, []string{toolName}, toolName
 	}
+}
+
+// describe lists the session's approvals as rules, for /permissions.
+func (s *sessionAllowSet) describe() []string {
+	if s == nil {
+		return nil
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var out []string
+	for _, p := range s.bashPrefixes {
+		out = append(out, "bash:"+p+" *")
+	}
+	for t := range s.tools {
+		out = append(out, t)
+	}
+	for k := range s.exact {
+		name, args, _ := strings.Cut(k, "\x00")
+		if a := tools.ExtractPrimaryArg(name, args); a != "" {
+			args = a
+		}
+		out = append(out, name+" "+args+" (this exact call)")
+	}
+	slices.Sort(out[len(s.bashPrefixes):])
+	return out
 }
 
 func (s *sessionAllowSet) add(toolName, argsJSON string) {

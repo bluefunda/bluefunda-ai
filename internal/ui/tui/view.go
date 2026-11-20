@@ -42,15 +42,16 @@ func (m Model) View() string {
 		b.WriteByte('\n')
 	}
 
-	// Approval prompt
+	// Permission dialog replaces the input box while a tool call waits for
+	// approval; the input comes back only to collect a decline note.
 	if m.pendingApproval != nil {
 		b.WriteString(m.renderApproval())
 		b.WriteByte('\n')
 	}
-
-	// Input area
-	b.WriteString(m.renderInput())
-	b.WriteByte('\n')
+	if m.pendingApproval == nil || m.approvalFeedback {
+		b.WriteString(m.renderInput())
+		b.WriteByte('\n')
+	}
 
 	// Footer hints
 	b.WriteString(m.renderFooter())
@@ -155,6 +156,10 @@ func (m *Model) renderMessageAt(idx, width int) string {
 		}
 		sb.WriteString("\n  " + label + "\n")
 
+		if msg.Thinking != "" {
+			sb.WriteString(m.renderThinking(&msg, width))
+		}
+
 		for _, ev := range msg.ToolEvents {
 			sb.WriteString(formatToolEventLine(ev, th))
 			sb.WriteByte('\n')
@@ -167,13 +172,35 @@ func (m *Model) renderMessageAt(idx, width int) string {
 
 		if (m.showNarration && msg.Content != "") || answer != "" {
 			sb.WriteString(m.renderMarkdownAt(idx, width))
-		} else if msg.Content == "" && msg.Streaming && len(msg.ToolEvents) == 0 {
+		} else if msg.Content == "" && msg.Streaming && len(msg.ToolEvents) == 0 && msg.Thinking == "" {
 			sb.WriteString("  " + th.ToolDim.Render("working..."))
 		}
 
 		return sb.String()
 	}
 	return ""
+}
+
+// renderThinking draws a message's thinking: one line while collapsed
+// ("Thinking… 12s" live, "Thought for 12s" after), or the dimmed text under
+// a header when expanded with Ctrl+O.
+func (m *Model) renderThinking(msg *ChatMessage, width int) string {
+	th := m.theme
+	dur := formatThinkDuration(msg.thinkingDuration())
+	style := lipgloss.NewStyle().Foreground(th.Secondary).Italic(true)
+	if msg.isThinking() {
+		frame := spinnerFrames[m.spinnerIdx%len(spinnerFrames)]
+		return "  " + th.Spinner.Render(frame) + " " + style.Render("Thinking… "+dur) + "\n"
+	}
+	if !m.showNarration {
+		return "  " + style.Render("✻ Thought for "+dur) + th.ToolDim.Render("  (ctrl+o to expand)") + "\n"
+	}
+	var sb strings.Builder
+	sb.WriteString("  " + style.Render("✻ Thinking ("+dur+")") + "\n")
+	for _, line := range wrapText(strings.TrimSpace(msg.Thinking), max(width-6, 20)) {
+		sb.WriteString("    " + style.Render(line) + "\n")
+	}
+	return sb.String()
 }
 
 // renderMarkdownAt renders message i with prose via glamour and code blocks
@@ -186,9 +213,11 @@ func (m *Model) renderMarkdownAt(i, width int) string {
 		return msg.rendered
 	}
 
-	content := msg.Content
-	if !full {
-		_, content = msg.splitNarration()
+	narration, content := msg.splitNarration()
+	if full && narration != "" {
+		// Keep narration and answer as separate paragraphs: a single newline
+		// between them would be joined into one by markdown rendering.
+		content = strings.TrimRight(narration, "\n") + "\n\n" + strings.TrimLeft(content, "\n")
 	}
 	rendered := renderMixed(content, width, m.theme)
 
@@ -329,42 +358,14 @@ func (m Model) renderModelPicker() string {
 }
 
 // ──────────────────────────────────────────────
-//  Approval prompt
-// ──────────────────────────────────────────────
-
-func (m Model) renderApproval() string {
-	th := m.theme
-	ap := m.pendingApproval
-	tool := th.ToolIcon.Render("●") + "  " +
-		th.ToolName.Render(ap.ToolName)
-	args := ""
-	if ap.Args != "" && ap.Args != "{}" {
-		a := ap.Args
-		if len(a) > 70 {
-			a = a[:67] + "..."
-		}
-		args = "\n     " + th.ToolArg.Render(a)
-	}
-	warnStyle := lipgloss.NewStyle().Foreground(th.Warning)
-	prompt := warnStyle.Render("  Apply? ") + th.ToolDim.Render("[y/N/a=always allow this session]")
-
-	return lipgloss.NewStyle().
-		BorderLeft(true).
-		BorderStyle(lipgloss.ThickBorder()).
-		BorderForeground(m.theme.Warning).
-		PaddingLeft(1).
-		Render(fmt.Sprintf("  %s%s\n%s", tool, args, prompt))
-}
-
-// ──────────────────────────────────────────────
 //  Footer
 // ──────────────────────────────────────────────
 
 func (m Model) renderFooter() string {
 	th := m.theme
-	hint := "Enter send  ·  Shift+Enter newline  ·  /help commands  ·  Ctrl+C quit"
+	hint := "Enter send  ·  Shift+Enter newline  ·  /help commands  ·  Ctrl+O details  ·  Ctrl+C quit"
 	if m.streaming {
-		hint = "Ctrl+C to interrupt turn  ·  Ctrl+D to quit"
+		hint = "Ctrl+C to interrupt turn  ·  Ctrl+O show/hide details  ·  Ctrl+D to quit"
 	}
 	left := "  " + th.Footer.Render(hint)
 	if m.updateAvailable == "" {

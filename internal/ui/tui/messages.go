@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
@@ -51,6 +52,52 @@ type ChatMessage struct {
 	// treated as narration and collapsed by default (#330); text after it is
 	// the answer (or narration still streaming).
 	narrationEnd int
+
+	// Thinking is <think> text the model streamed for this turn, shown as a
+	// collapsed "Thought for Ns" line (expand with Ctrl+O). It is display-only:
+	// never copied, never part of Content.
+	Thinking      string
+	thinkingSince time.Time     // start of the current thinking segment (zero = not thinking)
+	thinkingTotal time.Duration // finished thinking segments
+}
+
+// appendThinking adds streamed think text, starting the timer if needed.
+func (m *ChatMessage) appendThinking(s string) {
+	if m.thinkingSince.IsZero() {
+		m.thinkingSince = time.Now()
+	}
+	m.Thinking += s
+}
+
+// endThinking stops the thinking timer (called when real output, a tool call
+// or the end of the turn arrives).
+func (m *ChatMessage) endThinking() {
+	if !m.thinkingSince.IsZero() {
+		m.thinkingTotal += time.Since(m.thinkingSince)
+		m.thinkingSince = time.Time{}
+	}
+}
+
+// isThinking reports whether think text is streaming right now.
+func (m *ChatMessage) isThinking() bool { return !m.thinkingSince.IsZero() }
+
+// thinkingDuration is the total time spent thinking, including a segment
+// still in progress.
+func (m *ChatMessage) thinkingDuration() time.Duration {
+	d := m.thinkingTotal
+	if m.isThinking() {
+		d += time.Since(m.thinkingSince)
+	}
+	return d
+}
+
+// formatThinkDuration renders a thinking duration as "4s" or "1m 12s".
+func formatThinkDuration(d time.Duration) string {
+	secs := int(d.Round(time.Second) / time.Second)
+	if secs < 60 {
+		return fmt.Sprintf("%ds", max(secs, 1))
+	}
+	return fmt.Sprintf("%dm %ds", secs/60, secs%60)
 }
 
 func newUserMessage(text string) ChatMessage {
@@ -96,12 +143,14 @@ func lastUserMessageIndex(msgs []ChatMessage) int {
 
 // appendChunk appends streaming text to an assistant message.
 func (m *ChatMessage) appendChunk(chunk string) {
+	m.endThinking()
 	m.Content += chunk
 	m.rendered = ""
 }
 
 // addToolEvent appends a tool event to the message.
 func (m *ChatMessage) addToolEvent(ev ToolEvent) {
+	m.endThinking()
 	m.ToolEvents = append(m.ToolEvents, ev)
 	if ev.Kind == ToolCall && m.narrationEnd != len(m.Content) {
 		m.narrationEnd = len(m.Content)
@@ -143,8 +192,31 @@ func narrationSummary(narration string) string {
 
 // finishStreaming marks the message as no longer streaming.
 func (m *ChatMessage) finishStreaming() {
+	m.endThinking()
 	m.Streaming = false
 	m.rendered = ""
+}
+
+// summaryArgKeys are the argument names shown, in priority order, as a tool
+// call's one-line summary (Claude Code shows e.g. Bash(go test ./...)).
+var summaryArgKeys = []string{"command", "path", "url", "pattern", "query", "key", "prompt"}
+
+// toolArgSummary returns the most telling argument of a tool call as plain
+// text — the command, path, URL, … — falling back to compact JSON.
+func toolArgSummary(argsJSON string) string {
+	if argsJSON == "" || argsJSON == "{}" {
+		return ""
+	}
+	var args map[string]any
+	if json.Unmarshal([]byte(argsJSON), &args) != nil {
+		return argsJSON
+	}
+	for _, k := range summaryArgKeys {
+		if v, ok := args[k].(string); ok && v != "" {
+			return strings.Join(strings.Fields(v), " ") // one line
+		}
+	}
+	return argsJSON
 }
 
 // formatToolEventLine renders a ToolEvent as a compact single line.
@@ -154,12 +226,8 @@ func formatToolEventLine(ev ToolEvent, th Theme) string {
 		icon := th.ToolIcon.Render("●")
 		name := th.ToolName.Render(ev.Name)
 		args := ""
-		if ev.Args != "" && ev.Args != "{}" {
-			short := ev.Args
-			if len(short) > 60 {
-				short = short[:57] + "..."
-			}
-			args = th.ToolArg.Render("  " + short)
+		if short := toolArgSummary(ev.Args); short != "" {
+			args = th.ToolArg.Render("  " + truncate(short, 70))
 		}
 		return fmt.Sprintf("  %s %s%s", icon, name, args)
 

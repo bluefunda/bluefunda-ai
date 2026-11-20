@@ -180,7 +180,16 @@ type thinkFilter struct {
 	inside     bool
 	buf        string
 	suppressed string
-	hadOutput  bool // true if Filter() ever returned non-empty content
+	hadOutput  bool            // true if Filter() ever returned non-empty content
+	thought    strings.Builder // think-block text not yet taken by TakeThinking
+}
+
+// TakeThinking returns the <think> text filtered out since the last call, so
+// callers can show it (collapsed) instead of silently dropping it.
+func (f *thinkFilter) TakeThinking() string {
+	s := f.thought.String()
+	f.thought.Reset()
+	return s
 }
 
 func (f *thinkFilter) Filter(chunk string) string {
@@ -191,15 +200,18 @@ func (f *thinkFilter) Filter(chunk string) string {
 		if f.inside {
 			idx := strings.Index(f.buf, "</think>")
 			if idx >= 0 {
+				f.thought.WriteString(f.buf[:idx])
 				f.suppressed = ""
 				f.buf = f.buf[idx+len("</think>"):]
 				f.inside = false
 				continue
 			}
 			if pl := partialSuffix(f.buf, "</think>"); pl > 0 {
+				f.thought.WriteString(f.buf[:len(f.buf)-pl])
 				f.suppressed += f.buf[:len(f.buf)-pl]
 				f.buf = f.buf[len(f.buf)-pl:]
 			} else {
+				f.thought.WriteString(f.buf)
 				f.suppressed += f.buf
 				f.buf = ""
 			}

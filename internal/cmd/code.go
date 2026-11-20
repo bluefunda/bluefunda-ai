@@ -1221,6 +1221,12 @@ func pumpCodeStream(
 		switch ev.GetType() {
 		case "content", "stream_chunk":
 			filtered := tf.Filter(ev.GetContent())
+			// Surface <think> text as its own event so the TUI can show a live,
+			// collapsible "Thinking…" line instead of a silent spinner. Not
+			// added to text: it never becomes part of the conversation history.
+			if th := tf.TakeThinking(); th != "" {
+				ch <- tui.StreamEvent{Kind: "thinking", Chunk: th}
+			}
 			if filtered != "" {
 				chunk(filtered)
 			}
@@ -1755,6 +1761,9 @@ func executeWithApprovalTUI(
 		if !approved {
 			auditLog.LogToolCall(tc.Name, argsJSON, false, false)
 			auditLog.LogToolResult(tc.Name, 0, false)
+			if fb := strings.TrimSpace(decision.Feedback); fb != "" {
+				return "User declined to execute this tool and said what to do instead: " + fb, nil
+			}
 			return "User declined to execute this tool.", nil
 		}
 	}

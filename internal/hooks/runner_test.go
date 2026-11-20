@@ -119,3 +119,61 @@ func TestFindLifecycleScripts_EmptyHooksDir(t *testing.T) {
 		t.Errorf("expected nil for empty hooksDir, got %v", got)
 	}
 }
+
+func TestUserPromptSubmit_NoScripts(t *testing.T) {
+	r := New(t.TempDir(), "sess", "/work")
+	if got := r.UserPromptSubmit("hi"); got.Block || got.AdditionalContext != "" {
+		t.Errorf("expected zero Result with no scripts, got %+v", got)
+	}
+}
+
+func TestUserPromptSubmit_ReceivesPromptAndJoinsContext(t *testing.T) {
+	hooksDir := t.TempDir()
+	// a.sh proves the prompt arrives on stdin; b.sh adds a second context.
+	writeScript(t, hooksDir, "user-prompt-submit", "a.sh",
+		`grep -q '"prompt":"fix the build"' && echo '{"additional_context":"branch: main"}'`)
+	writeScript(t, hooksDir, "user-prompt-submit", "b.sh", `echo '{"additional_context":"ticket: ABC-1"}'`)
+
+	got := New(hooksDir, "sess", "/work").UserPromptSubmit("fix the build")
+	if got.Block {
+		t.Fatalf("unexpected block: %+v", got)
+	}
+	if want := "branch: main\n\nticket: ABC-1"; got.AdditionalContext != want {
+		t.Errorf("AdditionalContext = %q, want %q", got.AdditionalContext, want)
+	}
+}
+
+func TestUserPromptSubmit_BlocksWithSystemMessage(t *testing.T) {
+	hooksDir := t.TempDir()
+	writeScript(t, hooksDir, "user-prompt-submit", "a.sh", `echo '{"system_message":"looks like a secret"}'; exit 2`)
+	writeScript(t, hooksDir, "user-prompt-submit", "b.sh", `echo '{"additional_context":"never reached"}'`)
+
+	got := New(hooksDir, "sess", "/work").UserPromptSubmit("AKIA...")
+	if !got.Block || got.SystemMessage != "looks like a secret" {
+		t.Errorf("got %+v, want block with system_message", got)
+	}
+	if got.AdditionalContext != "" {
+		t.Errorf("blocked result must not carry context, got %q", got.AdditionalContext)
+	}
+}
+
+func TestUserPromptSubmit_BlockReasonFallsBackToStderr(t *testing.T) {
+	hooksDir := t.TempDir()
+	writeScript(t, hooksDir, "user-prompt-submit", "a.sh", `echo "no prompts on Fridays" >&2; exit 2`)
+
+	got := New(hooksDir, "sess", "/work").UserPromptSubmit("deploy")
+	if !got.Block || got.SystemMessage != "no prompts on Fridays" {
+		t.Errorf("got %+v, want block with stderr reason", got)
+	}
+}
+
+func TestUserPromptSubmit_OtherFailureDoesNotBlock(t *testing.T) {
+	hooksDir := t.TempDir()
+	writeScript(t, hooksDir, "user-prompt-submit", "a.sh", `exit 1`)
+	writeScript(t, hooksDir, "user-prompt-submit", "b.sh", `echo '{"additional_context":"still runs"}'`)
+
+	got := New(hooksDir, "sess", "/work").UserPromptSubmit("hi")
+	if got.Block || got.AdditionalContext != "still runs" {
+		t.Errorf("got %+v, want non-blocking with later context", got)
+	}
+}

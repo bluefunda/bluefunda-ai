@@ -67,8 +67,24 @@ func promptCommands() []tui.SlashCommand {
 			Description: "Review the current changes, or a PR  /review 123",
 			Prompt:      reviewPrompt,
 		},
+		{
+			Name:        "/security-review",
+			Description: "Security review of the current changes, or a PR  /security-review 123",
+			Prompt:      securityReviewPrompt,
+		},
 	}
 }
+
+// securityReviewPrompt is /review narrowed to vulnerabilities that are
+// actually reachable.
+const securityReviewPrompt = `Do a security review of code changes. Do not modify any files.
+
+What to review: $ARGUMENTS
+- A number means that pull request (` + "`gh pr diff <n>`" + `); a branch or path means the changes there; nothing means this branch's commits since the default branch plus uncommitted changes.
+
+For each change, trace where its inputs come from and where its outputs go. Look for: injection (shell, SQL, path traversal, template), missing or bypassable authentication and authorisation, secrets in code or logs, unsafe deserialisation, SSRF, weak or misused cryptography, unsafe file permissions, and dependency changes that pull in risk.
+
+Report only issues an attacker could actually reach, most severe first. For each: file:line, the vulnerability, how it is exploited (the attacker's input and the path it takes), and the fix. Say plainly if you find nothing exploitable; do not list theoretical issues with no reachable path.`
 
 // reviewPrompt reviews read-only. What to review comes after the command: a
 // PR number, a branch, a path, or nothing for the work in progress.

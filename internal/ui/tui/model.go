@@ -137,6 +137,8 @@ type SessionConfig struct {
 	MCPActivateFn  func(name string) error       // nil = MCP activation not available
 	ListModelsFn   func() ([]ModelInfo, error)   // nil = model listing not available
 	SetAutoApplyFn func(enabled bool)            // nil = auto-apply not available (non-code sessions)
+	MaxTurns       int                           // current agentic step limit per request (shown by /max-turns)
+	SetMaxTurnsFn  func(n int)                   // nil = /max-turns not available
 	SetPlanModeFn  func(enabled bool)            // nil = plan mode not available (non-code sessions)
 	SetCodeModeFn  func(enabled bool)            // nil = mode switch not supported in this session
 	CustomCommands []SlashCommand                // loaded from .bai/commands/*.md
@@ -1062,6 +1064,22 @@ func (m Model) handleSlashCommand(input string) (tea.Model, tea.Cmd) {
 		m.messages = append(m.messages, newSystemMessage("Auto-apply "+state))
 		m.refreshViewport()
 
+	case input == "/max-turns" || strings.HasPrefix(input, "/max-turns "):
+		arg := strings.TrimSpace(strings.TrimPrefix(input, "/max-turns"))
+		switch n, err := strconv.Atoi(arg); {
+		case m.cfg.SetMaxTurnsFn == nil:
+			m.messages = append(m.messages, newSystemMessage("/max-turns is only available in code sessions"))
+		case arg == "":
+			m.messages = append(m.messages, newSystemMessage(fmt.Sprintf("Max turns: %d agentic steps per request. Set with /max-turns <n>.", m.cfg.MaxTurns)))
+		case err != nil || n < 1:
+			m.messages = append(m.messages, newSystemMessage("Usage: /max-turns <n>  (a positive number)"))
+		default:
+			m.cfg.MaxTurns = n
+			m.cfg.SetMaxTurnsFn(n)
+			m.messages = append(m.messages, newSystemMessage(fmt.Sprintf("Max turns set to %d for this session. Type \"continue\" to resume a paused request.", n)))
+		}
+		m.refreshViewport()
+
 	case input == "/plan":
 		if !m.cfg.IsCode {
 			m.messages = append(m.messages, newSystemMessage("/plan is only available in code sessions (bai code)"))
@@ -1363,6 +1381,7 @@ func helpText() string {
 		"  /model [name]    Show or switch model",
 		"  /copy [n|code [n]]  Copy last response, an earlier one, or a code block",
 		"  /retry [--model <name>]  Resend the last message, replacing the response",
+		"  /max-turns [n]   Show or set the agentic step limit for this session",
 		"  /sessions        List recent sessions",
 		"  /resume <id|n>   Resume a session",
 		"  /code            Switch to code mode (file tools)",

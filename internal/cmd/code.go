@@ -634,6 +634,10 @@ func runAgenticSession(args []string) error {
 		SetAutoApplyFn: func(enabled bool) {
 			autoApplyState = enabled
 		},
+		MaxTurns: codeMaxTurns,
+		SetMaxTurnsFn: func(n int) {
+			maxTurnsState = n
+		},
 		SetPlanModeFn: func(enabled bool) {
 			planModeState = enabled
 		},
@@ -1169,7 +1173,12 @@ func agenticLoopTUI(
 		}
 	}
 
-	ch <- tui.StreamEvent{Kind: "chunk", Chunk: fmt.Sprintf("\n⚠  Reached --max-turns limit (%d). Use --max-turns N to increase.\n", maxTurns)}
+	// Not an error: the work so far is in history, so the user can resume.
+	hint := "Type \"continue\" to keep going, or /max-turns <n> to raise the limit for this session."
+	if codePrint {
+		hint = "Rerun with --max-turns N (or --continue) to keep going."
+	}
+	ch <- tui.StreamEvent{Kind: "chunk", Chunk: fmt.Sprintf("\n\n⚠  Paused after %d steps (max-turns limit). %s\n", maxTurns, hint)}
 	return history, nil
 }
 

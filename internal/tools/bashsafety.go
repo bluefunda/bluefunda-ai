@@ -189,7 +189,19 @@ var sedPrintScript = regexp.MustCompile(`^(\d+|\$)(,(\d+|\$))?p$`)
 // segmentReadOnly reports whether one simple command only reads state.
 func segmentReadOnly(seg string) bool {
 	words, writes := stripRedirects(shellWords(seg))
-	if writes || len(words) == 0 {
+	if writes {
+		return false
+	}
+	return wordsReadOnly(words)
+}
+
+// xargsArgFlags are the xargs options that consume the following word.
+var xargsArgFlags = []string{"-n", "-L", "-P", "-I", "-d", "-s", "-E", "-a", "--max-args", "--max-lines", "--max-procs", "--delimiter", "--arg-file"}
+
+// wordsReadOnly reports whether a command (already split into words, with
+// redirections handled) only reads state.
+func wordsReadOnly(words []string) bool {
+	if len(words) == 0 {
 		return false
 	}
 	prog, args := words[0], words[1:]
@@ -240,6 +252,19 @@ func segmentReadOnly(seg string) bool {
 	case "npm":
 		return (len(args) == 1 && args[0] == "test") ||
 			(len(args) == 2 && args[0] == "run" && slices.Contains([]string{"test", "lint", "build"}, args[1]))
+	case "xargs":
+		// xargs runs the command after its own options: judge that command.
+		i := 0
+		for i < len(args) && strings.HasPrefix(args[i], "-") {
+			if slices.Contains(xargsArgFlags, args[i]) {
+				i++
+			}
+			i++
+		}
+		return i < len(args) && args[i] != "xargs" && wordsReadOnly(args[i:])
+	case "python", "python3":
+		// Only the stdlib JSON pretty-printer: python3 -m json.tool [file].
+		return len(args) >= 2 && args[0] == "-m" && args[1] == "json.tool" && len(args) <= 3
 	case "golangci-lint":
 		return !has("--fix")
 	case "rg":

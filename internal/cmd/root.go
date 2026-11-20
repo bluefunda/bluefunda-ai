@@ -42,6 +42,8 @@ var (
 	rootWorktree         bool
 	rootNoColor          bool
 	rootPlan             bool
+	rootAllowedTools     []string
+	rootDisallowedTools  []string
 
 	// Captured by PersistentPostRunE for Execute's post-run signal
 	// recording — PersistentPostRunE sees the actually-invoked (leaf)
@@ -108,6 +110,8 @@ func runDefault(cmd *cobra.Command, args []string) error {
 	}
 	codeWorktree = rootWorktree
 	codePlanMode = rootPlan
+	codeAllowedTools = rootAllowedTools
+	codeDisallowedTools = rootDisallowedTools
 	return runAgenticSession(args)
 }
 
@@ -142,6 +146,7 @@ func init() {
 	rootCmd.Flags().BoolVar(&rootNoTools, "no-tools", false, "Disable local tools (pure chat mode)")
 	rootCmd.Flags().BoolVarP(&rootWorktree, "worktree", "w", false, "Run agent in an isolated git worktree; prompt to apply/discard on exit")
 	rootCmd.Flags().BoolVar(&rootPlan, "plan", false, "Start in plan mode: restrict to read-only tools until /plan allows changes")
+	registerPermissionFlags(rootCmd.Flags(), &rootAllowedTools, &rootDisallowedTools)
 	rootCmd.PersistentFlags().BoolVar(&rootNoColor, "no-color", false, "Disable colored output")
 	_ = rootCmd.PersistentFlags().MarkHidden("no-color")
 	rootCmd.PersistentPreRunE = func(cmd *cobra.Command, args []string) error {

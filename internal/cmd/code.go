@@ -14,6 +14,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/spf13/cobra"
+	"github.com/spf13/pflag"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
@@ -47,7 +48,12 @@ var (
 	codeNoTools          bool
 	codeWorktree         bool
 	codePlanMode         bool
-	codeRetryMode        bool // set by `bai chat retry <id>`: derive the prompt
+	// codeAllowedTools / codeDisallowedTools are per-run permission rules from
+	// --allowed-tools / --disallowed-tools (#406), layered on top of the
+	// settings-file rules using the same pattern syntax.
+	codeAllowedTools    []string
+	codeDisallowedTools []string
+	codeRetryMode       bool // set by `bai chat retry <id>`: derive the prompt
 	// from the last turn in the resumed session instead of requiring one on
 	// the command line.
 )
@@ -106,6 +112,42 @@ func init() {
 	codeCmd.Flags().StringVar(&codeOutputFormat, "output-format", "text", "Output format for --print: text, json, stream-json")
 	codeCmd.Flags().StringVar(&codeResume, "resume", "", "Resume a previous session by ID")
 	codeCmd.Flags().BoolVarP(&codeContinue, "continue", "c", false, "Resume the most recent code session")
+	registerPermissionFlags(codeCmd.Flags(), &codeAllowedTools, &codeDisallowedTools)
+}
+
+// registerPermissionFlags adds --allowed-tools / --disallowed-tools to fs,
+// plus Claude Code's camelCase spellings (--allowedTools, --disallowedTools)
+// as hidden aliases via flag-name normalization (#406).
+func registerPermissionFlags(fs *pflag.FlagSet, allowed, disallowed *[]string) {
+	fs.StringSliceVar(allowed, "allowed-tools", nil,
+		`Tool rules to auto-approve for this run, e.g. "bash:go test *" (comma-separated or repeated)`)
+	fs.StringSliceVar(disallowed, "disallowed-tools", nil,
+		`Tool rules to block for this run, e.g. "write_file" or "bash:rm *" (comma-separated or repeated)`)
+	prev := fs.GetNormalizeFunc()
+	fs.SetNormalizeFunc(func(f *pflag.FlagSet, name string) pflag.NormalizedName {
+		switch name {
+		case "allowedTools":
+			name = "allowed-tools"
+		case "disallowedTools":
+			name = "disallowed-tools"
+		}
+		return prev(f, name)
+	})
+}
+
+// mergePermissionRules returns new slices holding the settings rules followed
+// by the per-run flag rules, with blank flag entries dropped. Deny is still
+// evaluated before allow by tools.CheckPermissions, so a deny rule from any
+// source wins.
+func mergePermissionRules(base, extra []string) []string {
+	out := make([]string, 0, len(base)+len(extra))
+	out = append(out, base...)
+	for _, r := range extra {
+		if r = strings.TrimSpace(r); r != "" {
+			out = append(out, r)
+		}
+	}
+	return out
 }
 
 // codeMessage mirrors the ConversationMsg format expected by cai-llm-router.
@@ -283,7 +325,9 @@ func runAgenticSession(args []string) error {
 		permAllow = projCfg.Permissions.Allow
 		permDeny = projCfg.Permissions.Deny
 	}
-	permDeny = append(permDeny, sessionDeny...)
+	permDeny = mergePermissionRules(permDeny, sessionDeny)
+	permAllow = mergePermissionRules(permAllow, codeAllowedTools)
+	permDeny = mergePermissionRules(permDeny, codeDisallowedTools)
 
 	// --- Personal, local "always allow" rules + workspace trust gate (#331) ---
 	// .bai/settings.local.yaml is gitignored and holds per-developer rules
@@ -308,6 +352,10 @@ func runAgenticSession(args []string) error {
 			permDeny = append(permDeny, localCfg.Permissions.Deny...)
 		}
 	}
+	// task subagents run with --auto, so the deny list is their only
+	// guard: forward every deny rule in force here so a child can never do
+	// more than its parent (#406).
+	tools.SetTaskDisallowedTools(permDeny)
 	defer mcpMgr.Close()
 	if extra := mcpMgr.ToolSchemas(); len(extra) > 0 {
 		merged, mergeErr := tools.MergeSchemas(toolSchemas, extra)
@@ -720,6 +768,19 @@ func drainPrintStream(ch <-chan tui.StreamEvent, outputFormat string, w, errW io
 			if outputFormat == "stream-json" {
 				enc := json.NewEncoder(w)
 				enc.Encode(map[string]any{"type": "tool_result", "name": ev.ToolName, "status": ev.Status, "duration_ms": ev.DurationMs}) //nolint:errcheck
+			}
+		case "approval":
+			// Headless mode has nobody to ask: decline, like Claude Code's -p,
+			// instead of blocking the agentic loop forever on the reply (#406).
+			// Tools that should run unattended need --auto or --allowed-tools.
+			if ev.ReplyCh != nil {
+				ev.ReplyCh <- tui.ApprovalDecision{Approved: false}
+			}
+			if outputFormat == "stream-json" {
+				enc := json.NewEncoder(w)
+				enc.Encode(map[string]any{"type": "permission_denied", "name": ev.ToolName, "input": ev.ToolArgs}) //nolint:errcheck
+			} else {
+				fmt.Fprintf(errW, "denied: %s needs approval (allow it with --allowed-tools or --auto)\n", ev.ToolName)
 			}
 		case "error":
 			exitCode = 1

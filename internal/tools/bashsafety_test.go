@@ -46,6 +46,7 @@ func TestBashReadOnly(t *testing.T) {
 		"git status", "git -C sub log --oneline -5", "git diff HEAD~1 -- a.go", "git branch -a",
 		"ls -la && pwd", "grep -rn foo . | wc -l", "find . -name '*.go'", "sed -n '10,20p' a.go",
 		"cat a.txt > /dev/null",
+		`zsh --version; echo "---"; getent passwd devops; chsh --version 2>&1 | head -5`, "dpkg -l | grep -i zsh",
 		`cd /r && gh pr view 310 --json title,body 2>&1 | python3 -m json.tool 2>/dev/null | head -100`,
 		`find . -iname "*.md" | xargs grep -ln "gateway" -i 2>/dev/null`, "git ls-files | xargs -n 10 wc -l", "go test ./... 2>&1 | tail -5", "go vet ./...", "make test",
 	}
@@ -64,7 +65,7 @@ func TestBashReadOnly(t *testing.T) {
 		"gh api -X POST repos/o/r/issues", "gh api repos/o/r/issues -f title=x", "gh pr create", "gh issue close 1",
 		"go run .", "go mod tidy", "go env -w X=1", "make clean", "npm run anything", "npx thing",
 		"git diff --output=x.patch", "git grep -Ovim foo", "git log --ext-diff", "rg --pre ./evil foo", "tree -o out",
-		"python3 -c 'print(1)'", "python3 -m http.server", "python3 -m json.tool in.json out.json extra",
+		"python3 -c 'print(1)'", "dpkg -i x.deb", "hostname newname", "chsh -s /bin/zsh", "sudo -n true", "python3 -m http.server", "python3 -m json.tool in.json out.json extra",
 		"find . | xargs rm", "ls | xargs -I {} mv {} /tmp", "xargs", "FOO=1 ls", "/bin/ls", "env FOO=1 rm x", "awk '{system(\"rm x\")}' f",
 	}
 	for _, c := range notReadOnly {

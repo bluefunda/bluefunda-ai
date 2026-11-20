@@ -182,6 +182,7 @@ var readOnlyPrograms = []string{
 	"grep", "egrep", "fgrep", "rg", "cd", "file", "tree", "du", "df", "sort", "uniq",
 	"cut", "tr", "diff", "cmp", "jq", "true", "false", "date", "basename", "dirname",
 	"realpath", "readlink", "whoami", "uname", "id", "nproc", "column", "nl", "test", "[",
+	"getent", "uptime", "free", "lsb_release",
 }
 
 var sedPrintScript = regexp.MustCompile(`^(\d+|\$)(,(\d+|\$))?p$`)
@@ -252,6 +253,10 @@ func wordsReadOnly(words []string) bool {
 	case "npm":
 		return (len(args) == 1 && args[0] == "test") ||
 			(len(args) == 2 && args[0] == "run" && slices.Contains([]string{"test", "lint", "build"}, args[1]))
+	case "hostname":
+		return len(args) == 0 || (len(args) == 1 && strings.HasPrefix(args[0], "-") && args[0] != "-F" && args[0] != "--file")
+	case "dpkg":
+		return len(args) > 0 && slices.Contains([]string{"-l", "--list", "-s", "--status", "-L", "--listfiles", "-S", "--search", "--version"}, args[0])
 	case "xargs":
 		// xargs runs the command after its own options: judge that command.
 		i := 0
@@ -271,6 +276,9 @@ func wordsReadOnly(words []string) bool {
 		return !has("--pre") // runs a preprocessor command per file
 	case "tree":
 		return !has("-o")
+	}
+	if len(args) == 1 && (args[0] == "--version" || args[0] == "-V") {
+		return true // any program's own version query
 	}
 	return slices.Contains(readOnlyPrograms, prog)
 }

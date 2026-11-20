@@ -25,6 +25,11 @@ var copyToClipboardFn = copyToClipboard
 // best-effort: the escape sequence can't report success, so method's text
 // says so explicitly rather than claiming a guaranteed copy.
 func copyToClipboard(text string) (method string, err error) {
+	// Over SSH the "system clipboard" is the server's (if any), not the one
+	// the user pastes from: send OSC 52 so the local terminal gets it.
+	if isSSH() && emitOSC52(os.Stdout, text) {
+		return "sent to your terminal via OSC 52", nil
+	}
 	if err := clipboard.WriteAll(text); err == nil {
 		return "clipboard", nil
 	}
@@ -32,6 +37,11 @@ func copyToClipboard(text string) (method string, err error) {
 		return "", fmt.Errorf("no clipboard utility found and this terminal doesn't support OSC 52")
 	}
 	return "OSC 52 (sent to the terminal — depends on terminal support)", nil
+}
+
+// isSSH reports whether this process runs in an SSH session.
+func isSSH() bool {
+	return os.Getenv("SSH_TTY") != "" || os.Getenv("SSH_CONNECTION") != "" || os.Getenv("SSH_CLIENT") != ""
 }
 
 // emitOSC52 writes the OSC 52 "set clipboard" escape sequence to w, via

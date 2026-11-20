@@ -267,6 +267,10 @@ type Model struct {
 	vpReady  bool
 	atBottom bool
 
+	// mouseOn is true while /mouse has enabled mouse capture (wheel
+	// scrolling); off by default so native terminal selection works.
+	mouseOn bool
+
 	// showNarration expands assistant narration that preceded tool calls
 	// (toggled with Ctrl+O, #330). Collapsed by default.
 	showNarration bool
@@ -1064,6 +1068,17 @@ func (m Model) handleSlashCommand(input string) (tea.Model, tea.Cmd) {
 		m.messages = append(m.messages, newSystemMessage("Auto-apply "+state))
 		m.refreshViewport()
 
+	case input == "/mouse":
+		m.mouseOn = !m.mouseOn
+		if m.mouseOn {
+			m.messages = append(m.messages, newSystemMessage("Mouse wheel scrolling on. Hold Shift (Option on macOS) to select text. /mouse to turn off."))
+			m.refreshViewport()
+			return m, tea.EnableMouseCellMotion
+		}
+		m.messages = append(m.messages, newSystemMessage("Mouse wheel scrolling off: select text with the mouse to copy. PgUp/PgDn scroll."))
+		m.refreshViewport()
+		return m, tea.DisableMouse
+
 	case input == "/max-turns" || strings.HasPrefix(input, "/max-turns "):
 		arg := strings.TrimSpace(strings.TrimPrefix(input, "/max-turns"))
 		switch n, err := strconv.Atoi(arg); {
@@ -1373,7 +1388,8 @@ func helpText() string {
 		"  Ctrl+D          Quit",
 		"  Ctrl+Y          Copy last response",
 		"  Ctrl+O          Show/hide thinking and narration between tool calls",
-		"  PgUp/PgDn      Scroll conversation",
+		"  PgUp/PgDn      Scroll conversation (or /mouse for the wheel)",
+		"  Mouse select   Copy text natively (mouse capture is off by default)",
 		"",
 		"  Slash commands",
 		"  ─────────────────────────────────",
@@ -1382,6 +1398,7 @@ func helpText() string {
 		"  /copy [n|code [n]]  Copy last response, an earlier one, or a code block",
 		"  /retry [--model <name>]  Resend the last message, replacing the response",
 		"  /max-turns [n]   Show or set the agentic step limit for this session",
+		"  /mouse           Toggle mouse-wheel scrolling (off = select text to copy)",
 		"  /sessions        List recent sessions",
 		"  /resume <id|n>   Resume a session",
 		"  /code            Switch to code mode (file tools)",

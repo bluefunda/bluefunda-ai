@@ -627,6 +627,7 @@ func runAgenticSession(args []string) error {
 				ch <- tui.StreamEvent{Kind: "done"}
 				return
 			}
+			userMsg = expandMentions(userMsg)
 			pendingMu.Lock()
 			if len(pendingShell) > 0 {
 				userMsg = strings.Join(pendingShell, "\n\n") + "\n\n" + userMsg
@@ -704,6 +705,7 @@ func runAgenticSession(args []string) error {
 		CustomCommands: mergeSlashCommands(loadCustomSlashCommands("."), sessionSlashCommands, promptCommands(),
 			[]tui.SlashCommand{permissionsCommand(permSources, sessionAllow), agentsCommand(), compactCmd}),
 		RetryFn: retryFn,
+		FilesFn: mentionCandidates,
 		ShellFn: func(command string) (string, error) {
 			out, err := tools.Bash(command)
 			if err != nil {

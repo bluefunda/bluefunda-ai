@@ -25,6 +25,7 @@ func shellCommand(input string) (string, bool) {
 func (m Model) runShell(input, command string) (tea.Model, tea.Cmd) {
 	m.textarea.Reset()
 	m.showSlash = false
+	m.showMention = false
 	m.historyIdx = -1
 	if len(m.inputHistory) == 0 || m.inputHistory[len(m.inputHistory)-1] != input {
 		m.inputHistory = append(m.inputHistory, input)

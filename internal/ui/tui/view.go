@@ -20,8 +20,11 @@ func (m Model) View() string {
 
 	var b strings.Builder
 
-	// Slash menu (shown above input when active)
-	if m.showSlash && len(m.slashMatches) > 0 {
+	// @ picker / slash menu (shown above input when active)
+	if m.showMention {
+		b.WriteString(m.renderMentionMenu())
+		b.WriteByte('\n')
+	} else if m.showSlash && len(m.slashMatches) > 0 {
 		b.WriteString(m.renderSlashMenu())
 		b.WriteByte('\n')
 	}

@@ -149,6 +149,9 @@ type SessionConfig struct {
 	// returns its output; the session passes it to the model with the next
 	// message. nil = no shell mode (chat sessions).
 	ShellFn func(command string) (string, error)
+	// FilesFn lists the workspace's files and directories (directories end
+	// in "/") for the @ picker. nil = no picker.
+	FilesFn func() []string
 	// StatusFn adds the session's own lines to /status (context size,
 	// settings files, MCP servers…). Called on the UI goroutine.
 	StatusFn       func() []string
@@ -306,6 +309,12 @@ type Model struct {
 	showSlash    bool
 	slashMatches []SlashCommand
 	slashIdx     int
+
+	// @ picker (mentions.go)
+	showMention    bool
+	mentionMatches []string
+	mentionIdx     int
+	mentionFiles   []string // loaded on the first "@"
 
 	// Model picker (shown when /model is typed with no argument)
 	showModelPicker  bool
@@ -656,6 +665,10 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case "enter":
+		if m.showMention {
+			m.acceptMention()
+			return m, nil
+		}
 		if m.showSlash && len(m.slashMatches) > 0 {
 			cmd := m.slashMatches[m.slashIdx]
 			if m.textarea.Value() == cmd.Name {
@@ -672,6 +685,10 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.submitInput()
 
 	case "up":
+		if m.showMention {
+			m.mentionIdx = max(m.mentionIdx-1, 0)
+			return m, nil
+		}
 		if m.showSlash {
 			if m.slashIdx > 0 {
 				m.slashIdx--
@@ -696,6 +713,10 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 
 	case "down":
+		if m.showMention {
+			m.mentionIdx = min(m.mentionIdx+1, len(m.mentionMatches)-1)
+			return m, nil
+		}
 		if m.showSlash {
 			if m.slashIdx < len(m.slashMatches)-1 {
 				m.slashIdx++
@@ -716,12 +737,20 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 
 	case "esc":
+		if m.showMention {
+			m.showMention = false
+			return m, nil
+		}
 		if m.showSlash {
 			m.showSlash = false
 			return m, nil
 		}
 
 	case "tab":
+		if m.showMention {
+			m.acceptMention()
+			return m, nil
+		}
 		if m.showSlash && len(m.slashMatches) > 0 {
 			return m.acceptSlashCommand()
 		}
@@ -731,6 +760,7 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	m.textarea, taCmd = m.textarea.Update(msg)
 	cmds = append(cmds, taCmd)
 	m.updateSlashMenu()
+	m.updateMentionMenu()
 
 	return m, tea.Batch(cmds...)
 }
@@ -775,6 +805,7 @@ func (m Model) submitInput() (tea.Model, tea.Cmd) {
 
 	m.textarea.Reset()
 	m.showSlash = false
+	m.showMention = false
 	m.historyIdx = -1
 
 	// Record in history (dedup consecutive identical)
@@ -801,6 +832,7 @@ func (m Model) submitInput() (tea.Model, tea.Cmd) {
 func (m Model) handleSlashCommand(input string) (tea.Model, tea.Cmd) {
 	m.textarea.Reset()
 	m.showSlash = false
+	m.showMention = false
 
 	switch {
 	case input == "/update":
@@ -1300,6 +1332,7 @@ func helpText() string {
 		"  Ctrl+O          Show/hide thinking and narration between tool calls",
 		"  Shift+Tab       Cycle mode: default → accept edits → plan (code sessions)",
 		"  !<command>      Run a command in your shell; the model sees its output",
+		"  @path           Attach a file or folder (Tab/Enter picks from the list)",
 		"  Scroll/select  The conversation is in your terminal's scrollback: scroll and select as usual",
 		"",
 		"  Slash commands",

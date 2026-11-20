@@ -45,6 +45,7 @@ var builtinCommands = []SlashCommand{
 	{Name: "/tools", Description: "List available tools"},
 	{Name: "/context", Description: "Show current context info"},
 	{Name: "/status", Description: "Show version, model, mode, session and settings"},
+	{Name: "/rewind", Description: "Restore code and/or conversation to before an earlier message (Esc Esc)"},
 	{Name: "/update", Description: "Check for a newer version and upgrade"},
 	{Name: "/exit", Description: "Quit the session", Alias: "quit"},
 }

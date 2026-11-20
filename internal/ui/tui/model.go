@@ -152,6 +152,11 @@ type SessionConfig struct {
 	// FilesFn lists the workspace's files and directories (directories end
 	// in "/") for the @ picker. nil = no picker.
 	FilesFn func() []string
+	// RewindPointsFn lists the messages /rewind can go back to, oldest
+	// first; RewindFn restores code and/or conversation to before one and
+	// says what it did. nil = no rewind.
+	RewindPointsFn func() []RewindPoint
+	RewindFn       func(turn int, code, chat bool) (string, error)
 	// StatusFn adds the session's own lines to /status (context size,
 	// settings files, MCP servers…). Called on the UI goroutine.
 	StatusFn       func() []string
@@ -316,6 +321,9 @@ type Model struct {
 	mentionIdx     int
 	mentionFiles   []string // loaded on the first "@"
 
+	rewind  *rewindPicker // open /rewind dialog (rewind.go)
+	lastEsc time.Time     // for Esc Esc
+
 	// Model picker (shown when /model is typed with no argument)
 	showModelPicker  bool
 	modelPickerItems []ModelInfo
@@ -449,6 +457,9 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Ctrl+C already handled in handleKey; nothing more to do here.
 		return m, nil
 
+	case rewindDoneMsg:
+		return m.rewound(msg), nil
+
 	case shellDoneMsg:
 		m.messages = append(m.messages, newSystemMessage(formatShellOutput(msg.output, msg.err)))
 		return m, nil
@@ -575,6 +586,9 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if m.showModelPicker {
 			return m.handleModelPickerKey(msg)
+		}
+		if m.rewind != nil {
+			return m.handleRewindKey(msg)
 		}
 		return m.handleKey(msg)
 	}
@@ -743,6 +757,15 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		if m.showSlash {
 			m.showSlash = false
+			return m, nil
+		}
+		// Esc Esc on an empty input opens /rewind, as in Claude Code.
+		if !m.streaming && m.textarea.Value() == "" && m.cfg.RewindFn != nil {
+			if time.Since(m.lastEsc) < doubleEsc {
+				m.lastEsc = time.Time{}
+				return m.openRewind(), nil
+			}
+			m.lastEsc = time.Now()
 			return m, nil
 		}
 
@@ -1118,6 +1141,9 @@ func (m Model) handleSlashCommand(input string) (tea.Model, tea.Cmd) {
 			"Available tools: read_file · edit_file · write_file · list_dir · search_files · search_content · bash · web_fetch · web_search\n"+
 				"MCP tools: mcp__<server>__<tool>  (configure in .bai/settings.yaml)"))
 
+	case input == "/rewind":
+		return m.openRewind(), nil
+
 	case input == "/status":
 		m.messages = append(m.messages, newSystemMessage(m.statusText()))
 
@@ -1332,6 +1358,7 @@ func helpText() string {
 		"  Ctrl+O          Show/hide thinking and narration between tool calls",
 		"  Shift+Tab       Cycle mode: default → accept edits → plan (code sessions)",
 		"  !<command>      Run a command in your shell; the model sees its output",
+		"  Esc Esc         Rewind code and/or conversation to an earlier message",
 		"  @path           Attach a file or folder (Tab/Enter picks from the list)",
 		"  Scroll/select  The conversation is in your terminal's scrollback: scroll and select as usual",
 		"",

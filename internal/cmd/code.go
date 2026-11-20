@@ -22,6 +22,7 @@ import (
 	pb "github.com/bluefunda/bluefunda-ai/api/proto/bff"
 	"github.com/bluefunda/bluefunda-ai/internal/app"
 	"github.com/bluefunda/bluefunda-ai/internal/audit"
+	"github.com/bluefunda/bluefunda-ai/internal/checkpoint"
 	"github.com/bluefunda/bluefunda-ai/internal/config"
 	caigrpc "github.com/bluefunda/bluefunda-ai/internal/grpc"
 	"github.com/bluefunda/bluefunda-ai/internal/hooks"
@@ -589,6 +590,10 @@ func runAgenticSession(args []string) error {
 	turns := 0
 	isFirstTurn := true
 	var turnMu sync.Mutex
+	// File checkpoints for /rewind (Esc Esc).
+	checkpoints := checkpoint.New()
+	sessionCheckpoints = checkpoints
+	defer func() { sessionCheckpoints = nil }()
 	// pendingShell holds "!" commands the user ran since the last message,
 	// with their output; they go to the model ahead of the next message.
 	var (
@@ -634,6 +639,7 @@ func runAgenticSession(args []string) error {
 				pendingShell = nil
 			}
 			pendingMu.Unlock()
+			checkpoints.Begin(input, userMsg, len(history))
 			history = append(history, codeMessage{Role: "user", Content: userMsg})
 			newHistory, loopErr := agenticLoopTUI(
 				conn, cfg, cid, mdl, currentSchemas,
@@ -706,6 +712,27 @@ func runAgenticSession(args []string) error {
 			[]tui.SlashCommand{permissionsCommand(permSources, sessionAllow), agentsCommand(), todosCommand(), compactCmd}),
 		RetryFn: retryFn,
 		FilesFn: mentionCandidates,
+		RewindPointsFn: func() []tui.RewindPoint {
+			locked := turnMu.TryLock()
+			if locked {
+				defer turnMu.Unlock()
+			}
+			var out []tui.RewindPoint
+			for _, p := range checkpoints.Points() {
+				out = append(out, tui.RewindPoint{Turn: p.Turn, Prompt: p.Prompt, At: p.At, Files: p.Files,
+					CanChat: locked && conversationAt(history, p)})
+			}
+			return out
+		},
+		RewindFn: func(turn int, code, chat bool) (string, error) {
+			if !turnMu.TryLock() {
+				return "", errTurnRunning
+			}
+			defer turnMu.Unlock()
+			return rewind(checkpoints, &history, turn, code, chat, func() {
+				session.Save(sessPath, toSessionMsgs(history)) //nolint:errcheck
+			})
+		},
 		ShellFn: func(command string) (string, error) {
 			out, err := tools.Bash(command)
 			if err != nil {
@@ -2025,6 +2052,7 @@ func executeWithApprovalTUI(
 	auditLog.LogToolCall(tc.Name, argsJSON, approved, autoApproved)
 
 	// --- Execute ---
+	saveBeforeEdit(tc.Name, argsJSON)
 	// The row turns from queued to running (several calls from one round
 	// run one at a time).
 	ch <- tui.StreamEvent{Kind: "tool_start", ToolID: tc.ID, ToolName: tc.Name}

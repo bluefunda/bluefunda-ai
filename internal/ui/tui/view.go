@@ -29,6 +29,11 @@ func (m Model) View() string {
 		b.WriteByte('\n')
 	}
 
+	if m.rewind != nil {
+		b.WriteString(m.renderRewind())
+		b.WriteByte('\n')
+	}
+
 	// Model picker (shown above input when /model is invoked with no arg)
 	if m.showModelPicker && len(m.modelPickerItems) > 0 {
 		b.WriteString(m.renderModelPicker())

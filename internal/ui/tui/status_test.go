@@ -58,3 +58,55 @@ func TestStatusLayout(t *testing.T) {
 		t.Errorf("model line:\n%s", out)
 	}
 }
+
+// A notice with a line wider than the terminal word-wraps; no line
+// overflows and no blank lines appear that weren't in the text.
+func TestSystemMessageWraps(t *testing.T) {
+	m := newTestModel("")
+	m.ready = true
+	text := "Header:\n\n" + strings.Repeat("read_file, list_dir, search_files, ", 6) + "\nlast"
+	m.messages = append(m.messages, newSystemMessage(text))
+	out := ansi.Strip(m.renderMessageAt(len(m.messages)-1, 60))
+	lines := strings.Split(out, "\n")
+	blank := 0
+	for _, l := range lines {
+		if ansi.StringWidth(l) > 62 {
+			t.Errorf("line wider than the terminal: %q", l)
+		}
+		if strings.TrimSpace(l) == "" {
+			blank++
+		}
+	}
+	if blank != 1 {
+		t.Errorf("want only the text's one blank line, got %d:\n%s", blank, out)
+	}
+	if strings.Contains(out, "searc\nh") {
+		t.Errorf("broke inside a word:\n%s", out)
+	}
+}
+
+func TestFooterFitsWidth(t *testing.T) {
+	m := newTestModel("")
+	m.cfg.IsCode = true
+	for _, w := range []int{40, 80, 120, 200} {
+		m.width = w
+		f := m.renderFooter()
+		if ansi.StringWidth(f) > w {
+			t.Errorf("width %d: footer is %d wide: %q", w, ansi.StringWidth(f), ansi.Strip(f))
+		}
+		if strings.HasSuffix(strings.TrimSpace(ansi.Strip(f)), "·") {
+			t.Errorf("width %d: dangling separator", w)
+		}
+	}
+	m.width = 200
+	if !strings.Contains(ansi.Strip(m.renderFooter()), "Shift+Tab mode") {
+		t.Error("wide terminal should show every hint")
+	}
+}
+
+func TestWelcomeShowsDefaultModel(t *testing.T) {
+	m := New(SessionConfig{ChatID: "test-0000-0000-0000-000000000000"}, nil)
+	if !strings.Contains(m.messages[0].Content, "model: default") {
+		t.Errorf("welcome = %q", m.messages[0].Content)
+	}
+}

@@ -6,6 +6,7 @@ import (
 
 	"github.com/charmbracelet/glamour"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
 
 	"github.com/bluefunda/bluefunda-ai/internal/app"
 )
@@ -150,9 +151,11 @@ func (m *Model) renderMessageAt(idx, width int) string {
 
 	switch msg.Role {
 	case RoleSystem:
-		// Every line indented, so multi-line notices (/status, /permissions)
-		// line up.
-		return indentLines(th.SystemMsg.Render(msg.Content), "  ")
+		// Wrapped to the width first: lipgloss pads every line to the
+		// longest, so one over-wide line would make every line wrap. Every
+		// line is indented, so multi-line notices (/status) line up.
+		body := ansi.Wordwrap(msg.Content, max(width-2, 20), "")
+		return indentLines(th.SystemMsg.Render(body), "  ")
 
 	case RoleUser:
 		label := th.UserLabel.Render("You")
@@ -380,14 +383,14 @@ func (m Model) renderModelPicker() string {
 
 func (m Model) renderFooter() string {
 	th := m.theme
-	hint := "Enter send  ·  Shift+Enter newline  ·  /help commands  ·  Ctrl+O details  ·  Ctrl+C quit"
-	if m.streaming {
-		hint = "Ctrl+C to interrupt turn  ·  Ctrl+O show/hide details  ·  Ctrl+D to quit"
-	}
+	parts := []string{"Enter send", "/help commands", "Ctrl+O details", "Shift+Enter newline", "Ctrl+C quit"}
 	if m.cfg.IsCode {
-		hint += "  ·  Shift+Tab mode"
+		parts = append(parts[:3], append([]string{"Shift+Tab mode"}, parts[3:]...)...)
 	}
-	left := "  " + th.Footer.Render(hint)
+	if m.streaming {
+		parts = []string{"Ctrl+C to interrupt turn", "Ctrl+O show/hide details", "Ctrl+D to quit"}
+	}
+	left := "  " + th.Footer.Render(fitHints(parts, m.width-4))
 	if label := m.mode().label(); label != "" {
 		left = "  " + lipgloss.NewStyle().Foreground(th.Warning).Render(label) + th.Footer.Render("  (shift+tab to cycle)")
 	}
@@ -430,4 +433,20 @@ func indentLines(s, prefix string) string {
 		lines[i] = prefix + line
 	}
 	return strings.Join(lines, "\n")
+}
+
+// fitHints joins as many hints, in order of importance, as fit in width.
+func fitHints(parts []string, width int) string {
+	out := ""
+	for _, p := range parts {
+		next := p
+		if out != "" {
+			next = out + "  ·  " + p
+		}
+		if lipgloss.Width(next) > width && out != "" {
+			break
+		}
+		out = next
+	}
+	return out
 }

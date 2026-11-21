@@ -377,7 +377,7 @@ func New(cfg SessionConfig, submit SubmitFn) Model {
 			welcome += "  ·  " + cfg.ResumeTitle
 		}
 	} else {
-		welcome = fmt.Sprintf("Session %s  ·  model: %s", cfg.ChatID[:8], cfg.Model)
+		welcome = fmt.Sprintf("Session %s  ·  model: %s", cfg.ChatID[:8], m.modelName())
 	}
 	if cfg.RepoName != "" {
 		welcome += "  ·  " + cfg.RepoName
@@ -882,7 +882,7 @@ func (m Model) handleSlashCommand(input string) (tea.Model, tea.Cmd) {
 		m.messages = m.messages[:0]
 		m.isNewChat = true
 		m.messages = append(m.messages, newSystemMessage(
-			fmt.Sprintf("New session started  ·  model: %s", m.cfg.Model)))
+			fmt.Sprintf("New session started  ·  model: %s", m.modelName())))
 		return m, tea.ClearScreen
 
 	case input == "/help":
@@ -893,7 +893,7 @@ func (m Model) handleSlashCommand(input string) (tea.Model, tea.Cmd) {
 		m.isNewChat = true
 		m.messages = m.messages[:0]
 		m.messages = append(m.messages, newSystemMessage(
-			fmt.Sprintf("New session  ·  %s  ·  model: %s", m.cfg.ChatID[:8], m.cfg.Model)))
+			fmt.Sprintf("New session  ·  %s  ·  model: %s", m.cfg.ChatID[:8], m.modelName())))
 
 	case input == "/model" || strings.HasPrefix(input, "/model "):
 		arg := strings.TrimSpace(strings.TrimPrefix(input, "/model"))

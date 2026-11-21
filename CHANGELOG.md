@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.69.0](https://github.com/bluefunda/bluefunda-ai/compare/v1.68.0...v1.69.0) (2026-11-21)
+
+
+### Features
+
+* **tui:** Claude Code parity: scrollback, subagent types, checkpoints, skills, slash commands ([#415](https://github.com/bluefunda/bluefunda-ai/issues/415)) ([32e554a](https://github.com/bluefunda/bluefunda-ai/commit/32e554a7bc83a6a864ec491c41dfcc332722e4d6))
+
 ## [1.68.0](https://github.com/bluefunda/bluefunda-ai/compare/v1.67.0...v1.68.0) (2026-11-20)
 
 

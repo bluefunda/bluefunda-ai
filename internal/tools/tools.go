@@ -30,7 +30,7 @@ type FunctionDef struct {
 // LocalToolSchemas returns the JSON-encoded tool schemas to send to the LLM.
 // Tools of registered packs (see RegisterPack) are appended after the built-ins.
 func LocalToolSchemas() (string, error) {
-	b, err := json.Marshal(append(builtinSchemas(), packSchemas()...))
+	b, err := json.Marshal(append(append(builtinSchemas(), skillSchemas()...), packSchemas()...))
 	if err != nil {
 		return "", err
 	}

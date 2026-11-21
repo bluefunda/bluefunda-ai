@@ -181,6 +181,27 @@ func loadAgentTypes(errW io.Writer) {
 	tools.SetAgentTypes(types)
 }
 
+// loadSkills registers the session's skills: ~/.bai/skills/*/SKILL.md,
+// then <project>/.bai/skills/*/SKILL.md (project wins on a name clash).
+func loadSkills(errW io.Writer) {
+	var dirs []string
+	if d, err := app.HomePath("skills"); err == nil {
+		dirs = append(dirs, d)
+	}
+	root, err := worktree.GitRoot()
+	if err != nil {
+		root, _ = os.Getwd()
+	}
+	if root != "" {
+		dirs = append(dirs, filepath.Join(root, app.Current().Dir, "skills"))
+	}
+	skills, errs := tools.LoadSkills(dirs...)
+	for _, e := range errs {
+		fmt.Fprintf(errW, "[%s] skipping skill: %v\n", app.Current().Name, e)
+	}
+	tools.SetSkills(skills)
+}
+
 // registerPermissionFlags adds --allowed-tools / --disallowed-tools to fs,
 // plus Claude Code's camelCase spellings (--allowedTools, --disallowedTools)
 // as hidden aliases via flag-name normalization (#406).
@@ -358,6 +379,7 @@ func runAgenticSession(args []string) error {
 	var toolSchemas string
 	if !codeNoTools {
 		loadAgentTypes(os.Stderr)
+		loadSkills(os.Stderr)
 		var err error
 		toolSchemas, err = tools.LocalToolSchemas()
 		if err != nil {
@@ -709,7 +731,8 @@ func runAgenticSession(args []string) error {
 		// First wins on a name clash: the user's .bai/commands override
 		// the built-in commands.
 		CustomCommands: mergeSlashCommands(loadCustomSlashCommands("."), sessionSlashCommands, promptCommands(),
-			[]tui.SlashCommand{permissionsCommand(permSources, sessionAllow), agentsCommand(), todosCommand(), compactCmd}),
+			[]tui.SlashCommand{permissionsCommand(permSources, sessionAllow), agentsCommand(), todosCommand(), skillsCommand(), compactCmd},
+			skillCommands(tools.Skills())),
 		RetryFn: retryFn,
 		FilesFn: mentionCandidates,
 		RewindPointsFn: func() []tui.RewindPoint {

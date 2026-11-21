@@ -33,7 +33,7 @@ const DefaultAgentType = "general"
 // IsReadOnlyTool and the explore/plan agent types.
 var readOnlyToolNames = []string{
 	"read_file", "list_dir", "search_files", "search_content", "read_notebook",
-	"web_fetch", "web_search", "memory_read", "memory_list", "todo_write",
+	"web_fetch", "web_search", "memory_read", "memory_list", "todo_write", "skill",
 }
 
 // BuiltinAgentTypes returns the agent types every session has.
@@ -78,14 +78,9 @@ type agentFrontmatter struct {
 // ParseAgentFile parses one agent definition: YAML frontmatter between "---"
 // lines, then the instructions. name and description are required.
 func ParseAgentFile(path string, data []byte) (AgentType, error) {
-	data = bytes.ReplaceAll(data, []byte("\r\n"), []byte("\n"))
-	rest, ok := bytes.CutPrefix(data, []byte("---\n"))
-	if !ok {
-		return AgentType{}, fmt.Errorf("%s: missing --- frontmatter", path)
-	}
-	head, body, ok := bytes.Cut(rest, []byte("\n---"))
-	if !ok {
-		return AgentType{}, fmt.Errorf("%s: unterminated frontmatter", path)
+	head, body, err := splitFrontmatter(path, data)
+	if err != nil {
+		return AgentType{}, err
 	}
 	var fm agentFrontmatter
 	if err := yaml.Unmarshal(head, &fm); err != nil {
@@ -106,9 +101,30 @@ func ParseAgentFile(path string, data []byte) (AgentType, error) {
 		Description:  strings.TrimSpace(fm.Description),
 		Tools:        toolList,
 		Model:        strings.TrimSpace(fm.Model),
-		Instructions: strings.TrimSpace(strings.TrimPrefix(string(body), "\n")),
+		Instructions: body,
 		Source:       path,
 	}, nil
+}
+
+// splitFrontmatter splits a Markdown file into its YAML frontmatter
+// (between "---" lines) and the trimmed body.
+func splitFrontmatter(path string, data []byte) (head []byte, body string, err error) {
+	data = bytes.ReplaceAll(data, []byte("\r\n"), []byte("\n"))
+	rest, ok := bytes.CutPrefix(data, []byte("---\n"))
+	if !ok {
+		return nil, "", fmt.Errorf("%s: missing --- frontmatter", path)
+	}
+	head, b, ok := bytes.Cut(rest, []byte("\n---"))
+	if !ok {
+		return nil, "", fmt.Errorf("%s: unterminated frontmatter", path)
+	}
+	// Drop the rest of the closing "---" line.
+	if _, after, found := bytes.Cut(b, []byte("\n")); found {
+		b = after
+	} else {
+		b = nil
+	}
+	return head, strings.TrimSpace(string(b)), nil
 }
 
 func parseToolsField(n *yaml.Node) ([]string, error) {

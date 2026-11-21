@@ -250,3 +250,44 @@ func todosReport(todos []tools.TodoItem) string {
 	}
 	return strings.Join(lines, "\n")
 }
+
+// skillCommands lets the user run a skill directly as /<name>, as in Claude
+// Code. A command file or built-in of the same name takes precedence.
+func skillCommands(skills []tools.Skill) []tui.SlashCommand {
+	out := make([]tui.SlashCommand, 0, len(skills))
+	for _, s := range skills {
+		out = append(out, tui.SlashCommand{
+			Name:        "/" + s.Name,
+			Description: "(skill) " + s.Description,
+			Prompt: fmt.Sprintf("Use the %q skill. Its instructions (folder: %s; load supporting files with the skill tool):\n\n%s\n\n$ARGUMENTS",
+				s.Name, s.Dir, s.Body),
+		})
+	}
+	return out
+}
+
+// skillsCommand is /skills: the skills this session has.
+func skillsCommand() tui.SlashCommand {
+	return tui.SlashCommand{
+		Name:        "/skills",
+		Description: "List skills (instructions the model loads when relevant)",
+		Instant:     true,
+		Run: func(string) (string, error) {
+			return skillsReport(tools.Skills()), nil
+		},
+	}
+}
+
+func skillsReport(skills []tools.Skill) string {
+	var b strings.Builder
+	if len(skills) == 0 {
+		b.WriteString("No skills.")
+	} else {
+		b.WriteString("Skills (the model loads one when a task matches it; run one yourself with /<name>):")
+		for _, s := range skills {
+			fmt.Fprintf(&b, "\n\n/%s  (%s)\n  %s", s.Name, s.Dir, s.Description)
+		}
+	}
+	fmt.Fprintf(&b, "\n\nAdd one as ~/%[1]s/skills/<name>/SKILL.md or %[1]s/skills/<name>/SKILL.md: frontmatter with name and description, then the instructions. Other files in the folder can be loaded too.", app.Current().Dir)
+	return b.String()
+}

@@ -147,6 +147,10 @@ func ExecuteContext(ctx context.Context, name, argumentsJSON string) (string, er
 		return MemoryList()
 	case "todo_write":
 		return TodoWrite(argumentsJSON)
+	case "skill":
+		name, _ := args["name"].(string)
+		file, _ := args["file"].(string)
+		return LoadSkillTool(name, file)
 	case "memory_write":
 		key, _ := args["key"].(string)
 		content, _ := args["content"].(string)

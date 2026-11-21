@@ -188,3 +188,25 @@ func TestTodosReport(t *testing.T) {
 		t.Errorf("got %q", out)
 	}
 }
+
+func TestSkillCommands(t *testing.T) {
+	skills := []tools.Skill{{Name: "release", Description: "Cut a release", Dir: "/s/release", Body: "Step 1."}}
+	cmds := skillCommands(skills)
+	if len(cmds) != 1 || cmds[0].Name != "/release" || !strings.Contains(cmds[0].Description, "Cut a release") {
+		t.Fatalf("cmds = %+v", cmds)
+	}
+	if p := cmds[0].Prompt; !strings.Contains(p, "Step 1.") || !strings.HasSuffix(p, "$ARGUMENTS") {
+		t.Errorf("prompt = %q", p)
+	}
+	// A command file of the same name wins.
+	merged := mergeSlashCommands([]tui.SlashCommand{{Name: "/release", Prompt: "mine"}}, cmds)
+	if len(merged) != 1 || merged[0].Prompt != "mine" {
+		t.Errorf("merged = %+v", merged)
+	}
+	if out := skillsReport(skills); !strings.Contains(out, "/release  (/s/release)") {
+		t.Errorf("report = %q", out)
+	}
+	if !strings.Contains(skillsReport(nil), "No skills.") {
+		t.Error("empty report")
+	}
+}

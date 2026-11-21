@@ -55,6 +55,11 @@ var (
 	// settings-file rules using the same pattern syntax.
 	codeAllowedTools    []string
 	codeDisallowedTools []string
+	// codeInputFormat is --input-format: "text" (a prompt) or "stream-json"
+	// (one JSON user message per line on stdin). codeJSONSchema is
+	// --json-schema: the final answer must be JSON matching it.
+	codeInputFormat string
+	codeJSONSchema  string
 	// codeTools limits the session to these tools (--tools, #408). Empty
 	// means every tool. task subagents of a restricted type run with it.
 	codeTools     []string
@@ -133,6 +138,7 @@ func init() {
 	codeCmd.Flags().BoolVarP(&codeContinue, "continue", "c", false, "Resume the most recent code session")
 	registerPermissionFlags(codeCmd.Flags(), &codeAllowedTools, &codeDisallowedTools)
 	registerToolsFlag(codeCmd.Flags(), &codeTools)
+	registerHeadlessFlags(codeCmd.Flags(), &codeInputFormat, &codeJSONSchema)
 }
 
 // registerToolsFlag adds --tools, which limits the session to the named
@@ -579,14 +585,17 @@ func runAgenticSession(args []string) error {
 
 	// --- Headless print mode (#77) ---
 	if codePrint || !isTerminal() {
-		if initialPrompt == "" {
+		if err := checkPrintFormats(codeInputFormat, codeOutputFormat, initialPrompt); err != nil {
+			return err
+		}
+		if initialPrompt == "" && codeInputFormat != "stream-json" {
 			b, err := io.ReadAll(os.Stdin)
 			if err != nil {
 				return fmt.Errorf("read stdin: %w", err)
 			}
 			initialPrompt = strings.TrimSpace(string(b))
 		}
-		if initialPrompt == "" {
+		if initialPrompt == "" && codeInputFormat != "stream-json" {
 			return fmt.Errorf("prompt required in --print mode (pass as argument or pipe via stdin)")
 		}
 		return runCodePrint(conn, cfg, sessionID, model, toolSchemas, initialPrompt, history,
@@ -925,47 +934,69 @@ func runCodePrint(
 	pluginMgr *plugins.Manager,
 	p *ui.Printer,
 ) error {
-	userMsg, blocked := applyPromptHooks(hookRunner, prompt)
-	if blocked != "" {
-		// Close the session the audit log and session-end hooks saw start.
-		auditLog.LogSessionEnd(0, "blocked")
-		hookRunner.SessionEnd(0, "blocked")
-		ch := make(chan tui.StreamEvent, 2)
-		ch <- tui.StreamEvent{Kind: "error", ErrMsg: blocked}
-		ch <- tui.StreamEvent{Kind: "done"}
-		close(ch)
-		if exitCode := drainPrintStream(ch, outputFormat, os.Stdout, os.Stderr); exitCode != 0 {
-			os.Exit(exitCode)
-		}
-		return nil
+	schema, err := loadJSONSchema(codeJSONSchema)
+	if err != nil {
+		return err
 	}
-	history = append(history, codeMessage{Role: "user", Content: userMsg})
-
-	ch := make(chan tui.StreamEvent, 128)
-	go func() {
-		defer close(ch)
-		newHistory, loopErr := agenticLoopTUI(
+	// loop runs the agentic loop for history, the last message of which is
+	// the user's.
+	first := true
+	loop := func(h []codeMessage, ch chan<- tui.StreamEvent) ([]codeMessage, error) {
+		isNew := first
+		first = false
+		return agenticLoopTUI(
 			conn, cfg, chatID, model, toolSchemas,
-			history, true, allow, deny, autoApply, planMode, sessionAllow,
+			h, isNew, allow, deny, autoApply, planMode, sessionAllow,
 			maxTurns, maxContextTokens, maxBudgetUSD, sessPath, auditLog, hookRunner, mcpMgr, pluginMgr, p, ch,
 		)
-		session.Save(sessPath, toSessionMsgs(newHistory)) //nolint:errcheck
+	}
 
-		// A --print invocation is exactly one turn. auditLog.LogSessionEnd was
-		// previously never called in this path (TUI-only) — fixed here since
-		// the hook needs the same turns/stopReason data anyway.
-		stopReason := "end_turn"
-		if loopErr != nil {
-			stopReason = "error"
-			ch <- tui.StreamEvent{Kind: "error", ErrMsg: ui.RewriteError(loopErr)}
+	turns, failed := 0, false
+	// turn runs one user message and prints its output, ending with a
+	// result line (or object).
+	turn := func(prompt string) {
+		var structured any
+		ch := make(chan tui.StreamEvent, 128)
+		go func() {
+			defer close(ch)
+			userMsg, blocked := applyPromptHooks(hookRunner, prompt)
+			if blocked != "" {
+				ch <- tui.StreamEvent{Kind: "error", ErrMsg: blocked}
+				ch <- tui.StreamEvent{Kind: "done"}
+				return
+			}
+			turns++
+			var loopErr error
+			history, structured, loopErr = runPrintTurn(history, userMsg, schema, ch, loop)
+			session.Save(sessPath, toSessionMsgs(history)) //nolint:errcheck
+			if loopErr != nil {
+				ch <- tui.StreamEvent{Kind: "error", ErrMsg: ui.RewriteError(loopErr)}
+			}
+			ch <- tui.StreamEvent{Kind: "done"}
+		}()
+		var result func() (any, bool)
+		if schema != nil {
+			result = func() (any, bool) { return structured, structured != nil }
 		}
-		auditLog.LogSessionEnd(1, stopReason)
-		hookRunner.SessionEnd(1, stopReason)
-		ch <- tui.StreamEvent{Kind: "done"}
-	}()
+		if drainPrintStreamWith(ch, outputFormat, os.Stdout, os.Stderr, result) != 0 {
+			failed = true
+		}
+	}
 
-	if exitCode := drainPrintStream(ch, outputFormat, os.Stdout, os.Stderr); exitCode != 0 {
-		os.Exit(exitCode)
+	if codeInputFormat == "stream-json" {
+		readStreamJSONInput(os.Stdin, os.Stdout, turn)
+	} else {
+		turn(prompt)
+	}
+
+	stopReason := "end_turn"
+	if failed {
+		stopReason = "error"
+	}
+	auditLog.LogSessionEnd(turns, stopReason)
+	hookRunner.SessionEnd(turns, stopReason)
+	if failed {
+		os.Exit(1)
 	}
 	return nil
 }
@@ -1010,12 +1041,23 @@ func stripPromptContext(msg string) string {
 // Extracted from runCodePrint so the formatting logic can be unit-tested
 // independently of the agentic loop and gRPC stack.
 func drainPrintStream(ch <-chan tui.StreamEvent, outputFormat string, w, errW io.Writer) int {
+	return drainPrintStreamWith(ch, outputFormat, w, errW, nil)
+}
+
+// drainPrintStreamWith is drainPrintStream for a --json-schema run: result
+// returns the validated answer when the turn is done, and it is reported as
+// structured_output (json, stream-json) or printed alone (text, where the
+// model's own text is not).
+func drainPrintStreamWith(ch <-chan tui.StreamEvent, outputFormat string, w, errW io.Writer, resultFn func() (any, bool)) int {
 	var textBuf strings.Builder
 	exitCode := 0
 
 	for ev := range ch {
 		switch ev.Kind {
 		case "chunk":
+			if resultFn != nil && outputFormat == "text" {
+				continue // only the validated JSON is printed
+			}
 			switch outputFormat {
 			case "stream-json":
 				enc := json.NewEncoder(w)
@@ -1065,7 +1107,21 @@ func drainPrintStream(ch <-chan tui.StreamEvent, outputFormat string, w, errW io
 				fmt.Fprintln(errW, "error:", ev.ErrMsg)
 			}
 		case "done":
-			result := map[string]any{"type": "result", "stop_reason": "end_turn"}
+			result, structured := map[string]any{"type": "result", "stop_reason": "end_turn"}, any(nil)
+			if resultFn != nil {
+				if v, ok := resultFn(); ok {
+					result["structured_output"], structured = v, v
+				} else {
+					result["stop_reason"] = "error"
+				}
+			}
+			if resultFn != nil && outputFormat == "text" {
+				if structured != nil {
+					out, _ := json.MarshalIndent(structured, "", "  ")
+					fmt.Fprintln(w, string(out))
+				}
+				continue
+			}
 			switch outputFormat {
 			case "stream-json":
 				enc := json.NewEncoder(w)

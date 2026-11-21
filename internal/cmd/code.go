@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -21,6 +22,7 @@ import (
 	pb "github.com/bluefunda/bluefunda-ai/api/proto/bff"
 	"github.com/bluefunda/bluefunda-ai/internal/app"
 	"github.com/bluefunda/bluefunda-ai/internal/audit"
+	"github.com/bluefunda/bluefunda-ai/internal/checkpoint"
 	"github.com/bluefunda/bluefunda-ai/internal/config"
 	caigrpc "github.com/bluefunda/bluefunda-ai/internal/grpc"
 	"github.com/bluefunda/bluefunda-ai/internal/hooks"
@@ -53,7 +55,15 @@ var (
 	// settings-file rules using the same pattern syntax.
 	codeAllowedTools    []string
 	codeDisallowedTools []string
-	codeRetryMode       bool // set by `bai chat retry <id>`: derive the prompt
+	// codeInputFormat is --input-format: "text" (a prompt) or "stream-json"
+	// (one JSON user message per line on stdin). codeJSONSchema is
+	// --json-schema: the final answer must be JSON matching it.
+	codeInputFormat string
+	codeJSONSchema  string
+	// codeTools limits the session to these tools (--tools, #408). Empty
+	// means every tool. task subagents of a restricted type run with it.
+	codeTools     []string
+	codeRetryMode bool // set by `bai chat retry <id>`: derive the prompt
 	// from the last turn in the resumed session instead of requiring one on
 	// the command line.
 )
@@ -64,6 +74,10 @@ var (
 var (
 	sessionSlashCommands []tui.SlashCommand
 	sessionDeny          []string
+
+	// codeMaxTurnsSet records whether --max-turns was passed, so an
+	// interactive session without it runs with no step limit.
+	codeMaxTurnsSet bool
 )
 
 // defaultMaxTurnsFlag is the --max-turns default, shared by both flag
@@ -86,6 +100,15 @@ func resolveMaxTurns(flagValue, projectMaxTurns int) int {
 	return flagValue
 }
 
+// interactiveMaxTurns returns the step limit for an interactive session:
+// none (0) unless the user asked for one.
+func interactiveMaxTurns(resolved int, requested bool) int {
+	if !requested {
+		return 0
+	}
+	return resolved
+}
+
 // codeCmd is a deprecated alias for the root 'bai' command.
 // It is hidden from help but preserved for backward compatibility.
 var codeCmd = &cobra.Command{
@@ -95,6 +118,7 @@ var codeCmd = &cobra.Command{
 	Args:   cobra.ArbitraryArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		fmt.Fprintln(os.Stderr, "Note: 'bai code' is now just 'bai'. This alias will be removed in a future release.")
+		codeMaxTurnsSet = cmd.Flags().Changed("max-turns")
 		return runAgenticSession(args)
 	},
 }
@@ -113,6 +137,75 @@ func init() {
 	codeCmd.Flags().StringVar(&codeResume, "resume", "", "Resume a previous session by ID")
 	codeCmd.Flags().BoolVarP(&codeContinue, "continue", "c", false, "Resume the most recent code session")
 	registerPermissionFlags(codeCmd.Flags(), &codeAllowedTools, &codeDisallowedTools)
+	registerToolsFlag(codeCmd.Flags(), &codeTools)
+	registerHeadlessFlags(codeCmd.Flags(), &codeInputFormat, &codeJSONSchema)
+}
+
+// registerToolsFlag adds --tools, which limits the session to the named
+// tools (Claude Code's --tools). The task tool passes it to subagents of a
+// restricted type such as explore (#408).
+func registerToolsFlag(fs *pflag.FlagSet, dst *[]string) {
+	fs.StringSliceVar(dst, "tools", nil,
+		`Only offer these tools to the model, e.g. "read_file,search_content" (default: all)`)
+}
+
+// restrictTools keeps only the tools named in only, and returns the names it
+// removed so they can also be denied: a model that calls a hidden tool anyway
+// is refused rather than obeyed.
+func restrictTools(schemas string, only []string) (string, []string, error) {
+	if len(only) == 0 || schemas == "" {
+		return schemas, nil, nil
+	}
+	keep := make(map[string]bool, len(only))
+	for _, n := range only {
+		if n = strings.TrimSpace(n); n != "" {
+			keep[n] = true
+		}
+	}
+	return tools.FilterSchemas(schemas, func(name string) bool { return keep[name] })
+}
+
+// loadAgentTypes registers the task tool's agent types: the built-ins, then
+// ~/.bai/agents/*.md, then <project>/.bai/agents/*.md (project wins). Files
+// that fail to parse are reported and skipped.
+func loadAgentTypes(errW io.Writer) {
+	var dirs []string
+	if d, err := app.HomePath("agents"); err == nil {
+		dirs = append(dirs, d)
+	}
+	root, err := worktree.GitRoot()
+	if err != nil {
+		root, _ = os.Getwd()
+	}
+	if root != "" {
+		dirs = append(dirs, filepath.Join(root, app.Current().Dir, "agents"))
+	}
+	types, errs := tools.LoadAgentTypes(dirs...)
+	for _, e := range errs {
+		fmt.Fprintf(errW, "[%s] skipping agent definition: %v\n", app.Current().Name, e)
+	}
+	tools.SetAgentTypes(types)
+}
+
+// loadSkills registers the session's skills: ~/.bai/skills/*/SKILL.md,
+// then <project>/.bai/skills/*/SKILL.md (project wins on a name clash).
+func loadSkills(errW io.Writer) {
+	var dirs []string
+	if d, err := app.HomePath("skills"); err == nil {
+		dirs = append(dirs, d)
+	}
+	root, err := worktree.GitRoot()
+	if err != nil {
+		root, _ = os.Getwd()
+	}
+	if root != "" {
+		dirs = append(dirs, filepath.Join(root, app.Current().Dir, "skills"))
+	}
+	skills, errs := tools.LoadSkills(dirs...)
+	for _, e := range errs {
+		fmt.Fprintf(errW, "[%s] skipping skill: %v\n", app.Current().Name, e)
+	}
+	tools.SetSkills(skills)
 }
 
 // registerPermissionFlags adds --allowed-tools / --disallowed-tools to fs,
@@ -260,8 +353,10 @@ func runAgenticSession(args []string) error {
 	}
 
 	// Apply project-level max_turns override if the flag wasn't set explicitly.
+	maxTurnsRequested := codeMaxTurnsSet
 	if projCfgEarly := config.FindProjectConfig("."); projCfgEarly != nil {
 		codeMaxTurns = resolveMaxTurns(codeMaxTurns, projCfgEarly.MaxTurns)
+		maxTurnsRequested = maxTurnsRequested || projCfgEarly.MaxTurns > 0
 	}
 
 	// Resolve effective context token limit: CLI flag > BAI_MAX_CONTEXT_TOKENS > default.
@@ -289,6 +384,8 @@ func runAgenticSession(args []string) error {
 
 	var toolSchemas string
 	if !codeNoTools {
+		loadAgentTypes(os.Stderr)
+		loadSkills(os.Stderr)
 		var err error
 		toolSchemas, err = tools.LocalToolSchemas()
 		if err != nil {
@@ -321,13 +418,27 @@ func runAgenticSession(args []string) error {
 	// --- Permission policy (#123) ---
 	// Load allow/deny lists from the project config (empty = no restrictions).
 	var permAllow, permDeny []string
+	// permSources records where each rule came from, for /permissions.
+	var permSources []ruleSource
 	if projCfg != nil {
 		permAllow = projCfg.Permissions.Allow
 		permDeny = projCfg.Permissions.Deny
+		permSources = append(permSources, ruleSource{app.Current().Dir + "/settings.yaml", permAllow, permDeny})
+	}
+	// User-wide rules from ~/.bai/settings.yaml apply in every directory.
+	if us, _, err := config.LoadUserSettings(); err != nil {
+		return fmt.Errorf("user settings: %w", err)
+	} else {
+		permAllow = mergePermissionRules(permAllow, us.Permissions.Allow)
+		permDeny = mergePermissionRules(permDeny, us.Permissions.Deny)
+		permSources = append(permSources, ruleSource{"~/" + app.Current().Dir + "/settings.yaml", us.Permissions.Allow, us.Permissions.Deny})
 	}
 	permDeny = mergePermissionRules(permDeny, sessionDeny)
 	permAllow = mergePermissionRules(permAllow, codeAllowedTools)
 	permDeny = mergePermissionRules(permDeny, codeDisallowedTools)
+	permSources = append(permSources,
+		ruleSource{"built in to " + app.Current().Name, nil, sessionDeny},
+		ruleSource{"--allowed-tools / --disallowed-tools", codeAllowedTools, codeDisallowedTools})
 
 	// --- Personal, local "always allow" rules + workspace trust gate (#331) ---
 	// .bai/settings.local.yaml is gitignored and holds per-developer rules
@@ -350,6 +461,7 @@ func runAgenticSession(args []string) error {
 		if localCfg.Trusted {
 			permAllow = append(permAllow, localCfg.Permissions.Allow...)
 			permDeny = append(permDeny, localCfg.Permissions.Deny...)
+			permSources = append(permSources, ruleSource{app.Current().Dir + "/settings.local.yaml", localCfg.Permissions.Allow, localCfg.Permissions.Deny})
 		}
 	}
 	// task subagents run with --auto, so the deny list is their only
@@ -375,6 +487,17 @@ func runAgenticSession(args []string) error {
 		for _, p := range pluginMgr.All() {
 			fmt.Printf("[bai] plugin %s: loaded (%s)\n", p.Manifest.Name, p.SourcePath)
 		}
+	}
+
+	// --- Tool restriction (--tools, #408) ---
+	// Applied after MCP and plugin tools are merged so it covers them too.
+	if filtered, dropped, err := restrictTools(toolSchemas, codeTools); err != nil {
+		return fmt.Errorf("--tools: %w", err)
+	} else if len(dropped) > 0 {
+		toolSchemas = filtered
+		permDeny = append(permDeny, dropped...)
+		permSources = append(permSources, ruleSource{"--tools (hidden tools)", nil, dropped})
+		tools.SetTaskDisallowedTools(permDeny)
 	}
 
 	// --- Session persistence (#82) ---
@@ -462,14 +585,17 @@ func runAgenticSession(args []string) error {
 
 	// --- Headless print mode (#77) ---
 	if codePrint || !isTerminal() {
-		if initialPrompt == "" {
+		if err := checkPrintFormats(codeInputFormat, codeOutputFormat, initialPrompt); err != nil {
+			return err
+		}
+		if initialPrompt == "" && codeInputFormat != "stream-json" {
 			b, err := io.ReadAll(os.Stdin)
 			if err != nil {
 				return fmt.Errorf("read stdin: %w", err)
 			}
 			initialPrompt = strings.TrimSpace(string(b))
 		}
-		if initialPrompt == "" {
+		if initialPrompt == "" && codeInputFormat != "stream-json" {
 			return fmt.Errorf("prompt required in --print mode (pass as argument or pipe via stdin)")
 		}
 		return runCodePrint(conn, cfg, sessionID, model, toolSchemas, initialPrompt, history,
@@ -488,9 +614,23 @@ func runAgenticSession(args []string) error {
 	autoApplyState := codeAutoApply
 	planModeState := codePlanMode
 	toolSchemasState := toolSchemas
-	maxTurnsState := codeMaxTurns
+	// Interactive sessions have no step limit unless one was asked for
+	// (--max-turns or the project's max_turns), as in Claude Code: the user
+	// is watching and can interrupt. --print keeps the default as a guard.
+	maxTurnsState := interactiveMaxTurns(codeMaxTurns, maxTurnsRequested)
 	turns := 0
 	isFirstTurn := true
+	var turnMu sync.Mutex
+	// File checkpoints for /rewind (Esc Esc).
+	checkpoints := checkpoint.New()
+	sessionCheckpoints = checkpoints
+	defer func() { sessionCheckpoints = nil }()
+	// pendingShell holds "!" commands the user ran since the last message,
+	// with their output; they go to the model ahead of the next message.
+	var (
+		pendingMu    sync.Mutex
+		pendingShell []string
+	)
 
 	submitFn := func(cid, mdl, input string, isNew bool) <-chan tui.StreamEvent {
 		if conn.TS.NearExpiry(2 * time.Minute) {
@@ -511,6 +651,10 @@ func runAgenticSession(args []string) error {
 
 		go func() {
 			defer close(ch)
+			// Held for the whole turn so /compact can't rewrite history
+			// under a running turn.
+			turnMu.Lock()
+			defer turnMu.Unlock()
 			// user-prompt-submit hooks (#407) run here, off the TUI's update
 			// loop, since a script may take up to the hook timeout.
 			userMsg, blocked := applyPromptHooks(hookRunner, input)
@@ -519,6 +663,14 @@ func runAgenticSession(args []string) error {
 				ch <- tui.StreamEvent{Kind: "done"}
 				return
 			}
+			userMsg = expandMentions(userMsg)
+			pendingMu.Lock()
+			if len(pendingShell) > 0 {
+				userMsg = strings.Join(pendingShell, "\n\n") + "\n\n" + userMsg
+				pendingShell = nil
+			}
+			pendingMu.Unlock()
+			checkpoints.Begin(input, userMsg, len(history))
 			history = append(history, codeMessage{Role: "user", Content: userMsg})
 			newHistory, loopErr := agenticLoopTUI(
 				conn, cfg, cid, mdl, currentSchemas,
@@ -560,18 +712,79 @@ func runAgenticSession(args []string) error {
 		return submitFn(chatID, useModel, prompt, false), prompt, nil
 	}
 
+	compactCmd := compactCommand(&turnMu, func(focus string) (string, error) {
+		before := estimateTokens(history)
+		if lastUserIndex(history) < 0 {
+			return "Nothing to compact yet.", nil
+		}
+		compacted, err := compactHistory(conn, chatID, model, history, focus, 0)
+		if err != nil {
+			return "", err
+		}
+		history = compacted
+		session.Save(sessPath, toSessionMsgs(history)) //nolint:errcheck
+		return fmt.Sprintf("Compacted the conversation into a summary: ~%s → ~%s tokens.",
+			humanTokens(before), humanTokens(estimateTokens(history))), nil
+	})
+
 	tuiCfg := tui.SessionConfig{
-		ChatID:             chatID,
-		Model:              model,
-		IsCode:             true,
-		WorkDir:            workDir,
-		Version:            formatVersion(Version),
-		AutoApply:          codeAutoApply,
-		PlanMode:           codePlanMode,
-		InitialPrompt:      initialPrompt,
-		RepoName:           gitRepoName(),
-		CustomCommands:     append(loadCustomSlashCommands("."), sessionSlashCommands...),
-		RetryFn:            retryFn,
+		ChatID:        chatID,
+		Model:         model,
+		IsCode:        true,
+		WorkDir:       workDir,
+		Version:       formatVersion(Version),
+		AutoApply:     codeAutoApply,
+		PlanMode:      codePlanMode,
+		InitialPrompt: initialPrompt,
+		RepoName:      gitRepoName(),
+		// First wins on a name clash: the user's .bai/commands override
+		// the built-in commands.
+		CustomCommands: mergeSlashCommands(loadCustomSlashCommands("."), sessionSlashCommands, promptCommands(),
+			[]tui.SlashCommand{permissionsCommand(permSources, sessionAllow), agentsCommand(), todosCommand(), skillsCommand(), compactCmd},
+			skillCommands(tools.Skills())),
+		RetryFn: retryFn,
+		FilesFn: mentionCandidates,
+		RewindPointsFn: func() []tui.RewindPoint {
+			locked := turnMu.TryLock()
+			if locked {
+				defer turnMu.Unlock()
+			}
+			var out []tui.RewindPoint
+			for _, p := range checkpoints.Points() {
+				out = append(out, tui.RewindPoint{Turn: p.Turn, Prompt: p.Prompt, At: p.At, Files: p.Files,
+					CanChat: locked && conversationAt(history, p)})
+			}
+			return out
+		},
+		RewindFn: func(turn int, code, chat bool) (string, error) {
+			if !turnMu.TryLock() {
+				return "", errTurnRunning
+			}
+			defer turnMu.Unlock()
+			return rewind(checkpoints, &history, turn, code, chat, func() {
+				session.Save(sessPath, toSessionMsgs(history)) //nolint:errcheck
+			})
+		},
+		ShellFn: func(command string) (string, error) {
+			out, err := tools.Bash(command)
+			if err != nil {
+				return "", err
+			}
+			out = tools.CapOutput(out, tools.MaxOutputChars)
+			pendingMu.Lock()
+			pendingShell = append(pendingShell, shellContext(command, out))
+			pendingMu.Unlock()
+			return out, nil
+		},
+		StatusFn: func() []string {
+			ctxLine := "Context:    a turn is running"
+			if turnMu.TryLock() {
+				ctxLine = fmt.Sprintf("Context:    ~%s tokens (compacts at ~%s; /compact to do it now)",
+					humanTokens(estimateTokens(history)), humanTokens(maxContextTokens))
+				turnMu.Unlock()
+			}
+			return statusLines(ctxLine, permAllow, permDeny, mcpMgr.Status())
+		},
 		DisableUpdateCheck: !cfg.UpdateCheckEnabled(),
 		AccountFn: func() (*tui.AccountInfo, error) {
 			ctx, cancel := caigrpc.ContextWithTimeout()
@@ -633,9 +846,14 @@ func runAgenticSession(args []string) error {
 		SetAutoApplyFn: func(enabled bool) {
 			autoApplyState = enabled
 		},
+		MaxTurns: maxTurnsState,
+		SetMaxTurnsFn: func(n int) {
+			maxTurnsState = n
+		},
 		SetPlanModeFn: func(enabled bool) {
 			planModeState = enabled
 		},
+		SetAcceptEditsFn: sessionAllow.setAcceptEdits,
 		SetCodeModeFn: func(enabled bool) {
 			if enabled {
 				toolSchemasState = toolSchemas // restore full tool schemas
@@ -716,47 +934,69 @@ func runCodePrint(
 	pluginMgr *plugins.Manager,
 	p *ui.Printer,
 ) error {
-	userMsg, blocked := applyPromptHooks(hookRunner, prompt)
-	if blocked != "" {
-		// Close the session the audit log and session-end hooks saw start.
-		auditLog.LogSessionEnd(0, "blocked")
-		hookRunner.SessionEnd(0, "blocked")
-		ch := make(chan tui.StreamEvent, 2)
-		ch <- tui.StreamEvent{Kind: "error", ErrMsg: blocked}
-		ch <- tui.StreamEvent{Kind: "done"}
-		close(ch)
-		if exitCode := drainPrintStream(ch, outputFormat, os.Stdout, os.Stderr); exitCode != 0 {
-			os.Exit(exitCode)
-		}
-		return nil
+	schema, err := loadJSONSchema(codeJSONSchema)
+	if err != nil {
+		return err
 	}
-	history = append(history, codeMessage{Role: "user", Content: userMsg})
-
-	ch := make(chan tui.StreamEvent, 128)
-	go func() {
-		defer close(ch)
-		newHistory, loopErr := agenticLoopTUI(
+	// loop runs the agentic loop for history, the last message of which is
+	// the user's.
+	first := true
+	loop := func(h []codeMessage, ch chan<- tui.StreamEvent) ([]codeMessage, error) {
+		isNew := first
+		first = false
+		return agenticLoopTUI(
 			conn, cfg, chatID, model, toolSchemas,
-			history, true, allow, deny, autoApply, planMode, sessionAllow,
+			h, isNew, allow, deny, autoApply, planMode, sessionAllow,
 			maxTurns, maxContextTokens, maxBudgetUSD, sessPath, auditLog, hookRunner, mcpMgr, pluginMgr, p, ch,
 		)
-		session.Save(sessPath, toSessionMsgs(newHistory)) //nolint:errcheck
+	}
 
-		// A --print invocation is exactly one turn. auditLog.LogSessionEnd was
-		// previously never called in this path (TUI-only) — fixed here since
-		// the hook needs the same turns/stopReason data anyway.
-		stopReason := "end_turn"
-		if loopErr != nil {
-			stopReason = "error"
-			ch <- tui.StreamEvent{Kind: "error", ErrMsg: ui.RewriteError(loopErr)}
+	turns, failed := 0, false
+	// turn runs one user message and prints its output, ending with a
+	// result line (or object).
+	turn := func(prompt string) {
+		var structured any
+		ch := make(chan tui.StreamEvent, 128)
+		go func() {
+			defer close(ch)
+			userMsg, blocked := applyPromptHooks(hookRunner, prompt)
+			if blocked != "" {
+				ch <- tui.StreamEvent{Kind: "error", ErrMsg: blocked}
+				ch <- tui.StreamEvent{Kind: "done"}
+				return
+			}
+			turns++
+			var loopErr error
+			history, structured, loopErr = runPrintTurn(history, userMsg, schema, ch, loop)
+			session.Save(sessPath, toSessionMsgs(history)) //nolint:errcheck
+			if loopErr != nil {
+				ch <- tui.StreamEvent{Kind: "error", ErrMsg: ui.RewriteError(loopErr)}
+			}
+			ch <- tui.StreamEvent{Kind: "done"}
+		}()
+		var result func() (any, bool)
+		if schema != nil {
+			result = func() (any, bool) { return structured, structured != nil }
 		}
-		auditLog.LogSessionEnd(1, stopReason)
-		hookRunner.SessionEnd(1, stopReason)
-		ch <- tui.StreamEvent{Kind: "done"}
-	}()
+		if drainPrintStreamWith(ch, outputFormat, os.Stdout, os.Stderr, result) != 0 {
+			failed = true
+		}
+	}
 
-	if exitCode := drainPrintStream(ch, outputFormat, os.Stdout, os.Stderr); exitCode != 0 {
-		os.Exit(exitCode)
+	if codeInputFormat == "stream-json" {
+		readStreamJSONInput(os.Stdin, os.Stdout, turn)
+	} else {
+		turn(prompt)
+	}
+
+	stopReason := "end_turn"
+	if failed {
+		stopReason = "error"
+	}
+	auditLog.LogSessionEnd(turns, stopReason)
+	hookRunner.SessionEnd(turns, stopReason)
+	if failed {
+		os.Exit(1)
 	}
 	return nil
 }
@@ -801,12 +1041,23 @@ func stripPromptContext(msg string) string {
 // Extracted from runCodePrint so the formatting logic can be unit-tested
 // independently of the agentic loop and gRPC stack.
 func drainPrintStream(ch <-chan tui.StreamEvent, outputFormat string, w, errW io.Writer) int {
+	return drainPrintStreamWith(ch, outputFormat, w, errW, nil)
+}
+
+// drainPrintStreamWith is drainPrintStream for a --json-schema run: result
+// returns the validated answer when the turn is done, and it is reported as
+// structured_output (json, stream-json) or printed alone (text, where the
+// model's own text is not).
+func drainPrintStreamWith(ch <-chan tui.StreamEvent, outputFormat string, w, errW io.Writer, resultFn func() (any, bool)) int {
 	var textBuf strings.Builder
 	exitCode := 0
 
 	for ev := range ch {
 		switch ev.Kind {
 		case "chunk":
+			if resultFn != nil && outputFormat == "text" {
+				continue // only the validated JSON is printed
+			}
 			switch outputFormat {
 			case "stream-json":
 				enc := json.NewEncoder(w)
@@ -856,7 +1107,21 @@ func drainPrintStream(ch <-chan tui.StreamEvent, outputFormat string, w, errW io
 				fmt.Fprintln(errW, "error:", ev.ErrMsg)
 			}
 		case "done":
-			result := map[string]any{"type": "result", "stop_reason": "end_turn"}
+			result, structured := map[string]any{"type": "result", "stop_reason": "end_turn"}, any(nil)
+			if resultFn != nil {
+				if v, ok := resultFn(); ok {
+					result["structured_output"], structured = v, v
+				} else {
+					result["stop_reason"] = "error"
+				}
+			}
+			if resultFn != nil && outputFormat == "text" {
+				if structured != nil {
+					out, _ := json.MarshalIndent(structured, "", "  ")
+					fmt.Fprintln(w, string(out))
+				}
+				continue
+			}
 			switch outputFormat {
 			case "stream-json":
 				enc := json.NewEncoder(w)
@@ -952,9 +1217,6 @@ func agenticLoopTUI(
 	p *ui.Printer,
 	ch chan<- tui.StreamEvent,
 ) ([]codeMessage, error) {
-	if maxTurns <= 0 {
-		maxTurns = 50
-	}
 	if maxContextTokens <= 0 {
 		maxContextTokens = defaultCompactionThreshold
 	}
@@ -983,7 +1245,8 @@ func agenticLoopTUI(
 	var lastPromptTokens int32   // prompt token count from the most recent iteration
 	var estimatedCostUSD float64 // cumulative estimated cost for this session turn
 
-	for iteration := 0; iteration < maxTurns; iteration++ {
+	// maxTurns <= 0 means no limit.
+	for iteration := 0; maxTurns <= 0 || iteration < maxTurns; iteration++ {
 		// Compact context when the client-side estimate or server-reported token count
 		// exceeds the configured limit. Client-side estimate fires even on iteration 0
 		// (e.g. resumed history already large). Server count is a secondary signal.
@@ -1001,7 +1264,7 @@ func agenticLoopTUI(
 					"\n⚡ Context at ~%dk tokens — compacting history...\n",
 					estTokens/1000,
 				)}
-				if compacted, compactErr := compactHistory(conn, chatID, model, history); compactErr == nil {
+				if compacted, compactErr := compactHistory(conn, chatID, model, history, "", 4); compactErr == nil {
 					history = compacted
 					lastPromptTokens = 0
 					session.Save(sessPath, toSessionMsgs(history)) //nolint:errcheck
@@ -1082,8 +1345,8 @@ func agenticLoopTUI(
 					}
 					return history, fmt.Errorf(
 						"context window limit hit %d times for %s (est. %dk tokens) — "+
-							"try a model with a larger context window or use --max-context-tokens",
-						maxContextRetries, mdl, estimateTokens(history)/1000,
+							"try a model with a larger context window or use --max-context-tokens (last error: %v)",
+						maxContextRetries, mdl, estimateTokens(history)/1000, err,
 					)
 				}
 				ch <- tui.StreamEvent{Kind: "chunk", Chunk: "\n⚠ Context too large — dropping older messages and retrying...\n"}
@@ -1157,18 +1420,19 @@ func agenticLoopTUI(
 				Content:    r.result,
 				ToolCallID: tc.ID,
 			})
-			if r.err != nil {
-				ch <- tui.StreamEvent{
-					Kind:     "tool_exec",
-					ToolName: tc.Name,
-					Status:   "error",
-					Summary:  r.err.Error(),
-				}
-			}
+			// Failures were already reported by executeWithApprovalTUI: a
+			// second report would mark the next call of the tool as failed.
 		}
 	}
 
-	ch <- tui.StreamEvent{Kind: "chunk", Chunk: fmt.Sprintf("\n⚠  Reached --max-turns limit (%d). Use --max-turns N to increase.\n", maxTurns)}
+	// Not an error: the work so far is in history, so the user can resume.
+	// The notice is rendered as Markdown, which would drop a "<n>"
+	// placeholder as an HTML tag: suggest a concrete value in a code span.
+	hint := fmt.Sprintf("Type `continue` to keep going, or `/max-turns %d` to raise the limit for this session.", maxTurns*2)
+	if codePrint {
+		hint = "Rerun with --max-turns N (or --continue) to keep going."
+	}
+	ch <- tui.StreamEvent{Kind: "chunk", Chunk: fmt.Sprintf("\n\n⚠  Paused after %d steps (max-turns limit). %s\n", maxTurns, hint)}
 	return history, nil
 }
 
@@ -1350,23 +1614,6 @@ func estimateTokens(history []codeMessage) int {
 	return chars / 4
 }
 
-// dropOldestTurns removes non-system messages from the front of history until
-// estimateTokens is below targetTokens. System messages are always preserved.
-func dropOldestTurns(history []codeMessage, targetTokens int) []codeMessage {
-	var sysMsgs, convo []codeMessage
-	for _, m := range history {
-		if m.Role == "system" {
-			sysMsgs = append(sysMsgs, m)
-		} else {
-			convo = append(convo, m)
-		}
-	}
-	for len(convo) > 0 && estimateTokens(append(sysMsgs, convo...)) > targetTokens {
-		convo = convo[1:]
-	}
-	return append(sysMsgs, convo...)
-}
-
 // modelPrice holds approximate per-million-token pricing for one model.
 type modelPrice struct {
 	inputPerMToken  float64 // USD per 1M prompt tokens
@@ -1420,15 +1667,25 @@ const compactionSafeTokens = 50_000
 // compactHistory sends the full history to the LLM with a summarisation prompt
 // (no tools, single turn) and returns a trimmed history containing only system
 // messages, the summary, and the last four messages (two exchanges).
+//
+// focus adds the user's instructions for what the summary should keep
+// (/compact <focus>). tail is how many recent assistant rounds to keep
+// verbatim after the summary: auto-compaction mid-turn keeps a few so the
+// turn can go on; a manual /compact keeps none, as in Claude Code.
 func compactHistory(
 	conn *caigrpc.Conn,
 	chatID, model string,
 	history []codeMessage,
+	focus string,
+	tail int,
 ) ([]codeMessage, error) {
-	const summaryPrompt = "Summarise the conversation so far in a single assistant message. " +
+	summaryPrompt := "Summarise the conversation so far in a single assistant message. " +
 		"Include: the overall goal, key decisions, every file created or modified (with paths), " +
 		"tool results that matter, and any open questions. Be concise but complete enough that " +
 		"the session can continue without the original messages."
+	if focus = strings.TrimSpace(focus); focus != "" {
+		summaryPrompt += "\n\nThe user asked the summary to focus on: " + focus
+	}
 
 	// Pre-truncate so the compaction request itself stays below server size limits.
 	// We keep the most recent messages (most context-relevant) and system messages.
@@ -1492,16 +1749,9 @@ summarised:
 		Role:    "system",
 		Content: "[Conversation summary]\n" + summary,
 	})
-	tail := history
-	if len(tail) > 4 {
-		tail = tail[len(tail)-4:]
+	if tail > 0 {
+		compact = append(compact, recentTail(history, tail)...)
 	}
-	// Drop leading non-user messages from the tail so the first turn after
-	// the summary is always a user turn, preserving proper alternation.
-	for len(tail) > 0 && tail[0].Role != "user" {
-		tail = tail[1:]
-	}
-	compact = append(compact, tail...)
 	return compact, nil
 }
 
@@ -1511,50 +1761,134 @@ type toolResult struct {
 	err    error
 }
 
-// sessionAllowSet tracks exact tool-name+arguments pairs approved via "always
-// allow for this session" (the 'a' key in the approval dialog). Deliberately
-// separate from the glob-based permissions.allow system (tools.CheckPermissions):
-// exact match means a command's own literal '*'/'?' characters are never
-// misinterpreted as wildcards, and approving one specific command never
-// silently broadens to riskier variants of it. A nil *sessionAllowSet behaves
-// as an always-empty set (contains = false) and a no-op add, so callers that
-// don't need this feature (e.g. tests) can pass nil safely.
+// sessionAllowSet holds the session's "don't ask again" approvals (option 2
+// in the permission dialog). Each approval is remembered at the broadest
+// scope that is still safe to state plainly in the dialog:
+//
+//   - bash: the command prefix of each segment that needed approval ("gh api",
+//     "python3"), matched segment by segment, so approving "gh api x" covers
+//     later "gh api y" calls but never "gh api y; rm -rf ~";
+//   - file-editing tools: all of them, like Claude Code's accept-edits mode
+//     (paths are still confined to the workspace by the tools themselves);
+//   - any other tool (MCP, plugin, task, memory): that tool.
+//
+// A bash command that can't be generalised safely (command substitution,
+// file redirection, …) falls back to its exact text. A nil *sessionAllowSet
+// is an always-empty set with a no-op add, so tests can pass nil.
 type sessionAllowSet struct {
-	mu    sync.Mutex
-	exact map[string]bool // key: toolName + "\x00" + argsJSON
+	mu           sync.Mutex
+	exact        map[string]bool // toolName + "\x00" + argsJSON
+	tools        map[string]bool // whole tools
+	bashPrefixes []string
+	// acceptEdits approves every file edit: Claude Code's accept-edits
+	// mode, switched with Shift+Tab.
+	acceptEdits bool
 
-	// persistPath, when non-empty, opts this set into also writing "always
-	// allow" approvals to the local config at this path (#331) — set only
-	// when the project has explicitly enabled permissions.persist_always_allow
-	// and the workspace trust gate has been satisfied. Session-scoped
-	// behavior (the exact map above) is unconditional and unchanged either way.
+	// persistPath, when non-empty, opts this set into also writing approvals
+	// to the local config at this path (#331) — set only when the project
+	// enabled permissions.persist_always_allow and the workspace is trusted.
 	persistPath string
 }
 
+// editTools are approved together by "allow all edits".
+var editTools = []string{"write_file", "edit_file", "patch_file", "edit_notebook"}
+
 func newSessionAllowSet() *sessionAllowSet {
-	return &sessionAllowSet{exact: make(map[string]bool)}
+	return &sessionAllowSet{exact: make(map[string]bool), tools: make(map[string]bool)}
+}
+
+// alwaysScope works out what a "don't ask again" approval of this call
+// covers: the bash prefixes, the tools, and the label shown in the dialog.
+// Empty prefixes and tools mean "this exact call".
+func alwaysScope(toolName, argsJSON string) (prefixes, toolNames []string, label string) {
+	switch {
+	case toolName == "bash":
+		prefixes = tools.SuggestBashPrefixes(tools.ExtractPrimaryArg("bash", argsJSON))
+		if len(prefixes) == 0 {
+			return nil, nil, ""
+		}
+		quoted := make([]string, len(prefixes))
+		for i, p := range prefixes {
+			quoted[i] = "`" + p + "`"
+		}
+		return prefixes, nil, strings.Join(quoted, ", ") + " commands"
+	case slices.Contains(editTools, toolName):
+		return nil, editTools, "file edits"
+	default:
+		return nil, []string{toolName}, toolName
+	}
+}
+
+// describe lists the session's approvals as rules, for /permissions.
+func (s *sessionAllowSet) describe() []string {
+	if s == nil {
+		return nil
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var out []string
+	for _, p := range s.bashPrefixes {
+		out = append(out, "bash:"+p+" *")
+	}
+	for t := range s.tools {
+		out = append(out, t)
+	}
+	for k := range s.exact {
+		name, args, _ := strings.Cut(k, "\x00")
+		if a := tools.ExtractPrimaryArg(name, args); a != "" {
+			args = a
+		}
+		out = append(out, name+" "+args+" (this exact call)")
+	}
+	slices.Sort(out[len(s.bashPrefixes):])
+	return out
 }
 
 func (s *sessionAllowSet) add(toolName, argsJSON string) {
 	if s == nil {
 		return
 	}
+	prefixes, toolNames, _ := alwaysScope(toolName, argsJSON)
 	s.mu.Lock()
-	s.exact[toolName+"\x00"+argsJSON] = true
+	switch {
+	case len(prefixes) > 0:
+		for _, p := range prefixes {
+			if !slices.Contains(s.bashPrefixes, p) {
+				s.bashPrefixes = append(s.bashPrefixes, p)
+			}
+		}
+	case len(toolNames) > 0:
+		for _, t := range toolNames {
+			s.tools[t] = true
+		}
+	default:
+		s.exact[toolName+"\x00"+argsJSON] = true
+	}
 	persistPath := s.persistPath
 	s.mu.Unlock()
 	if persistPath != "" {
-		persistAlwaysAllow(persistPath, toolName, argsJSON)
+		persistAlwaysAllow(persistPath, toolName, argsJSON, prefixes, toolNames)
 	}
 }
 
-// persistAlwaysAllow writes a literal "<tool>:<arg>" rule (or bare "<tool>"
-// when there's no meaningful argument) to the local config at path. If the
-// extracted argument contains '*' or '?', it's skipped silently — the glob
-// matcher in internal/tools/permissions.go has no escape syntax, so there is
-// no safe literal representation, and the approval simply stays session-only
-// as it would have before this feature existed.
-func persistAlwaysAllow(path, toolName, argsJSON string) {
+// persistAlwaysAllow writes the approval as permissions.allow rules in the
+// local config at path: "bash:<prefix> *" per bash prefix (matched per
+// segment by tools.CheckPermissions), a bare tool name per tool, or else a
+// literal "<tool>:<arg>" rule. A literal argument containing '*' or '?' is
+// skipped — the glob matcher has no escape syntax — and stays session-only.
+func persistAlwaysAllow(path, toolName, argsJSON string, prefixes, toolNames []string) {
+	switch {
+	case len(prefixes) > 0:
+		for _, p := range prefixes {
+			_ = config.AddLocalAllowRule(path, "bash:"+p+" *")
+		}
+		return
+	case len(toolNames) > 0:
+		for _, t := range toolNames {
+			_ = config.AddLocalAllowRule(path, t)
+		}
+		return
+	}
 	arg := tools.ExtractPrimaryArg(toolName, argsJSON)
 	if strings.ContainsAny(arg, "*?") {
 		return
@@ -1566,13 +1900,28 @@ func persistAlwaysAllow(path, toolName, argsJSON string) {
 	_ = config.AddLocalAllowRule(path, pattern)
 }
 
+// setAcceptEdits turns accept-edits mode on or off.
+func (s *sessionAllowSet) setAcceptEdits(on bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.acceptEdits = on
+}
+
 func (s *sessionAllowSet) contains(toolName, argsJSON string) bool {
 	if s == nil {
 		return false
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return s.exact[toolName+"\x00"+argsJSON]
+	if s.exact[toolName+"\x00"+argsJSON] || s.tools[toolName] {
+		return true
+	}
+	if s.acceptEdits && (slices.Contains(editTools, toolName) ||
+		toolName == "bash" && tools.BashCreatesOnly(tools.ExtractPrimaryArg("bash", argsJSON))) {
+		return true
+	}
+	return toolName == "bash" && len(s.bashPrefixes) > 0 &&
+		tools.BashAllowedByPrefixes(tools.ExtractPrimaryArg("bash", argsJSON), s.bashPrefixes)
 }
 
 // executeTools runs toolCalls sequentially or concurrently depending on whether
@@ -1682,11 +2031,16 @@ func executeWithApprovalTUI(
 	p *ui.Printer,
 	ch chan<- tui.StreamEvent,
 ) (string, error) {
+	if strings.TrimSpace(tc.Arguments) == "" {
+		tc.Arguments = "{}" // no-argument call sent as "" by some models
+	}
+
 	// --- Plan mode (hard policy — checked before hooks/permissions/--auto) ---
 	if planMode && isPlanModeBlocked(tc.Name, tc.Arguments) {
 		msg := fmt.Sprintf("📝 Blocked by plan mode (read-only): %s — type /plan to allow changes.", tc.Name)
 		auditLog.LogToolCall(tc.Name, tc.Arguments, false, false)
 		auditLog.LogToolResult(tc.Name, 0, false)
+		reportNotRun(ch, tc, "blocked by plan mode")
 		return msg, nil
 	}
 
@@ -1699,6 +2053,7 @@ func executeWithApprovalTUI(
 		}
 		auditLog.LogToolCall(tc.Name, tc.Arguments, false, false)
 		auditLog.LogToolResult(tc.Name, 0, false)
+		reportNotRun(ch, tc, "blocked by pre-tool hook")
 		return msg, nil
 	}
 	// Use modified input if hook rewrote it.
@@ -1718,6 +2073,7 @@ func executeWithApprovalTUI(
 	case tools.PermitDeny:
 		auditLog.LogToolCall(tc.Name, argsJSON, false, false)
 		auditLog.LogToolResult(tc.Name, 0, false)
+		reportNotRun(ch, tc, "blocked by permissions policy")
 		return fmt.Sprintf("Tool call blocked by permissions policy: %s", tc.Name), nil
 	case tools.PermitAuto:
 		effectiveAutoApply = true
@@ -1747,11 +2103,14 @@ func executeWithApprovalTUI(
 	approved := !needsApproval || effectiveAutoApply || sessionApproved
 	if needsApproval && !effectiveAutoApply && !sessionApproved {
 		replyCh := make(chan tui.ApprovalDecision, 1)
+		_, _, alwaysLabel := alwaysScope(tc.Name, argsJSON)
 		ch <- tui.StreamEvent{
-			Kind:     "approval",
-			ToolName: tc.Name,
-			ToolArgs: argsJSON,
-			ReplyCh:  replyCh,
+			Kind:        "approval",
+			ToolID:      tc.ID,
+			ToolName:    tc.Name,
+			ToolArgs:    argsJSON,
+			ReplyCh:     replyCh,
+			AlwaysLabel: alwaysLabel,
 		}
 		decision := <-replyCh
 		approved = decision.Approved
@@ -1762,8 +2121,10 @@ func executeWithApprovalTUI(
 			auditLog.LogToolCall(tc.Name, argsJSON, false, false)
 			auditLog.LogToolResult(tc.Name, 0, false)
 			if fb := strings.TrimSpace(decision.Feedback); fb != "" {
+				reportNotRun(ch, tc, "declined")
 				return "User declined to execute this tool and said what to do instead: " + fb, nil
 			}
+			reportNotRun(ch, tc, "declined")
 			return "User declined to execute this tool.", nil
 		}
 	}
@@ -1771,6 +2132,10 @@ func executeWithApprovalTUI(
 	auditLog.LogToolCall(tc.Name, argsJSON, approved, autoApproved)
 
 	// --- Execute ---
+	saveBeforeEdit(tc.Name, argsJSON)
+	// The row turns from queued to running (several calls from one round
+	// run one at a time).
+	ch <- tui.StreamEvent{Kind: "tool_start", ToolID: tc.ID, ToolName: tc.Name}
 	start := time.Now()
 	var result string
 	var execErr error
@@ -1780,7 +2145,11 @@ func executeWithApprovalTUI(
 	case plugins.IsPluginTool(tc.Name):
 		result, execErr = pluginMgr.Execute(context.Background(), tc.Name, argsJSON)
 	default:
-		result, execErr = tools.Execute(tc.Name, argsJSON)
+		// A task call streams its subagent's activity under its row.
+		ctx := tools.WithProgress(context.Background(), func(line string) {
+			ch <- tui.StreamEvent{Kind: "tool_progress", ToolID: tc.ID, ToolName: tc.Name, Summary: line}
+		})
+		result, execErr = tools.ExecuteContext(ctx, tc.Name, argsJSON)
 	}
 	elapsed := time.Since(start)
 	auditLog.LogToolResult(tc.Name, elapsed.Milliseconds(), execErr == nil)
@@ -1801,6 +2170,7 @@ func executeWithApprovalTUI(
 	}
 	ch <- tui.StreamEvent{
 		Kind:       "tool_exec",
+		ToolID:     tc.ID,
 		ToolName:   tc.Name,
 		Status:     status,
 		DurationMs: elapsed.Milliseconds(),
@@ -1808,9 +2178,15 @@ func executeWithApprovalTUI(
 	}
 
 	if execErr != nil {
-		return "Error: " + execErr.Error(), execErr
+		return "Error: " + tools.CapOutput(execErr.Error(), tools.MaxOutputChars), execErr
 	}
-	return result, nil
+	return tools.CapOutput(result, tools.MaxOutputChars), nil
+}
+
+// reportNotRun tells the UI a tool call ended without running, so its row
+// doesn't stay "running". Every call gets exactly one tool_exec event.
+func reportNotRun(ch chan<- tui.StreamEvent, tc ui.ToolCallEvent, why string) {
+	ch <- tui.StreamEvent{Kind: "tool_exec", ToolID: tc.ID, ToolName: tc.Name, Status: "error", Summary: why}
 }
 
 // buildCodeRequest constructs the gRPC ChatRequest for one agentic iteration.

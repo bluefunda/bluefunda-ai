@@ -15,7 +15,7 @@ import (
 func sendApprovalKey(t *testing.T, key string) ApprovalDecision {
 	t.Helper()
 	m := newTestModel("")
-	m.vpReady = true
+	m.ready = true
 	m.streamCh = make(chan StreamEvent)
 	m.streamStop = make(chan struct{})
 	replyCh := make(chan ApprovalDecision, 1)
@@ -79,7 +79,7 @@ func TestHandleApprovalKey_Esc(t *testing.T) {
 
 func TestHandleApprovalKey_CtrlC(t *testing.T) {
 	m := newTestModel("")
-	m.vpReady = true
+	m.ready = true
 	replyCh := make(chan ApprovalDecision, 1)
 	m.pendingApproval = &ApprovalRequestMsg{ToolName: "bash", Args: "{}", ReplyCh: replyCh}
 

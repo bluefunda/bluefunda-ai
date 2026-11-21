@@ -34,11 +34,17 @@ const (
 //  4. Empty allow+deny lists → PermitDefault (existing behaviour unchanged).
 func CheckPermissions(allow, deny []string, toolName, argumentsJSON string) PermissionAction {
 	for _, p := range deny {
-		if matchesPermission(p, toolName, argumentsJSON) {
+		if matchesPermission(p, toolName, argumentsJSON) || bashSegmentMatches(p, toolName, argumentsJSON) {
 			return PermitDeny
 		}
 	}
 	if len(allow) == 0 {
+		return PermitDefault
+	}
+	if toolName == "bash" {
+		if bashAllowedByRules(allow, argumentsJSON) {
+			return PermitAuto
+		}
 		return PermitDefault
 	}
 	for _, p := range allow {
@@ -47,6 +53,63 @@ func CheckPermissions(allow, deny []string, toolName, argumentsJSON string) Perm
 		}
 	}
 	return PermitDefault
+}
+
+// bashSegmentMatches reports whether a bash deny pattern matches any single
+// segment of a compound command, so "bash:rm *" also blocks "ls; rm -rf x".
+func bashSegmentMatches(pattern, toolName, argumentsJSON string) bool {
+	tool, glob, hasGlob := strings.Cut(pattern, ":")
+	if toolName != "bash" || tool != "bash" || !hasGlob {
+		return false
+	}
+	segs, _ := ShellSegments(ExtractPrimaryArg(toolName, argumentsJSON))
+	for _, s := range segs {
+		if globMatch(glob, s) {
+			return true
+		}
+	}
+	return false
+}
+
+// bashAllowedByRules reports whether allow rules cover a bash command: a bare
+// "bash" rule allows everything; otherwise every segment must be read-only or
+// match a "bash:<glob>" rule on its own. Matching the whole string would let
+// "git push *" approve "git push; rm -rf ~".
+func bashAllowedByRules(allow []string, argumentsJSON string) bool {
+	var globs []string
+	for _, p := range allow {
+		tool, glob, hasGlob := strings.Cut(p, ":")
+		if tool != "bash" {
+			continue
+		}
+		if !hasGlob {
+			return true
+		}
+		globs = append(globs, glob)
+	}
+	if len(globs) == 0 {
+		return false
+	}
+	segs, ok := ShellSegments(ExtractPrimaryArg("bash", argumentsJSON))
+	if !ok {
+		return false
+	}
+	for _, s := range segs {
+		if segmentReadOnly(s) {
+			continue
+		}
+		matched := false
+		for _, g := range globs {
+			if globMatch(g, s) {
+				matched = true
+				break
+			}
+		}
+		if !matched {
+			return false
+		}
+	}
+	return true
 }
 
 // matchesPermission tests whether pattern matches the given tool call.

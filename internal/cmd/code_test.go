@@ -54,7 +54,7 @@ func TestExecuteTools_ParallelUnderAutoApply(t *testing.T) {
 	mcpMgr := mcp.NewManager(context.Background(), nil)
 	pluginMgr := plugins.NewManager(t.TempDir())
 	printer := &ui.Printer{Out: io.Discard, Err: io.Discard}
-	ch := make(chan tui.StreamEvent, n)
+	ch := make(chan tui.StreamEvent, 2*n) // tool_start + tool_exec per call
 
 	start := time.Now()
 	results := executeTools(toolCalls, nil, nil, true, false, nil, auditLog, hookRunner, mcpMgr, pluginMgr, printer, ch)
@@ -227,5 +227,14 @@ func TestResolveMaxTurns(t *testing.T) {
 				t.Errorf("resolveMaxTurns(%d, %d) = %d, want %d", c.flagValue, c.projectMaxTurns, got, c.want)
 			}
 		})
+	}
+}
+
+func TestInteractiveMaxTurns(t *testing.T) {
+	if got := interactiveMaxTurns(defaultMaxTurnsFlag, false); got != 0 {
+		t.Errorf("no limit requested: got %d, want 0 (unlimited)", got)
+	}
+	if got := interactiveMaxTurns(30, true); got != 30 {
+		t.Errorf("--max-turns 30 requested: got %d", got)
 	}
 }

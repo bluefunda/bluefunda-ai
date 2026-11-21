@@ -17,7 +17,7 @@ func containsMessage(m Model, substr string) bool {
 
 func TestPlanSlashCommand_TogglesOnAndOff(t *testing.T) {
 	m := newTestModel("")
-	m.vpReady = true
+	m.ready = true
 	m.cfg.IsCode = true
 
 	var setCalls []bool
@@ -52,7 +52,7 @@ func TestPlanSlashCommand_TogglesOnAndOff(t *testing.T) {
 
 func TestPlanSlashCommand_UnavailableOutsideCodeSessions(t *testing.T) {
 	m := newTestModel("")
-	m.vpReady = true
+	m.ready = true
 	m.cfg.IsCode = false
 
 	m.textarea.SetValue("/plan")

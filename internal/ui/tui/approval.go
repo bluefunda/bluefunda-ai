@@ -49,12 +49,15 @@ func (m Model) previewLineBudget() int {
 	return max(1, min(approvalPreviewLines, avail))
 }
 
-func (c approvalChoice) label() string {
+func (c approvalChoice) label(alwaysScope string) string {
 	switch c {
 	case choiceYes:
 		return "Yes"
 	case choiceAlways:
-		return "Yes, and don't ask again for this exact call this session"
+		if alwaysScope == "" {
+			alwaysScope = "this exact call"
+		}
+		return "Yes, and don't ask again for " + alwaysScope + " this session"
 	case choiceNoFeedback:
 		return "No, and tell " + app.Current().DisplayName + " what to do differently"
 	}
@@ -137,15 +140,27 @@ func (m Model) answerApproval(d ApprovalDecision) (tea.Model, tea.Cmd) {
 	var note string
 	switch {
 	case d.Approved && d.AlwaysAllow:
-		note = "✓ " + name + " allowed (won't ask again for this exact call this session)"
+		scope := ap.AlwaysLabel
+		if scope == "" {
+			scope = "this exact call"
+		}
+		note = "✓ " + name + " allowed (won't ask again for " + scope + " this session)"
 	case d.Approved:
-		note = "✓ " + name + " allowed"
+		// Plain yes: the call's own row shows it running; no note needed.
 	case d.Feedback != "":
 		note = "✗ " + name + " declined: " + d.Feedback
 	default:
 		note = "✗ " + name + " declined"
 	}
-	m.messages = append(m.messages, newSystemMessage("  "+note))
+	if note != "" {
+		// Under the call's row, not as a message of its own: a message here
+		// would end the response and start a new one for the next events.
+		if i := m.streamingAssistant(); i >= 0 {
+			m.messages[i].addToolEvent(ToolEvent{Kind: ToolNote, ID: ap.ToolID, Name: name, Summary: note})
+		} else {
+			m.messages = append(m.messages, newSystemMessage("  "+note))
+		}
+	}
 
 	m.pendingApproval = nil
 	m.approvalIdx = 0
@@ -187,7 +202,7 @@ func (m Model) renderApproval() string {
 		b.WriteString(th.ToolDim.Render("Type what to do instead below  ·  Enter send  ·  Esc decline without a note"))
 	} else {
 		for c := approvalChoice(0); c < numApprovalChoices; c++ {
-			label := fmt.Sprintf("%d. %s", c+1, c.label())
+			label := fmt.Sprintf("%d. %s", c+1, c.label(ap.AlwaysLabel))
 			if c == m.approvalIdx {
 				b.WriteString(lipgloss.NewStyle().Foreground(th.AccentBold).Bold(true).Render("❯ " + label))
 			} else {

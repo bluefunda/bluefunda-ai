@@ -33,37 +33,95 @@ func update(m Model, msg tea.Msg) (Model, tea.Cmd) {
 	return nm.(Model), cmd
 }
 
-// ── Viewport rendering ────────────────────────────────────────────────────────
+// ── Scrollback rendering ──────────────────────────────────────────────────────
 
-// TestViewportRendered verifies that View() includes viewport content rather
-// than a clamped inline dump. The regression guard for the scrollback bug.
-func TestViewportRendered(t *testing.T) {
+// TestFinishedMessagesLeaveTheView verifies that finished messages are handed
+// to the terminal scrollback and no longer drawn by View, which keeps only
+// the live area (input, status, footer).
+func TestFinishedMessagesLeaveTheView(t *testing.T) {
 	m := newTestModel("")
-
-	// Inject several messages beyond what fits in one viewport page.
 	for i := range 30 {
 		m.messages = append(m.messages, newSystemMessage(fmt.Sprintf("message %d", i)))
 	}
-	m.refreshViewport()
-
+	m, cmd := update(m, scrollbackDoneMsg{}) // the welcome write finished
+	if cmd == nil || !m.printing {
+		t.Fatal("finished messages should produce a scrollback write")
+	}
+	for i, msg := range m.messages {
+		if !msg.printed {
+			t.Fatalf("message %d not printed", i)
+		}
+	}
 	view := m.View()
+	if strings.Contains(view, "message 5") {
+		t.Error("printed messages must not be redrawn by View")
+	}
+	if !strings.Contains(view, "BlueFunda AI") || !strings.Contains(view, "Enter send") {
+		t.Errorf("view should keep the status and footer lines:\n%s", view)
+	}
+	if n := strings.Count(view, "\n"); n > 10 {
+		t.Errorf("idle view has %d lines; want only the input and status area", n)
+	}
+}
 
-	// The header must be present.
-	if !strings.Contains(view, "BlueFunda AI") {
-		t.Error("view should contain the header")
+// TestStreamingMessageStaysLive checks that a streaming response, and
+// anything after it, stays in the view until it finishes, and that writes are
+// serialized: nothing new is printed until the previous write is done.
+func TestStreamingMessageStaysLive(t *testing.T) {
+	m := newTestModel("")
+	m, _ = update(m, scrollbackDoneMsg{}) // the welcome write finished
+	m.streaming = true
+	m.messages = append(m.messages, newAssistantMessage())
+	m.messages[len(m.messages)-1].Content = "LIVEANSWER"
+	m.messages = append(m.messages, newSystemMessage("AFTERNOTE"))
+
+	m, _ = update(m, scrollbackDoneMsg{})
+	if m.printing {
+		t.Fatal("nothing finished: no write expected")
+	}
+	view := m.View()
+	if !strings.Contains(view, "LIVEANSWER") || !strings.Contains(view, "AFTERNOTE") {
+		t.Fatalf("streaming message and the note after it should be live:\n%s", view)
 	}
 
-	// The footer must be present (cursor anchor check).
-	if !strings.Contains(view, "Enter send") {
-		t.Error("view should contain the footer hint")
+	m, _ = update(m, StreamEvent{Kind: "done"})
+	if !m.printing || !m.messages[1].printed || !m.messages[2].printed {
+		t.Fatal("finished response and the note after it should be printed")
+	}
+	if strings.Contains(m.View(), "LIVEANSWER") {
+		t.Error("printed response must leave the view")
 	}
 
-	// The viewport is embedded; the view must not contain ALL 30 messages
-	// at once (that would indicate the viewport clamp is missing and content
-	// is overflowing the terminal height).
-	lineCount := strings.Count(view, "\n")
-	if lineCount > 50 {
-		t.Errorf("view has %d newlines — looks like content is not clamped by viewport", lineCount)
+	// A message finishing while a write is in flight waits for it.
+	m.messages = append(m.messages, newSystemMessage("QUEUED"))
+	m, _ = update(m, tickMsg{})
+	if m.messages[3].printed {
+		t.Fatal("second write must wait for the first")
+	}
+	m, cmd := update(m, scrollbackDoneMsg{})
+	if cmd == nil || !m.messages[3].printed {
+		t.Fatal("queued message should be printed once the first write is done")
+	}
+}
+
+// TestInterruptedTurnDoesNotBlockScrollback: Ctrl+C leaves the response
+// unfinalized; it must still reach scrollback, and so must what follows.
+func TestInterruptedTurnDoesNotBlockScrollback(t *testing.T) {
+	m := newTestModel("")
+	m, _ = update(m, scrollbackDoneMsg{})
+	m.streaming = true
+	m.streamStop = make(chan struct{})
+	m.streamCh = make(chan StreamEvent)
+	m.messages = append(m.messages, newAssistantMessage())
+	m.messages[1].Content = "partial"
+
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyCtrlC})
+	if m.streaming || !m.messages[1].printed || m.messages[1].Streaming {
+		t.Fatalf("interrupted response should be finalized and printed (streaming=%v printed=%v)",
+			m.messages[1].Streaming, m.messages[1].printed)
+	}
+	if last := m.messages[len(m.messages)-1]; last.Content != "Interrupted." || !last.printed {
+		t.Error("the Interrupted notice should follow it into scrollback")
 	}
 }
 
@@ -71,20 +129,13 @@ func TestViewportRendered(t *testing.T) {
 // bounds even when the conversation is very long.
 func TestCursorNotTrappedAtBottom(t *testing.T) {
 	m := newTestModel("")
-
-	// Flood with 200 messages (simulates a long session).
 	for i := range 200 {
 		m.messages = append(m.messages, newAssistantMessage())
 		m.messages[len(m.messages)-1].Content = fmt.Sprintf("Response %d: this is some content to make it realistic.", i)
 		m.messages[len(m.messages)-1].Streaming = false
 	}
-	m.refreshViewport()
-
-	view := m.View()
-	lines := strings.Split(view, "\n")
-
-	// Terminal height is 24; the view must not exceed it with a significant margin.
-	if len(lines) > 30 {
+	m, _ = update(m, scrollbackDoneMsg{})
+	if lines := strings.Split(m.View(), "\n"); len(lines) > 24 {
 		t.Errorf("view has %d lines for a 24-line terminal — cursor would be off-screen", len(lines))
 	}
 }
@@ -106,7 +157,7 @@ func TestMessagesAccumulate(t *testing.T) {
 
 func TestStreamingChunksAppend(t *testing.T) {
 	m := newTestModel("")
-	m.vpReady = true
+	m.ready = true
 
 	// Simulate a streaming response.
 	m.streaming = true
@@ -134,7 +185,7 @@ func TestStreamingChunksAppend(t *testing.T) {
 
 func TestStreamingError(t *testing.T) {
 	m := newTestModel("")
-	m.vpReady = true
+	m.ready = true
 
 	m.streaming = true
 	m, _ = update(m, StreamEvent{Kind: "error", ErrMsg: "connection refused"})
@@ -155,7 +206,7 @@ func TestStreamingError(t *testing.T) {
 
 func TestLargeResponse(t *testing.T) {
 	m := newTestModel("")
-	m.vpReady = true
+	m.ready = true
 
 	// Build a response larger than 100 KB.
 	var sb strings.Builder
@@ -180,35 +231,8 @@ func TestLargeResponse(t *testing.T) {
 	// View must still be bounded even with huge content.
 	view := m.View()
 	lineCount := strings.Count(view, "\n")
-	if lineCount > 50 {
+	if lineCount >= 24 {
 		t.Errorf("view has %d lines for a 24-line terminal after large response", lineCount)
-	}
-}
-
-// ── Keyboard scrolling ────────────────────────────────────────────────────────
-
-func TestKeyboardScrolling(t *testing.T) {
-	m := newTestModel("")
-
-	// Load enough messages to make the viewport scrollable.
-	for i := range 50 {
-		m.messages = append(m.messages, newSystemMessage(fmt.Sprintf("msg %d", i)))
-	}
-	m.refreshViewport()
-	m.viewport.GotoBottom()
-	initialOffset := m.viewport.YOffset
-
-	// Page up should move the offset up.
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyPgUp})
-	if m.viewport.YOffset >= initialOffset && initialOffset > 0 {
-		t.Errorf("PgUp did not scroll up: offset before=%d after=%d", initialOffset, m.viewport.YOffset)
-	}
-
-	// Page down should move back toward bottom.
-	beforeDown := m.viewport.YOffset
-	m, _ = update(m, tea.KeyMsg{Type: tea.KeyPgDown})
-	if m.viewport.YOffset <= beforeDown && m.viewport.YOffset < initialOffset {
-		t.Errorf("PgDn did not scroll down: offset before=%d after=%d", beforeDown, m.viewport.YOffset)
 	}
 }
 
@@ -227,8 +251,8 @@ func TestWindowResize(t *testing.T) {
 	if m.width != 120 || m.height != 40 {
 		t.Errorf("after resize expected 120×40, got %d×%d", m.width, m.height)
 	}
-	if m.viewport.Width != 120 {
-		t.Errorf("viewport width not updated: got %d", m.viewport.Width)
+	if m.textarea.Width() <= 80 {
+		t.Errorf("input width not updated: got %d", m.textarea.Width())
 	}
 
 	// Resize to minimal terminal.
@@ -314,7 +338,7 @@ func TestPromptEditing(t *testing.T) {
 
 func TestInputHistory(t *testing.T) {
 	m := newTestModel("")
-	m.vpReady = true
+	m.ready = true
 
 	// Submit two messages via a real submit function.
 	submitted := []string{}
@@ -352,7 +376,7 @@ func TestInputHistory(t *testing.T) {
 
 func TestCustomSlashCommand_SubstitutesArguments(t *testing.T) {
 	m := newTestModel("")
-	m.vpReady = true
+	m.ready = true
 	m.cfg.CustomCommands = []SlashCommand{
 		{Name: "/review", Description: "Code review this file", Prompt: "Review $ARGUMENTS for correctness."},
 	}
@@ -374,11 +398,21 @@ func TestCustomSlashCommand_SubstitutesArguments(t *testing.T) {
 	if submitted != want {
 		t.Errorf("submitted prompt = %q, want %q", submitted, want)
 	}
+	// The conversation shows what was typed, not the expanded prompt.
+	var shown string
+	for _, msg := range m.messages {
+		if msg.Role == RoleUser {
+			shown = msg.Content
+		}
+	}
+	if shown != "/review internal/cmd/code.go" {
+		t.Errorf("shown user message = %q, want the typed command", shown)
+	}
 }
 
 func TestCustomSlashCommand_NoArgumentsLeavesPlaceholderless(t *testing.T) {
 	m := newTestModel("")
-	m.vpReady = true
+	m.ready = true
 	m.cfg.CustomCommands = []SlashCommand{
 		{Name: "/standup", Description: "Summarize commits", Prompt: "Summarize yesterday's commits."},
 	}
@@ -403,7 +437,7 @@ func TestCustomSlashCommand_NoArgumentsLeavesPlaceholderless(t *testing.T) {
 
 func TestCustomSlashCommand_UnknownReportsError(t *testing.T) {
 	m := newTestModel("")
-	m.vpReady = true
+	m.ready = true
 
 	m.textarea.SetValue("/nonexistent")
 	nm, _ := m.submitInput()
@@ -462,11 +496,11 @@ func TestOneShotMode(t *testing.T) {
 // Note: in test execution stdout is not a TTY, so this always returns false.
 func TestIsTerminalReturnsFalseInTests(t *testing.T) {
 	// We cannot import cmd here, but we can verify the TUI's own TTY guard:
-	// when vpReady is false, View() returns "".
+	// when ready is false, View() returns "".
 	m := newTestModel("")
-	m.vpReady = false
+	m.ready = false
 	if m.View() != "" {
-		t.Error("View() should return empty string when vpReady is false (non-TTY guard)")
+		t.Error("View() should return empty string when ready is false (non-TTY guard)")
 	}
 }
 

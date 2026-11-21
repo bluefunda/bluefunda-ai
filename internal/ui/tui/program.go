@@ -20,9 +20,10 @@ func Run(m Model) error {
 	fmt.Fprint(os.Stdout, cursorBar)
 	defer fmt.Fprint(os.Stdout, cursorDefault)
 
-	// WithMouseCellMotion passes mouse wheel events to the viewport bubble,
-	// enabling scroll-by-wheel without requiring keyboard-only navigation.
-	p := tea.NewProgram(m, tea.WithMouseCellMotion())
+	// Inline mode, no mouse capture: finished messages are printed into the
+	// terminal's scrollback (see scrollback.go), so the terminal's own
+	// scrolling, search and text selection work on them, as in Claude Code.
+	p := tea.NewProgram(m)
 
 	finalModel, err := p.Run()
 	if err != nil {

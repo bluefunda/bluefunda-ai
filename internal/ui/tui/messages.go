@@ -19,6 +19,7 @@ const (
 // ToolEvent holds a single tool-lifecycle event within an assistant turn.
 type ToolEvent struct {
 	Kind       ToolEventKind
+	ID         string // the call's ID; pairs results and notes with their call
 	Name       string
 	Args       string
 	Status     string // "ok" | "error"
@@ -34,6 +35,9 @@ const (
 	ToolCall     ToolEventKind = iota
 	ToolExec     ToolEventKind = iota
 	ToolProgress ToolEventKind = iota
+	ToolNote     ToolEventKind = iota // approval outcome, shown under its call
+	ToolStart    ToolEventKind = iota // the call began executing
+	ToolActivity ToolEventKind = iota // a running call's latest activity (a subagent's tool calls)
 )
 
 // ChatMessage is one logical message in the conversation.
@@ -46,6 +50,10 @@ type ChatMessage struct {
 	rendered    string // cached glamour-rendered form of Content (assistant only)
 	renderWidth int    // width used when rendered was produced
 	renderFull  bool   // whether rendered covers the full Content or only the answer
+
+	// printed is set once the message has been written to the terminal
+	// scrollback; View no longer draws it.
+	printed bool
 
 	// narrationEnd is len(Content) when the most recent tool call arrived.
 	// Text before it preceded further tool calls in the same turn, so it is
@@ -219,40 +227,232 @@ func toolArgSummary(argsJSON string) string {
 	return argsJSON
 }
 
-// formatToolEventLine renders a ToolEvent as a compact single line.
-func formatToolEventLine(ev ToolEvent, th Theme) string {
-	switch ev.Kind {
-	case ToolCall:
-		icon := th.ToolIcon.Render("●")
-		name := th.ToolName.Render(ev.Name)
-		args := ""
-		if short := toolArgSummary(ev.Args); short != "" {
-			args = th.ToolArg.Render("  " + truncate(short, 70))
-		}
-		return fmt.Sprintf("  %s %s%s", icon, name, args)
+// toolRow is one tool call as displayed: the call merged with its result.
+type toolRow struct {
+	id         string
+	name, args string
+	queued     bool // waiting for an earlier call of the same round to finish
+	done       bool
+	ok         bool
+	durationMs int64
+	summary    string
+	note       string // approval outcome, e.g. "declined: use make clean"
+	activity   string // latest progress while running, e.g. "3 tool calls · bash go test"
+}
 
-	case ToolExec:
-		var icon string
-		if ev.Status == "ok" {
-			icon = th.ToolSuccess.Render("  ✓")
-		} else {
-			icon = th.ToolError.Render("  ✗")
-		}
-		dur := fmt.Sprintf("%.1fs", float64(ev.DurationMs)/1000)
-		line := fmt.Sprintf("%s  %s", icon, th.ToolDim.Render(ev.Name+"  "+dur))
-		if ev.Summary != "" {
-			s := ev.Summary
-			if len(s) > 55 {
-				s = s[:52] + "..."
+// toolRows merges the message's tool events into one row per call. A result,
+// start or note goes to the call with the same ID; events without an ID
+// (server-side tools) fall back to the oldest unfinished call of that name.
+// Once the producer reports starts, unstarted calls show as queued. Progress
+// events are dropped — the rows themselves show progress.
+func toolRows(events []ToolEvent) []toolRow {
+	var rows []toolRow
+	starts := false
+	find := func(ev ToolEvent, open bool) int {
+		if ev.ID != "" {
+			for i := range rows {
+				if rows[i].id == ev.ID {
+					return i
+				}
 			}
-			line += th.ToolDim.Render("  —  " + s)
 		}
-		return line
-
-	case ToolProgress:
-		icon := th.ToolDim.Render("  ↻")
-		label := fmt.Sprintf("  [%d]  %s", ev.Iteration, strings.Join(ev.Tools, ", "))
-		return icon + th.ToolDim.Render(label)
+		for i := range rows {
+			if rows[i].name == ev.Name && (!open || !rows[i].done) && (ev.ID == "" || rows[i].id == "") {
+				return i
+			}
+		}
+		return -1
 	}
-	return ""
+	for _, ev := range events {
+		switch ev.Kind {
+		case ToolCall:
+			rows = append(rows, toolRow{id: ev.ID, name: ev.Name, args: ev.Args, queued: true})
+		case ToolActivity:
+			if i := find(ev, true); i >= 0 {
+				rows[i].activity, rows[i].queued = ev.Summary, false
+			}
+		case ToolStart:
+			starts = true
+			if i := find(ev, true); i >= 0 {
+				rows[i].queued = false
+			}
+		case ToolExec:
+			i := find(ev, true)
+			if i < 0 { // result without a call event (e.g. server-side tool)
+				rows = append(rows, toolRow{id: ev.ID, name: ev.Name})
+				i = len(rows) - 1
+			}
+			r := &rows[i]
+			r.queued, r.done, r.ok = false, true, ev.Status == "ok"
+			r.durationMs, r.summary = ev.DurationMs, ev.Summary
+		case ToolNote:
+			i := -1
+			if ev.ID != "" {
+				i = find(ev, false)
+			}
+			for j := len(rows) - 1; i < 0 && j >= 0; j-- {
+				if rows[j].name == ev.Name {
+					i = j
+				}
+			}
+			if i >= 0 {
+				rows[i].note = ev.Summary
+			}
+		}
+	}
+	if !starts {
+		for i := range rows {
+			rows[i].queued = false
+		}
+	}
+	return rows
+}
+
+// collapsedToolRows is how many finished calls are still listed one per
+// line while collapsed; more than that fold into one summary line.
+const collapsedToolRows = 2
+
+// renderToolRows draws a message's tool calls. Expanded (Ctrl+O), every call
+// gets a line. Collapsed, as in Claude Code, finished calls fold into one
+// line ("ran 4 commands, read 3 files · 1 failed") and only calls still
+// running are listed.
+func renderToolRows(events []ToolEvent, expanded bool, width int, th Theme) string {
+	rows, todos := splitTodoRows(toolRows(events))
+	if len(rows) == 0 {
+		return renderTodos(todos, width, th)
+	}
+	var done, running []toolRow
+	for _, r := range rows {
+		if r.done {
+			done = append(done, r)
+		} else {
+			running = append(running, r)
+		}
+	}
+	var sb strings.Builder
+	list := rows
+	if !expanded && len(done) > collapsedToolRows {
+		sb.WriteString(formatToolSummary(done, width, th))
+		sb.WriteByte('\n')
+		list = running
+	}
+	for _, r := range list {
+		sb.WriteString(formatToolRow(r, width, th))
+		sb.WriteByte('\n')
+		if r.note != "" {
+			sb.WriteString("    " + th.ToolDim.Render(truncate("⎿ "+r.note, max(width-6, 20))) + "\n")
+		}
+		if !r.done && r.activity != "" {
+			sb.WriteString("    " + th.ToolDim.Render(truncate("⎿ "+r.activity, max(width-6, 20))) + "\n")
+		}
+	}
+	sb.WriteString(renderTodos(todos, width, th))
+	return sb.String()
+}
+
+// toolVerbs groups tools under the phrase the summary line uses for them.
+var toolVerbs = map[string][2]string{ // name → {singular, plural} with %d
+	"bash":           {"ran %d command", "ran %d commands"},
+	"read_file":      {"read %d file", "read %d files"},
+	"read_notebook":  {"read %d file", "read %d files"},
+	"list_dir":       {"listed %d directory", "listed %d directories"},
+	"search_files":   {"searched %d time", "searched %d times"},
+	"search_content": {"searched %d time", "searched %d times"},
+	"write_file":     {"edited %d file", "edited %d files"},
+	"edit_file":      {"edited %d file", "edited %d files"},
+	"patch_file":     {"edited %d file", "edited %d files"},
+	"edit_notebook":  {"edited %d file", "edited %d files"},
+	"web_fetch":      {"fetched %d page", "fetched %d pages"},
+	"web_search":     {"searched the web %d time", "searched the web %d times"},
+	"task":           {"ran %d subagent", "ran %d subagents"},
+}
+
+// toolSummary phrases finished calls by kind, in order of first use:
+// "Ran 4 commands, read 3 files, called memory_list 2 times".
+func toolSummary(rows []toolRow) string {
+	type group struct {
+		one, many string
+		n         int
+	}
+	var groups []*group
+	byKey := map[string]*group{}
+	for _, r := range rows {
+		one, many := "called "+r.name, "called "+r.name+" %d times"
+		if v, ok := toolVerbs[r.name]; ok {
+			one, many = v[0], v[1]
+		}
+		g := byKey[many] // tools sharing a phrase share a count
+		if g == nil {
+			g = &group{one: one, many: many}
+			byKey[many] = g
+			groups = append(groups, g)
+		}
+		g.n++
+	}
+	parts := make([]string, len(groups))
+	for i, g := range groups {
+		if g.n == 1 {
+			parts[i] = strings.Replace(g.one, "%d", "1", 1)
+		} else {
+			parts[i] = fmt.Sprintf(g.many, g.n)
+		}
+	}
+	s := strings.Join(parts, ", ")
+	return strings.ToUpper(s[:1]) + s[1:]
+}
+
+// formatToolSummary is the collapsed line for finished calls.
+func formatToolSummary(rows []toolRow, width int, th Theme) string {
+	failed := 0
+	for _, r := range rows {
+		if !r.ok {
+			failed++
+		}
+	}
+	icon := th.ToolSuccess.Render("✓")
+	text := toolSummary(rows)
+	if failed > 0 {
+		icon = th.ToolError.Render("✓")
+		text += fmt.Sprintf(" · %d failed", failed)
+	}
+	return "  " + icon + " " + th.ToolDim.Render(truncate(text, max(width-24, 20))+"  (ctrl+o to expand)")
+}
+
+// formatToolRow renders one call: icon, tool, its key argument, then the
+// duration (and the error summary when it failed).
+func formatToolRow(r toolRow, width int, th Theme) string {
+	var icon string
+	switch {
+	case r.queued:
+		icon = th.ToolDim.Render("○")
+	case !r.done:
+		icon = th.ToolIcon.Render("●")
+	case r.ok:
+		icon = th.ToolSuccess.Render("✓")
+	default:
+		icon = th.ToolError.Render("✗")
+	}
+	line := "  " + icon + " " + th.ToolName.Render(r.name)
+	tail := ""
+	if r.queued {
+		tail = "  · queued"
+	}
+	if r.done {
+		tail = fmt.Sprintf("  · %.1fs", float64(r.durationMs)/1000)
+		if !r.ok && r.summary != "" {
+			tail += " — " + r.summary
+		}
+	}
+	room := max(width-len([]rune(r.name))-6-len([]rune(tail)), 10)
+	if a := toolArgSummary(r.args); a != "" {
+		line += th.ToolArg.Render("  " + truncate(a, room))
+	}
+	if tail != "" {
+		style := th.ToolDim
+		if r.done && !r.ok {
+			style = th.ToolError
+		}
+		line += style.Render(truncate(tail, max(width-10, 20)))
+	}
+	return line
 }

@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"github.com/charmbracelet/bubbles/textarea"
-	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/google/uuid"
@@ -45,16 +44,18 @@ type StreamDoneMsg struct{ Err error }
 type InterruptedMsg struct{}
 type StreamErrorMsg struct{ Msg string }
 type ApprovalRequestMsg struct {
-	ToolName string
-	Args     string
-	ReplyCh  chan ApprovalDecision
+	ToolID      string
+	ToolName    string
+	Args        string
+	ReplyCh     chan ApprovalDecision
+	AlwaysLabel string // option 2's scope, e.g. "`gh api` commands"; "" = this exact call
 }
 type ApprovalResponseMsg struct{ Approved bool }
 
 // ApprovalDecision is the user's response to a tool-approval prompt.
 type ApprovalDecision struct {
 	Approved    bool
-	AlwaysAllow bool   // remember this exact tool+args for the rest of the session
+	AlwaysAllow bool   // don't ask again this session for the scope in AlwaysLabel
 	Feedback    string // on decline: what the user wants done instead (option 3)
 }
 
@@ -136,9 +137,30 @@ type SessionConfig struct {
 	MCPActivateFn  func(name string) error       // nil = MCP activation not available
 	ListModelsFn   func() ([]ModelInfo, error)   // nil = model listing not available
 	SetAutoApplyFn func(enabled bool)            // nil = auto-apply not available (non-code sessions)
+	MaxTurns       int                           // current agentic step limit per request (shown by /max-turns)
+	SetMaxTurnsFn  func(n int)                   // nil = /max-turns not available
 	SetPlanModeFn  func(enabled bool)            // nil = plan mode not available (non-code sessions)
-	SetCodeModeFn  func(enabled bool)            // nil = mode switch not supported in this session
-	CustomCommands []SlashCommand                // loaded from .bai/commands/*.md
+	// AcceptEdits auto-approves file edits (Claude Code's accept-edits
+	// mode); SetAcceptEditsFn applies a change. nil = not available.
+	AcceptEdits      bool
+	SetAcceptEditsFn func(enabled bool)
+	SetCodeModeFn    func(enabled bool) // nil = mode switch not supported in this session
+	// ShellFn runs a command typed as "!<command>" in the user's shell and
+	// returns its output; the session passes it to the model with the next
+	// message. nil = no shell mode (chat sessions).
+	ShellFn func(command string) (string, error)
+	// FilesFn lists the workspace's files and directories (directories end
+	// in "/") for the @ picker. nil = no picker.
+	FilesFn func() []string
+	// RewindPointsFn lists the messages /rewind can go back to, oldest
+	// first; RewindFn restores code and/or conversation to before one and
+	// says what it did. nil = no rewind.
+	RewindPointsFn func() []RewindPoint
+	RewindFn       func(turn int, code, chat bool) (string, error)
+	// StatusFn adds the session's own lines to /status (context size,
+	// settings files, MCP servers…). Called on the UI goroutine.
+	StatusFn       func() []string
+	CustomCommands []SlashCommand // loaded from .bai/commands/*.md
 
 	// DisableUpdateCheck skips the background update-staleness check (#287)
 	// entirely. Zero-value (false) means enabled — every existing
@@ -202,7 +224,7 @@ type UsageInfo struct {
 // StreamEvent is a discriminated union of all events that can arrive from a
 // gRPC stream. The BubbleTea cmd reads one event from the channel per tick.
 type StreamEvent struct {
-	Kind string // "chunk"|"tool_call"|"tool_exec"|"progress"|"heartbeat"|"approval"|"done"|"error"|"rate_limited"|"usage_warning"|"live_usage_pct"
+	Kind string // "chunk"|"tool_call"|"tool_start"|"tool_progress"|"tool_exec"|"progress"|"heartbeat"|"approval"|"done"|"error"|"rate_limited"|"usage_warning"|"live_usage_pct"
 	// chunk
 	Chunk string
 	// tool_call / tool_exec / approval
@@ -216,8 +238,9 @@ type StreamEvent struct {
 	// progress
 	Iteration int
 	Tools     []string
-	// approval: reply channel
-	ReplyCh chan ApprovalDecision
+	// approval: reply channel, and what option 2 ("don't ask again") covers
+	ReplyCh     chan ApprovalDecision
+	AlwaysLabel string
 	// done / error
 	Err    error
 	ErrMsg string
@@ -258,10 +281,12 @@ type Model struct {
 	// Messages
 	messages []ChatMessage
 
-	// Viewport (conversation scroll area)
-	viewport viewport.Model
-	vpReady  bool
-	atBottom bool
+	// ready is set by the first WindowSizeMsg; nothing renders before it.
+	ready bool
+
+	// printing is true while a scrollback write is in flight (see
+	// flushScrollback); later writes wait so they stay in order.
+	printing bool
 
 	// showNarration expands assistant narration that preceded tool calls
 	// (toggled with Ctrl+O, #330). Collapsed by default.
@@ -289,6 +314,15 @@ type Model struct {
 	showSlash    bool
 	slashMatches []SlashCommand
 	slashIdx     int
+
+	// @ picker (mentions.go)
+	showMention    bool
+	mentionMatches []string
+	mentionIdx     int
+	mentionFiles   []string // loaded on the first "@"
+
+	rewind  *rewindPicker // open /rewind dialog (rewind.go)
+	lastEsc time.Time     // for Esc Esc
 
 	// Model picker (shown when /model is typed with no argument)
 	showModelPicker  bool
@@ -326,17 +360,12 @@ func New(cfg SessionConfig, submit SubmitFn) Model {
 	ta.BlurredStyle = ta.FocusedStyle
 	ta.KeyMap.InsertNewline.SetKeys("shift+enter", "ctrl+j")
 
-	vp := viewport.New(80, 20)
-	vp.SetContent("")
-
 	m := Model{
 		cfg:        cfg,
 		isNewChat:  !cfg.IsResume,
 		submitFn:   submit,
 		theme:      th,
 		textarea:   ta,
-		viewport:   vp,
-		atBottom:   true,
 		historyIdx: -1,
 	}
 
@@ -348,7 +377,7 @@ func New(cfg SessionConfig, submit SubmitFn) Model {
 			welcome += "  ·  " + cfg.ResumeTitle
 		}
 	} else {
-		welcome = fmt.Sprintf("Session %s  ·  model: %s", cfg.ChatID[:8], cfg.Model)
+		welcome = fmt.Sprintf("Session %s  ·  model: %s", cfg.ChatID[:8], m.modelName())
 	}
 	if cfg.RepoName != "" {
 		welcome += "  ·  " + cfg.RepoName
@@ -379,7 +408,23 @@ func tickCmd() tea.Cmd {
 //  Update
 // ──────────────────────────────────────────────
 
+// Update implements tea.Model. After each update, messages that finished are
+// written to the terminal scrollback (see flushScrollback).
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	if _, ok := msg.(scrollbackDoneMsg); ok {
+		m.printing = false
+		return m.flushScrollback()
+	}
+	next, cmd := m.update(msg)
+	nm, ok := next.(Model)
+	if !ok {
+		return next, cmd
+	}
+	nm, printCmd := nm.flushScrollback()
+	return nm, tea.Batch(cmd, printCmd)
+}
+
+func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmds []tea.Cmd
 
 	switch msg := msg.(type) {
@@ -400,7 +445,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.spinnerIdx++
 			// Redraw so the spinner and the live "Thinking… Ns" timer move
 			// between stream events (rendered markdown is cached per message).
-			m.refreshViewport()
 		}
 		cmds = append(cmds, tickCmd())
 
@@ -413,6 +457,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Ctrl+C already handled in handleKey; nothing more to do here.
 		return m, nil
 
+	case rewindDoneMsg:
+		return m.rewound(msg), nil
+
+	case shellDoneMsg:
+		m.messages = append(m.messages, newSystemMessage(formatShellOutput(msg.output, msg.err)))
+		return m, nil
+
 	case slashRunDoneMsg:
 		text := msg.output
 		if msg.err != nil {
@@ -421,32 +472,19 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			text = msg.name + " done"
 		}
 		m.messages = append(m.messages, newSystemMessage(text))
-		m.refreshViewport()
-		if m.atBottom {
-			m.viewport.GotoBottom()
-		}
 		return m, nil
 
 	case StreamDoneMsg:
 		m.streaming = false
-		finalizedIdx := -1
 		for i := len(m.messages) - 1; i >= 0; i-- {
 			if m.messages[i].Role == RoleAssistant && m.messages[i].Streaming {
 				m.messages[i].finishStreaming()
-				finalizedIdx = i
 				break
 			}
 		}
 		if msg.Err != nil {
 			m.messages = append(m.messages, newSystemMessage("Error: "+msg.Err.Error()))
 		}
-		m.refreshViewport()
-		if finalizedIdx >= 0 && m.messages[finalizedIdx].Content != "" {
-			m.scrollToMessageStart(finalizedIdx)
-		} else {
-			m.viewport.GotoBottom()
-		}
-		m.atBottom = m.viewport.AtBottom()
 		m.textarea.Focus()
 		cmds = append(cmds, textarea.Blink)
 
@@ -454,7 +492,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case ApprovalRequestMsg:
 		m.pendingApproval = &msg
-		m.refreshViewport()
 
 	case SessionsLoadedMsg:
 		// Remove the "Loading sessions…" placeholder
@@ -467,8 +504,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.recentSessions = msg.Sessions
 			m.messages = append(m.messages, newSystemMessage(m.formatSessions(msg.Sessions)))
 		}
-		m.refreshViewport()
-		m.viewport.GotoBottom()
 
 	case AccountLoadedMsg:
 		if len(m.messages) > 0 && m.messages[len(m.messages)-1].Role == RoleSystem {
@@ -479,8 +514,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		} else {
 			m.messages = append(m.messages, newSystemMessage(formatAccount(msg.Info)))
 		}
-		m.refreshViewport()
-		m.viewport.GotoBottom()
 
 	case UsageLoadedMsg:
 		if len(m.messages) > 0 && m.messages[len(m.messages)-1].Role == RoleSystem {
@@ -491,18 +524,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		} else {
 			m.messages = append(m.messages, newSystemMessage(formatUsage(msg.Info)))
 		}
-		m.refreshViewport()
-		m.viewport.GotoBottom()
 
 	case UsageAutoCheckMsg:
 		if msg.Err == nil && msg.Info != nil {
 			if line := formatUsageCompact(msg.Info); line != "" {
 				m.messages = append(m.messages, newSystemMessage(line))
-				wasAtBottom := m.atBottom
-				m.refreshViewport()
-				if wasAtBottom {
-					m.viewport.GotoBottom()
-				}
 			}
 		}
 
@@ -515,8 +541,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		} else {
 			m.messages = append(m.messages, newSystemMessage(formatMCPList(msg.Items)))
 		}
-		m.refreshViewport()
-		m.viewport.GotoBottom()
 
 	case MCPActivatedMsg:
 		if len(m.messages) > 0 && m.messages[len(m.messages)-1].Role == RoleSystem {
@@ -527,8 +551,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		} else {
 			m.messages = append(m.messages, newSystemMessage("Activated MCP server: "+msg.Name))
 		}
-		m.refreshViewport()
-		m.viewport.GotoBottom()
 
 	case ModelsLoadedMsg:
 		if len(m.messages) > 0 && m.messages[len(m.messages)-1].Role == RoleSystem {
@@ -536,8 +558,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if msg.Err != nil {
 			m.messages = append(m.messages, newSystemMessage("Error loading models: "+msg.Err.Error()))
-			m.refreshViewport()
-			m.viewport.GotoBottom()
 		} else {
 			m.modelPickerItems = msg.Items
 			m.modelPickerIdx = 0
@@ -567,10 +587,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.showModelPicker {
 			return m.handleModelPickerKey(msg)
 		}
+		if m.rewind != nil {
+			return m.handleRewindKey(msg)
+		}
 		return m.handleKey(msg)
 	}
 
-	// Route all remaining events to textarea and viewport.
+	// Route all remaining events to the textarea.
 	// Textarea stays active even while streaming so the user can type ahead.
 	{
 		prevRows := m.effectiveInputRows()
@@ -581,7 +604,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		cmds = append(cmds, taCmd)
 
 		// Relayout when the textarea grows/shrinks or the count indicator
-		// appears/disappears, so the viewport adjusts correctly.
+		// appears/disappears.
 		if m.effectiveInputRows() != prevRows || m.showInputCount() != prevCount {
 			m = m.handleResize()
 		}
@@ -589,10 +612,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Update slash menu whenever text changes
 		m.updateSlashMenu()
 	}
-
-	var vpCmd tea.Cmd
-	m.viewport, vpCmd = m.viewport.Update(msg)
-	cmds = append(cmds, vpCmd)
 
 	return m, tea.Batch(cmds...)
 }
@@ -614,7 +633,6 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				}
 			}(m.streamCh)
 			m.textarea.Focus()
-			m.refreshViewport()
 			return m, nil
 		}
 		m.quit = true
@@ -630,14 +648,23 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		// Clear conversation display
 		m.messages = m.messages[:0]
 		m.messages = append(m.messages, newSystemMessage("Screen cleared."))
-		m.refreshViewport()
+		return m, tea.ClearScreen
+
+	case "shift+tab":
+		// Cycle the permission mode, as in Claude Code.
+		if m.cfg.IsCode && !m.showSlash {
+			m.setMode(m.mode().next())
+		}
 		return m, nil
 
 	case "ctrl+o":
-		// Toggle collapsed inter-tool-call narration (#330), like Claude Code's
-		// Ctrl+O transcript toggle.
+		// Toggle collapsed thinking, narration and tool calls (#330), like
+		// Claude Code's Ctrl+O. Printed messages can't be redrawn, so when
+		// idle, expanding reprints the last response in full.
 		m.showNarration = !m.showNarration
-		m.refreshViewport()
+		if m.showNarration && !m.streaming {
+			return m, m.printDetails()
+		}
 		return m, nil
 
 	case "ctrl+y":
@@ -648,11 +675,14 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			} else {
 				m.messages = append(m.messages, newSystemMessage(fmt.Sprintf("Copied (%s).", method)))
 			}
-			m.refreshViewport()
 		}
 		return m, nil
 
 	case "enter":
+		if m.showMention {
+			m.acceptMention()
+			return m, nil
+		}
 		if m.showSlash && len(m.slashMatches) > 0 {
 			cmd := m.slashMatches[m.slashIdx]
 			if m.textarea.Value() == cmd.Name {
@@ -669,6 +699,10 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.submitInput()
 
 	case "up":
+		if m.showMention {
+			m.mentionIdx = max(m.mentionIdx-1, 0)
+			return m, nil
+		}
 		if m.showSlash {
 			if m.slashIdx > 0 {
 				m.slashIdx--
@@ -693,6 +727,10 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 
 	case "down":
+		if m.showMention {
+			m.mentionIdx = min(m.mentionIdx+1, len(m.mentionMatches)-1)
+			return m, nil
+		}
 		if m.showSlash {
 			if m.slashIdx < len(m.slashMatches)-1 {
 				m.slashIdx++
@@ -713,31 +751,39 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 
 	case "esc":
+		if m.showMention {
+			m.showMention = false
+			return m, nil
+		}
 		if m.showSlash {
 			m.showSlash = false
 			return m, nil
 		}
+		// Esc Esc on an empty input opens /rewind, as in Claude Code.
+		if !m.streaming && m.textarea.Value() == "" && m.cfg.RewindFn != nil {
+			if time.Since(m.lastEsc) < doubleEsc {
+				m.lastEsc = time.Time{}
+				return m.openRewind(), nil
+			}
+			m.lastEsc = time.Now()
+			return m, nil
+		}
 
 	case "tab":
+		if m.showMention {
+			m.acceptMention()
+			return m, nil
+		}
 		if m.showSlash && len(m.slashMatches) > 0 {
 			return m.acceptSlashCommand()
 		}
-
-	case "pgup":
-		m.viewport.PageUp()
-		m.atBottom = false
-		return m, nil
-
-	case "pgdown":
-		m.viewport.PageDown()
-		m.atBottom = m.viewport.AtBottom()
-		return m, nil
 	}
 
 	var taCmd tea.Cmd
 	m.textarea, taCmd = m.textarea.Update(msg)
 	cmds = append(cmds, taCmd)
 	m.updateSlashMenu()
+	m.updateMentionMenu()
 
 	return m, tea.Batch(cmds...)
 }
@@ -758,8 +804,6 @@ func (m Model) handleModelPickerKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.cfg.Model = selected.Name
 			m.showModelPicker = false
 			m.messages = append(m.messages, newSystemMessage("Switched to model: "+selected.Name))
-			m.refreshViewport()
-			m.viewport.GotoBottom()
 		}
 	case "esc", "ctrl+c":
 		m.showModelPicker = false
@@ -777,9 +821,14 @@ func (m Model) submitInput() (tea.Model, tea.Cmd) {
 	if strings.HasPrefix(input, "/") {
 		return m.handleSlashCommand(input)
 	}
+	// "!<command>" runs it in the shell, as in Claude Code.
+	if command, ok := shellCommand(input); ok && m.cfg.ShellFn != nil {
+		return m.runShell(input, command)
+	}
 
 	m.textarea.Reset()
 	m.showSlash = false
+	m.showMention = false
 	m.historyIdx = -1
 
 	// Record in history (dedup consecutive identical)
@@ -790,12 +839,9 @@ func (m Model) submitInput() (tea.Model, tea.Cmd) {
 		}
 	}
 
-	// Append user message to viewport — stays visible in conversation history.
+	// The user message goes to scrollback with the rest of the conversation.
 	m.messages = append(m.messages, newUserMessage(input))
 	m.streaming = true
-	m.atBottom = true
-	m.refreshViewport()
-	m.viewport.GotoBottom()
 
 	isNew := m.isNewChat
 	m.isNewChat = false
@@ -809,13 +855,13 @@ func (m Model) submitInput() (tea.Model, tea.Cmd) {
 func (m Model) handleSlashCommand(input string) (tea.Model, tea.Cmd) {
 	m.textarea.Reset()
 	m.showSlash = false
+	m.showMention = false
 
 	switch {
 	case input == "/update":
 		exe, err := os.Executable()
 		if err != nil {
 			m.messages = append(m.messages, newSystemMessage("Could not locate "+app.Current().Name+" binary: "+err.Error()))
-			m.refreshViewport()
 			break
 		}
 		cmd := exec.Command(exe, "update")
@@ -830,35 +876,31 @@ func (m Model) handleSlashCommand(input string) (tea.Model, tea.Cmd) {
 	case input == "/clear":
 		m.messages = m.messages[:0]
 		m.messages = append(m.messages, newSystemMessage("Conversation cleared."))
-		m.refreshViewport()
+		return m, tea.ClearScreen
 
 	case input == "/reset":
 		m.messages = m.messages[:0]
 		m.isNewChat = true
 		m.messages = append(m.messages, newSystemMessage(
-			fmt.Sprintf("New session started  ·  model: %s", m.cfg.Model)))
-		m.refreshViewport()
+			fmt.Sprintf("New session started  ·  model: %s", m.modelName())))
+		return m, tea.ClearScreen
 
 	case input == "/help":
 		m.messages = append(m.messages, newSystemMessage(helpText()))
-		m.refreshViewport()
 
 	case input == "/new":
 		m.cfg.ChatID = uuid.New().String()
 		m.isNewChat = true
 		m.messages = m.messages[:0]
 		m.messages = append(m.messages, newSystemMessage(
-			fmt.Sprintf("New session  ·  %s  ·  model: %s", m.cfg.ChatID[:8], m.cfg.Model)))
-		m.refreshViewport()
+			fmt.Sprintf("New session  ·  %s  ·  model: %s", m.cfg.ChatID[:8], m.modelName())))
 
 	case input == "/model" || strings.HasPrefix(input, "/model "):
 		arg := strings.TrimSpace(strings.TrimPrefix(input, "/model"))
 		if arg == "" {
 			if m.cfg.ListModelsFn != nil {
 				m.messages = append(m.messages, newSystemMessage("Loading models…"))
-				m.refreshViewport()
 				fn := m.cfg.ListModelsFn
-				m.viewport.GotoBottom()
 				return m, func() tea.Msg {
 					items, err := fn()
 					return ModelsLoadedMsg{Items: items, Err: err}
@@ -869,7 +911,6 @@ func (m Model) handleSlashCommand(input string) (tea.Model, tea.Cmd) {
 			m.cfg.Model = strings.TrimSpace(arg)
 			m.messages = append(m.messages, newSystemMessage("Switched to model: "+m.cfg.Model))
 		}
-		m.refreshViewport()
 
 	case input == "/copy" || strings.HasPrefix(input, "/copy"):
 		arg := strings.TrimSpace(strings.TrimPrefix(input, "/copy"))
@@ -909,12 +950,10 @@ func (m Model) handleSlashCommand(input string) (tea.Model, tea.Cmd) {
 		} else {
 			m.messages = append(m.messages, newSystemMessage(fmt.Sprintf("Copied (%s).", method)))
 		}
-		m.refreshViewport()
 
 	case input == "/retry" || strings.HasPrefix(input, "/retry "):
 		if m.cfg.RetryFn == nil {
 			m.messages = append(m.messages, newSystemMessage("Retry is not available in this session."))
-			m.refreshViewport()
 			break
 		}
 		arg := strings.TrimSpace(strings.TrimPrefix(input, "/retry"))
@@ -922,7 +961,6 @@ func (m Model) handleSlashCommand(input string) (tea.Model, tea.Cmd) {
 		if arg != "" {
 			if !strings.HasPrefix(arg, "--model ") {
 				m.messages = append(m.messages, newSystemMessage("Usage: /retry [--model <name>]"))
-				m.refreshViewport()
 				break
 			}
 			modelOverride = strings.TrimSpace(strings.TrimPrefix(arg, "--model "))
@@ -930,7 +968,6 @@ func (m Model) handleSlashCommand(input string) (tea.Model, tea.Cmd) {
 		ch, prompt, err := m.cfg.RetryFn(modelOverride)
 		if err != nil {
 			m.messages = append(m.messages, newSystemMessage(err.Error()))
-			m.refreshViewport()
 			break
 		}
 		if idx := lastUserMessageIndex(m.messages); idx >= 0 {
@@ -941,9 +978,6 @@ func (m Model) handleSlashCommand(input string) (tea.Model, tea.Cmd) {
 		}
 		m.messages = append(m.messages, newUserMessage(prompt))
 		m.streaming = true
-		m.atBottom = true
-		m.refreshViewport()
-		m.viewport.GotoBottom()
 		m.streamStop = make(chan struct{})
 		m.streamCh = ch
 		return m, waitForStreamEvent(m.streamCh, m.streamStop)
@@ -951,16 +985,13 @@ func (m Model) handleSlashCommand(input string) (tea.Model, tea.Cmd) {
 	case input == "/sessions":
 		if m.cfg.ListSessionsFn != nil {
 			m.messages = append(m.messages, newSystemMessage("Loading sessions…"))
-			m.refreshViewport()
 			fn := m.cfg.ListSessionsFn
-			m.viewport.GotoBottom()
 			return m, func() tea.Msg {
 				sessions, err := fn()
 				return SessionsLoadedMsg{Sessions: sessions, Err: err}
 			}
 		}
 		m.messages = append(m.messages, newSystemMessage("Session listing not available"))
-		m.refreshViewport()
 
 	case strings.HasPrefix(input, "/resume "):
 		id := strings.TrimSpace(strings.TrimPrefix(input, "/resume "))
@@ -981,43 +1012,35 @@ func (m Model) handleSlashCommand(input string) (tea.Model, tea.Cmd) {
 			m.isNewChat = false
 			m.messages = append(m.messages, newSystemMessage("Resumed: "+id))
 		}
-		m.refreshViewport()
 
 	case input == "/mcp" || strings.HasPrefix(input, "/mcp "):
 		arg := strings.TrimSpace(strings.TrimPrefix(input, "/mcp"))
 		if arg == "" {
 			if m.cfg.MCPListFn != nil {
 				m.messages = append(m.messages, newSystemMessage("Loading MCP servers…"))
-				m.refreshViewport()
 				fn := m.cfg.MCPListFn
-				m.viewport.GotoBottom()
 				return m, func() tea.Msg {
 					items, err := fn()
 					return MCPListLoadedMsg{Items: items, Err: err}
 				}
 			}
 			m.messages = append(m.messages, newSystemMessage("MCP listing not available"))
-			m.refreshViewport()
 		} else {
 			if m.cfg.MCPActivateFn != nil {
 				name := strings.TrimSpace(arg)
 				m.messages = append(m.messages, newSystemMessage("Activating "+name+"…"))
-				m.refreshViewport()
 				fn := m.cfg.MCPActivateFn
-				m.viewport.GotoBottom()
 				return m, func() tea.Msg {
 					err := fn(name)
 					return MCPActivatedMsg{Name: name, Err: err}
 				}
 			}
 			m.messages = append(m.messages, newSystemMessage("MCP activation not available"))
-			m.refreshViewport()
 		}
 
 	case input == "/chat":
 		if !m.cfg.IsCode {
 			m.messages = append(m.messages, newSystemMessage("Already in chat mode"))
-			m.refreshViewport()
 			break
 		}
 		m.cfg.IsCode = false
@@ -1025,12 +1048,10 @@ func (m Model) handleSlashCommand(input string) (tea.Model, tea.Cmd) {
 			m.cfg.SetCodeModeFn(false)
 		}
 		m.messages = append(m.messages, newSystemMessage("Switched to chat mode — file tools unloaded"))
-		m.refreshViewport()
 
 	case input == "/code":
 		if m.cfg.IsCode {
 			m.messages = append(m.messages, newSystemMessage("Already in code mode — use /auto to toggle tool approval"))
-			m.refreshViewport()
 			break
 		}
 		if m.cfg.SetCodeModeFn != nil {
@@ -1041,12 +1062,10 @@ func (m Model) handleSlashCommand(input string) (tea.Model, tea.Cmd) {
 			m.messages = append(m.messages, newSystemMessage(
 				"File tools are not available in this session.\nStart with `"+app.Current().Name+" code [prompt]` for the full agentic experience."))
 		}
-		m.refreshViewport()
 
 	case input == "/auto":
 		if !m.cfg.IsCode {
 			m.messages = append(m.messages, newSystemMessage("/auto is only available in code sessions (bai code)"))
-			m.refreshViewport()
 			break
 		}
 		m.cfg.AutoApply = !m.cfg.AutoApply
@@ -1058,12 +1077,31 @@ func (m Model) handleSlashCommand(input string) (tea.Model, tea.Cmd) {
 			state = "enabled — tools will execute without prompting"
 		}
 		m.messages = append(m.messages, newSystemMessage("Auto-apply "+state))
-		m.refreshViewport()
+
+	case input == "/max-turns" || strings.HasPrefix(input, "/max-turns "):
+		arg := strings.TrimSpace(strings.TrimPrefix(input, "/max-turns"))
+		switch n, err := strconv.Atoi(arg); {
+		case m.cfg.SetMaxTurnsFn == nil:
+			m.messages = append(m.messages, newSystemMessage("/max-turns is only available in code sessions"))
+		case arg == "" && m.cfg.MaxTurns <= 0:
+			m.messages = append(m.messages, newSystemMessage("Max turns: no limit. Set one with /max-turns <n>."))
+		case arg == "":
+			m.messages = append(m.messages, newSystemMessage(fmt.Sprintf("Max turns: %d agentic steps per request. Set with /max-turns <n> (0 = no limit).", m.cfg.MaxTurns)))
+		case err != nil || n < 0:
+			m.messages = append(m.messages, newSystemMessage("Usage: /max-turns <n>  (0 = no limit)"))
+		case n == 0:
+			m.cfg.MaxTurns = 0
+			m.cfg.SetMaxTurnsFn(0)
+			m.messages = append(m.messages, newSystemMessage("Max turns: no limit for this session. Type \"continue\" to resume a paused request."))
+		default:
+			m.cfg.MaxTurns = n
+			m.cfg.SetMaxTurnsFn(n)
+			m.messages = append(m.messages, newSystemMessage(fmt.Sprintf("Max turns set to %d for this session. Type \"continue\" to resume a paused request.", n)))
+		}
 
 	case input == "/plan":
 		if !m.cfg.IsCode {
 			m.messages = append(m.messages, newSystemMessage("/plan is only available in code sessions (bai code)"))
-			m.refreshViewport()
 			break
 		}
 		m.cfg.PlanMode = !m.cfg.PlanMode
@@ -1075,50 +1113,46 @@ func (m Model) handleSlashCommand(input string) (tea.Model, tea.Cmd) {
 			state = "enabled — read-only tools only until you type /plan again"
 		}
 		m.messages = append(m.messages, newSystemMessage("Plan mode "+state))
-		m.refreshViewport()
 
 	case input == "/account":
 		if m.cfg.AccountFn != nil {
 			m.messages = append(m.messages, newSystemMessage("Loading account…"))
-			m.refreshViewport()
 			fn := m.cfg.AccountFn
-			m.viewport.GotoBottom()
 			return m, func() tea.Msg {
 				info, err := fn()
 				return AccountLoadedMsg{Info: info, Err: err}
 			}
 		}
 		m.messages = append(m.messages, newSystemMessage("Account info not available"))
-		m.refreshViewport()
 
 	case input == "/usage":
 		if m.cfg.UsageFn != nil {
 			m.messages = append(m.messages, newSystemMessage("Loading usage…"))
-			m.refreshViewport()
 			fn := m.cfg.UsageFn
-			m.viewport.GotoBottom()
 			return m, func() tea.Msg {
 				info, err := fn()
 				return UsageLoadedMsg{Info: info, Err: err}
 			}
 		}
 		m.messages = append(m.messages, newSystemMessage("Usage info not available"))
-		m.refreshViewport()
 
 	case input == "/tools" && m.cfg.IsCode:
 		m.messages = append(m.messages, newSystemMessage(
 			"Available tools: read_file · edit_file · write_file · list_dir · search_files · search_content · bash · web_fetch · web_search\n"+
 				"MCP tools: mcp__<server>__<tool>  (configure in .bai/settings.yaml)"))
-		m.refreshViewport()
+
+	case input == "/rewind":
+		return m.openRewind(), nil
+
+	case input == "/status":
+		m.messages = append(m.messages, newSystemMessage(m.statusText()))
 
 	case input == "/context":
 		m.messages = append(m.messages, newSystemMessage(
 			fmt.Sprintf("Chat ID: %s  ·  Messages: %d", m.cfg.ChatID, len(m.messages))))
-		m.refreshViewport()
 
 	case input == "/memory" || strings.HasPrefix(input, "/memory "):
 		m.messages = append(m.messages, newSystemMessage(runMemoryCommand(strings.TrimSpace(strings.TrimPrefix(input, "/memory")))))
-		m.refreshViewport()
 
 	default:
 		// Check custom commands loaded from .bai/commands/*.md and
@@ -1126,11 +1160,17 @@ func (m Model) handleSlashCommand(input string) (tea.Model, tea.Cmd) {
 		cmdName := strings.Fields(input)[0] // e.g. "/review"
 		cmdArgs := strings.TrimSpace(strings.TrimPrefix(input, cmdName))
 		for _, c := range m.cfg.CustomCommands {
+			if c.Name == cmdName && c.Run != nil && c.Instant {
+				out, err := c.Run(cmdArgs)
+				if err != nil {
+					out = cmdName + " failed: " + err.Error()
+				}
+				m.messages = append(m.messages, newSystemMessage(out))
+				return m, nil
+			}
 			if c.Name == cmdName && c.Run != nil {
 				run := c.Run
 				m.messages = append(m.messages, newSystemMessage(cmdName+" …"))
-				m.refreshViewport()
-				m.viewport.GotoBottom()
 				return m, func() tea.Msg {
 					out, err := run(cmdArgs)
 					return slashRunDoneMsg{name: cmdName, output: out, err: err}
@@ -1138,11 +1178,10 @@ func (m Model) handleSlashCommand(input string) (tea.Model, tea.Cmd) {
 			}
 			if c.Name == cmdName && c.Prompt != "" {
 				prompt := expandArguments(c.Prompt, cmdArgs)
-				m.messages = append(m.messages, newUserMessage(prompt))
+				// Show what was typed, as Claude Code does; the model gets
+				// the expanded prompt.
+				m.messages = append(m.messages, newUserMessage(input))
 				m.streaming = true
-				m.atBottom = true
-				m.refreshViewport()
-				m.viewport.GotoBottom()
 				isNew := m.isNewChat
 				m.isNewChat = false
 				m.streamCh = m.submitFn(m.cfg.ChatID, m.cfg.Model, prompt, isNew)
@@ -1150,10 +1189,8 @@ func (m Model) handleSlashCommand(input string) (tea.Model, tea.Cmd) {
 			}
 		}
 		m.messages = append(m.messages, newSystemMessage("Unknown command: "+input))
-		m.refreshViewport()
 	}
 
-	m.viewport.GotoBottom()
 	return m, nil
 }
 
@@ -1240,11 +1277,29 @@ func (m *Model) updateSlashMenu() {
 	}
 }
 
-func (m *Model) ensureAssistantMsg() {
-	if len(m.messages) == 0 || m.messages[len(m.messages)-1].Role != RoleAssistant ||
-		!m.messages[len(m.messages)-1].Streaming {
-		m.messages = append(m.messages, newAssistantMessage())
+// ensureAssistantMsg returns the index of the response being streamed,
+// starting one if there is none. Notes added after it (a usage warning)
+// don't split the response: events keep going to the same message.
+func (m *Model) ensureAssistantMsg() int {
+	if i := m.streamingAssistant(); i >= 0 {
+		return i
 	}
+	m.messages = append(m.messages, newAssistantMessage())
+	return len(m.messages) - 1
+}
+
+// streamingAssistant returns the index of the assistant message still
+// streaming in the current turn, or -1.
+func (m *Model) streamingAssistant() int {
+	for i := len(m.messages) - 1; i >= 0; i-- {
+		switch {
+		case m.messages[i].Role == RoleUser:
+			return -1
+		case m.messages[i].Role == RoleAssistant && m.messages[i].Streaming:
+			return i
+		}
+	}
+	return -1
 }
 
 // effectiveInputRows computes the visual row count for the current textarea
@@ -1282,62 +1337,10 @@ func (m Model) showInputCount() bool {
 func (m Model) handleResize() Model {
 	m.width = max(m.width, 40)
 	m.height = max(m.height, 10)
-
-	rows := m.effectiveInputRows()
-	countH := 0
-	if m.showInputCount() {
-		countH = 1
-	}
-	inputH := rows + 2 + countH // content rows + top/bottom border + optional count
-	if m.pendingApproval != nil {
-		// The permission dialog takes the input box's place: size the
-		// conversation around whichever is shown.
-		dialogH := lipgloss.Height(m.renderApproval())
-		if m.approvalFeedback {
-			inputH += dialogH
-		} else {
-			inputH = dialogH
-		}
-	}
-	vpH := m.height - headerHeight - footerHeight - inputH - 2
-	if vpH < 4 {
-		vpH = 4
-	}
-
-	m.viewport.Width = m.width
-	m.viewport.Height = vpH
 	m.textarea.SetWidth(m.width - 4)
-	m.textarea.SetHeight(rows)
-
-	m.vpReady = true
-	m.refreshViewport()
-	if m.atBottom {
-		m.viewport.GotoBottom()
-	}
+	m.textarea.SetHeight(m.effectiveInputRows())
+	m.ready = true
 	return m
-}
-
-func (m *Model) refreshViewport() {
-	if !m.vpReady {
-		return
-	}
-	m.viewport.SetContent(m.renderConversation())
-}
-
-// renderConversation renders the full conversation for the viewport.
-func (m *Model) renderConversation() string {
-	innerWidth := m.width - 4
-	if innerWidth < 20 {
-		innerWidth = 20
-	}
-	var sb strings.Builder
-	for i := range m.messages {
-		if sb.Len() > 0 {
-			sb.WriteByte('\n')
-		}
-		sb.WriteString(m.renderMessageAt(i, innerWidth))
-	}
-	return sb.String()
 }
 
 func helpText() string {
@@ -1353,7 +1356,11 @@ func helpText() string {
 		"  Ctrl+D          Quit",
 		"  Ctrl+Y          Copy last response",
 		"  Ctrl+O          Show/hide thinking and narration between tool calls",
-		"  PgUp/PgDn      Scroll conversation",
+		"  Shift+Tab       Cycle mode: default → accept edits → plan (code sessions)",
+		"  !<command>      Run a command in your shell; the model sees its output",
+		"  Esc Esc         Rewind code and/or conversation to an earlier message",
+		"  @path           Attach a file or folder (Tab/Enter picks from the list)",
+		"  Scroll/select  The conversation is in your terminal's scrollback: scroll and select as usual",
 		"",
 		"  Slash commands",
 		"  ─────────────────────────────────",
@@ -1361,6 +1368,7 @@ func helpText() string {
 		"  /model [name]    Show or switch model",
 		"  /copy [n|code [n]]  Copy last response, an earlier one, or a code block",
 		"  /retry [--model <name>]  Resend the last message, replacing the response",
+		"  /max-turns [n]   Show or set the agentic step limit (0 = no limit)",
 		"  /sessions        List recent sessions",
 		"  /resume <id|n>   Resume a session",
 		"  /code            Switch to code mode (file tools)",
@@ -1588,58 +1596,54 @@ func (m *Model) handleStreamEvent(ev StreamEvent) []tea.Cmd {
 
 	switch ev.Kind {
 	case "chunk":
-		m.ensureAssistantMsg()
-		last := len(m.messages) - 1
+		last := m.ensureAssistantMsg()
 		m.messages[last].appendChunk(ev.Chunk)
-		m.refreshViewport()
-		if m.atBottom {
-			m.viewport.GotoBottom()
-		}
 		cmds = append(cmds, waitForStreamEvent(m.streamCh, m.streamStop))
 
 	case "tool_call":
-		m.ensureAssistantMsg()
-		last := len(m.messages) - 1
+		last := m.ensureAssistantMsg()
 		m.messages[last].addToolEvent(ToolEvent{
 			Kind: ToolCall,
+			ID:   ev.ToolID,
 			Name: ev.ToolName,
 			Args: ev.ToolArgs,
 		})
-		m.refreshViewport()
+		cmds = append(cmds, waitForStreamEvent(m.streamCh, m.streamStop))
+
+	case "tool_start":
+		last := m.ensureAssistantMsg()
+		m.messages[last].addToolEvent(ToolEvent{Kind: ToolStart, ID: ev.ToolID, Name: ev.ToolName})
+		cmds = append(cmds, waitForStreamEvent(m.streamCh, m.streamStop))
+
+	case "tool_progress":
+		last := m.ensureAssistantMsg()
+		m.messages[last].addToolEvent(ToolEvent{Kind: ToolActivity, ID: ev.ToolID, Name: ev.ToolName, Summary: ev.Summary})
 		cmds = append(cmds, waitForStreamEvent(m.streamCh, m.streamStop))
 
 	case "tool_exec":
-		m.ensureAssistantMsg()
-		last := len(m.messages) - 1
+		last := m.ensureAssistantMsg()
 		m.messages[last].addToolEvent(ToolEvent{
 			Kind:       ToolExec,
+			ID:         ev.ToolID,
 			Name:       ev.ToolName,
 			Status:     ev.Status,
 			DurationMs: ev.DurationMs,
 			Summary:    ev.Summary,
 		})
-		m.refreshViewport()
 		cmds = append(cmds, waitForStreamEvent(m.streamCh, m.streamStop))
 
 	case "progress":
-		m.ensureAssistantMsg()
-		last := len(m.messages) - 1
+		last := m.ensureAssistantMsg()
 		m.messages[last].addToolEvent(ToolEvent{
 			Kind:      ToolProgress,
 			Iteration: ev.Iteration,
 			Tools:     ev.Tools,
 		})
-		m.refreshViewport()
 		cmds = append(cmds, waitForStreamEvent(m.streamCh, m.streamStop))
 
 	case "thinking":
-		m.ensureAssistantMsg()
-		last := len(m.messages) - 1
+		last := m.ensureAssistantMsg()
 		m.messages[last].appendThinking(ev.Chunk)
-		m.refreshViewport()
-		if m.atBottom {
-			m.viewport.GotoBottom()
-		}
 		cmds = append(cmds, waitForStreamEvent(m.streamCh, m.streamStop))
 
 	case "heartbeat":
@@ -1648,11 +1652,10 @@ func (m *Model) handleStreamEvent(ev StreamEvent) []tea.Cmd {
 	case "approval":
 		// The stream goroutine already created a reply channel; store it.
 		// The stream pump is suspended until handleApprovalKey sends the answer.
-		ap := ApprovalRequestMsg{ToolName: ev.ToolName, Args: ev.ToolArgs, ReplyCh: ev.ReplyCh}
+		ap := ApprovalRequestMsg{ToolID: ev.ToolID, ToolName: ev.ToolName, Args: ev.ToolArgs, ReplyCh: ev.ReplyCh, AlwaysLabel: ev.AlwaysLabel}
 		m.pendingApproval = &ap
 		m.approvalIdx = 0
 		*m = m.handleResize()
-		m.viewport.GotoBottom()
 		// No next-read cmd here — handleApprovalKey will resume the stream pump.
 
 	case "rate_limited":
@@ -1667,8 +1670,6 @@ func (m *Model) handleStreamEvent(ev StreamEvent) []tea.Cmd {
 			}
 		}
 		m.messages = append(m.messages, newSystemMessage("⚠ "+ev.ErrMsg))
-		m.refreshViewport()
-		m.viewport.GotoBottom()
 		m.textarea.Focus()
 		cmds = append(cmds, waitForStreamEvent(m.streamCh, m.streamStop))
 
@@ -1682,14 +1683,11 @@ func (m *Model) handleStreamEvent(ev StreamEvent) []tea.Cmd {
 		// Show a non-blocking warning and continue reading the stream.
 		// The response is still in progress; the done event follows shortly.
 		m.messages = append(m.messages, newSystemMessage("⚠ "+ev.ErrMsg))
-		m.refreshViewport()
 		cmds = append(cmds, waitForStreamEvent(m.streamCh, m.streamStop))
 
 	case "error":
 		m.streaming = false
 		m.messages = append(m.messages, newSystemMessage("Error: "+ev.ErrMsg))
-		m.refreshViewport()
-		m.viewport.GotoBottom()
 		m.textarea.Focus()
 
 	case "done":
@@ -1697,11 +1695,9 @@ func (m *Model) handleStreamEvent(ev StreamEvent) []tea.Cmd {
 		m.liveUsagePct = 0
 		// Search backwards: a usage_warning system message may have been appended
 		// after the assistant message, so the last entry might not be the assistant.
-		newlyFinalizedIdx := -1
 		for i := len(m.messages) - 1; i >= 0; i-- {
 			if m.messages[i].Role == RoleAssistant && m.messages[i].Streaming {
 				m.messages[i].finishStreaming()
-				newlyFinalizedIdx = i
 				break
 			}
 		}
@@ -1709,15 +1705,6 @@ func (m *Model) handleStreamEvent(ev StreamEvent) []tea.Cmd {
 			m.totalPromptTokens += ev.UsagePromptTokens
 			m.totalCompletionTokens += ev.UsageCompletionTokens
 		}
-		m.refreshViewport()
-		if newlyFinalizedIdx >= 0 && m.messages[newlyFinalizedIdx].Content != "" {
-			// Scroll viewport to the top of the response so it's immediately visible.
-			m.scrollToMessageStart(newlyFinalizedIdx)
-		} else {
-			m.viewport.GotoBottom()
-		}
-		// Sync atBottom so UsageAutoCheckMsg doesn't force-scroll past the response.
-		m.atBottom = m.viewport.AtBottom()
 		m.textarea.Focus()
 		cmds = append(cmds, textarea.Blink)
 		// Silently check usage after each response; shows alert only when >= 80%.
@@ -1734,29 +1721,6 @@ func (m *Model) handleStreamEvent(ev StreamEvent) []tea.Cmd {
 	}
 
 	return cmds
-}
-
-// scrollToMessageStart positions the viewport so the user sees the beginning
-// of the message at msgIdx. The viewport clamps YOffset automatically so this
-// is equivalent to GotoBottom when the remaining content fits on screen.
-func (m *Model) scrollToMessageStart(msgIdx int) {
-	innerWidth := m.width - 4
-	if innerWidth < 20 {
-		innerWidth = 20
-	}
-	var sb strings.Builder
-	for i := 0; i < msgIdx; i++ {
-		if sb.Len() > 0 {
-			sb.WriteByte('\n')
-		}
-		sb.WriteString(m.renderMessageAt(i, innerWidth))
-	}
-	linesBefore := 0
-	if s := sb.String(); s != "" {
-		linesBefore = strings.Count(s, "\n") + 1
-	}
-	m.viewport.YOffset = linesBefore
-	// viewport clamps to maxYOffset internally, so short content auto-bottoms
 }
 
 // waitForStreamEvent returns a tea.Cmd that blocks until the next StreamEvent

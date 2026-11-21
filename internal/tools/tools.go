@@ -3,6 +3,7 @@ package tools
 import (
 	"encoding/json"
 	"fmt"
+	"slices"
 	"strings"
 )
 
@@ -29,7 +30,7 @@ type FunctionDef struct {
 // LocalToolSchemas returns the JSON-encoded tool schemas to send to the LLM.
 // Tools of registered packs (see RegisterPack) are appended after the built-ins.
 func LocalToolSchemas() (string, error) {
-	b, err := json.Marshal(append(builtinSchemas(), packSchemas()...))
+	b, err := json.Marshal(append(append(builtinSchemas(), skillSchemas()...), packSchemas()...))
 	if err != nil {
 		return "", err
 	}
@@ -251,6 +252,35 @@ func builtinSchemas() []ToolSchema {
 		{
 			Type: "function",
 			Function: FunctionDef{
+				Name: "todo_write",
+				Description: "Keep a visible task list for the current work; the user sees it as a checklist. " +
+					"Use it for work with 3 or more steps, or when the user gives several tasks: write the list up front, " +
+					"mark one task in_progress before starting it, and mark it completed as soon as it is done (not in batches). " +
+					"Add tasks you discover along the way. Skip it for a single quick task or a question. " +
+					"Each call replaces the whole list.",
+				Parameters: json.RawMessage(`{
+					"type": "object",
+					"properties": {
+						"todos": {
+							"type": "array",
+							"items": {
+								"type": "object",
+								"properties": {
+									"content":    {"type": "string", "description": "The task, imperative: \"Run the tests\"."},
+									"status":     {"type": "string", "enum": ["pending", "in_progress", "completed"]},
+									"activeForm": {"type": "string", "description": "Present continuous, shown while in progress: \"Running the tests\"."}
+								},
+								"required": ["content", "status"]
+							}
+						}
+					},
+					"required": ["todos"]
+				}`),
+			},
+		},
+		{
+			Type: "function",
+			Function: FunctionDef{
 				Name:        "memory_list",
 				Description: "List all persistent memory keys (project and user level) with a one-line preview of each. Use memory_read to get an entry's full content.",
 				Parameters:  json.RawMessage(`{"type": "object", "properties": {}}`),
@@ -286,24 +316,66 @@ func builtinSchemas() []ToolSchema {
 				}`),
 			},
 		},
-		{
-			Type: "function",
-			Function: FunctionDef{
-				Name:        "task",
-				Description: "Spawn a headless bai subagent to handle a self-contained subtask and return its output. Use to fan out independent work in parallel or to delegate a well-scoped chunk of work. The child runs fully autonomously (--auto) and its output is returned as the result. Budget controls are NOT forwarded to children to avoid double-counting.",
-				Parameters: json.RawMessage(`{
-					"type": "object",
-					"properties": {
-						"prompt":            {"type": "string", "description": "Full task description for the subagent — be specific about what to do and what to return."},
-						"working_directory": {"type": "string", "description": "Working directory for the subagent (absolute path). Defaults to the current directory."},
-						"max_turns":         {"type": "integer", "description": "Maximum agentic iterations for the child. Default: no limit."},
-						"use_worktree":      {"type": "boolean", "description": "Give the subagent an isolated git worktree (--worktree). Useful for experimental changes. Default: false."}
-					},
-					"required": ["prompt"]
-				}`),
-			},
+		taskSchema(),
+	}
+}
+
+// taskSchema describes the task tool, listing the session's agent types so
+// the model can pick one by name (#408).
+func taskSchema() ToolSchema {
+	types := AgentTypes()
+	names := make([]string, 0, len(types))
+	var list strings.Builder
+	for _, t := range types {
+		names = append(names, t.Name)
+		fmt.Fprintf(&list, "\n- %s: %s", t.Name, t.Description)
+	}
+	enum, _ := json.Marshal(names)
+	typeDesc, _ := json.Marshal("Which kind of subagent to run (default: " + DefaultAgentType + "). Prefer explore for read-only questions and plan for designing a change.")
+	return ToolSchema{
+		Type: "function",
+		Function: FunctionDef{
+			Name: "task",
+			Description: "Spawn a headless bai subagent to handle a self-contained subtask and return its output. " +
+				"Use to fan out independent work in parallel or to delegate a well-scoped chunk of work. " +
+				"The child runs autonomously, limited to its agent type's tools, and its output is returned as the result. " +
+				"Budget controls are NOT forwarded to children to avoid double-counting.\n\nAgent types:" + list.String(),
+			Parameters: json.RawMessage(`{
+				"type": "object",
+				"properties": {
+					"prompt":            {"type": "string", "description": "Full task description for the subagent — be specific about what to do and what to return."},
+					"subagent_type":     {"type": "string", "enum": ` + string(enum) + `, "description": ` + string(typeDesc) + `},
+					"working_directory": {"type": "string", "description": "Working directory for the subagent (absolute path). Defaults to the current directory."},
+					"max_turns":         {"type": "integer", "description": "Maximum agentic iterations for the child. Default: no limit."},
+					"use_worktree":      {"type": "boolean", "description": "Give the subagent an isolated git worktree (--worktree). Useful for experimental changes. Default: false."}
+				},
+				"required": ["prompt"]
+			}`),
 		},
 	}
+}
+
+// FilterSchemas keeps only the tools in schemasJSON for which keep returns
+// true, and reports the names of the ones it dropped.
+func FilterSchemas(schemasJSON string, keep func(name string) bool) (string, []string, error) {
+	var schemas []ToolSchema
+	if err := json.Unmarshal([]byte(schemasJSON), &schemas); err != nil {
+		return "", nil, fmt.Errorf("parse schemas: %w", err)
+	}
+	kept := schemas[:0]
+	var dropped []string
+	for _, s := range schemas {
+		if keep(s.Function.Name) {
+			kept = append(kept, s)
+		} else {
+			dropped = append(dropped, s.Function.Name)
+		}
+	}
+	b, err := json.Marshal(kept)
+	if err != nil {
+		return "", nil, err
+	}
+	return string(b), dropped, nil
 }
 
 // MergeSchemas appends extra ToolSchemas to the JSON-encoded base schema string
@@ -339,41 +411,17 @@ func IsReadOnlyTool(toolName string) bool {
 	if t, ok := lookupPackTool(toolName); ok {
 		return t.ReadOnly
 	}
-	switch toolName {
-	case "read_file", "list_dir", "search_files", "search_content", "read_notebook",
-		"web_fetch", "web_search", "memory_read", "memory_list":
-		return true
-	}
-	return false
+	return slices.Contains(readOnlyToolNames, toolName)
 }
 
-// safeBashPrefixes lists command prefixes that are safe to auto-approve without a
-// TUI confirmation prompt. Commands that mutate shared state (rm, git push, git reset)
-// are deliberately excluded.
-var safeBashPrefixes = []string{
-	"git status", "git log", "git diff", "git show", "git branch", "git stash list",
-	"git remote", "git tag", "git describe", "git rev-parse",
-	"go vet", "go build", "go test", "go mod tidy", "go mod verify", "go mod graph",
-	"go run", "go generate", "go list", "golangci-lint",
-	"make build", "make test", "make lint", "make vet", "make check", "make clean",
-	"ls", "ls -", "find ", "cat ", "head ", "tail ", "wc ", "stat ",
-	"echo ", "pwd", "which ", "env", "printenv",
-	"grep ", "rg ", "sed ", "awk ",
-	"npm test", "npm run", "npx ",
-}
-
-// IsSafeBashCommand returns true when the bash command JSON matches a known-safe
-// prefix and should be executed without a user approval prompt.
+// IsSafeBashCommand reports whether a bash tool call (its JSON arguments)
+// only reads state and can run without an approval prompt. Every segment of
+// a compound command must be read-only — see BashReadOnly.
 func IsSafeBashCommand(argumentsJSON string) bool {
 	var args map[string]any
 	if err := json.Unmarshal([]byte(argumentsJSON), &args); err != nil {
 		return false
 	}
-	cmd := strings.TrimSpace(fmt.Sprintf("%v", args["command"]))
-	for _, prefix := range safeBashPrefixes {
-		if strings.HasPrefix(cmd, prefix) {
-			return true
-		}
-	}
-	return false
+	cmd, _ := args["command"].(string)
+	return BashReadOnly(strings.TrimSpace(cmd))
 }

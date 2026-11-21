@@ -1,6 +1,9 @@
 package tui
 
-import "strings"
+import (
+	"fmt"
+	"strings"
+)
 
 // SlashCommand is a command triggered by typing / in the input.
 type SlashCommand struct {
@@ -14,6 +17,9 @@ type SlashCommand struct {
 	// /system). It runs off the UI goroutine with the text typed after the
 	// command; the returned text is shown as a system message.
 	Run func(args string) (string, error)
+	// Instant runs Run on the UI goroutine and shows only its output: for
+	// quick local commands (no network) that read UI-owned state.
+	Instant bool
 }
 
 // builtinCommands is the canonical list shown in the autocomplete menu.
@@ -30,6 +36,7 @@ var builtinCommands = []SlashCommand{
 	{Name: "/code", Description: "Switch to code mode and load file system tools"},
 	{Name: "/chat", Description: "Switch to chat mode and unload file tools"},
 	{Name: "/auto", Description: "Toggle auto-apply for code tools (code sessions only)"},
+	{Name: "/max-turns", Description: "Show or set the agentic step limit for this session  /max-turns 100"},
 	{Name: "/plan", Description: "Toggle plan mode — read-only tools until you exit it"},
 	{Name: "/mcp", Description: "List or activate MCP servers  /mcp github"},
 	{Name: "/memory", Description: "List, show, or delete memory entries  /memory <key> | /memory delete <key>"},
@@ -37,6 +44,8 @@ var builtinCommands = []SlashCommand{
 	{Name: "/usage", Description: "Show token usage and rate limits"},
 	{Name: "/tools", Description: "List available tools"},
 	{Name: "/context", Description: "Show current context info"},
+	{Name: "/status", Description: "Show version, model, mode, session and settings"},
+	{Name: "/rewind", Description: "Restore code and/or conversation to before an earlier message (Esc Esc)"},
 	{Name: "/update", Description: "Check for a newer version and upgrade"},
 	{Name: "/exit", Description: "Quit the session", Alias: "quit"},
 }
@@ -65,4 +74,40 @@ func matchSlashCommands(filter string, custom []SlashCommand) []SlashCommand {
 		}
 	}
 	return out
+}
+
+// statusText is /status: what this session is running with, like Claude
+// Code's /status.
+func (m Model) statusText() string {
+	mode := m.mode().describe()
+	turns := "no limit"
+	if m.cfg.MaxTurns > 0 {
+		turns = fmt.Sprintf("%d steps", m.cfg.MaxTurns)
+	}
+	model := m.modelName()
+	if m.cfg.Model == "" {
+		model += " (chosen by the server)"
+	}
+	lines := []string{
+		"Version:    " + m.cfg.Version,
+		"Model:      " + model,
+		"Session:    " + m.cfg.ChatID,
+		"Directory:  " + m.cfg.WorkDir,
+	}
+	if m.cfg.IsCode {
+		lines = append(lines, "Mode:       "+mode, "Max turns:  "+turns)
+	}
+	if m.cfg.StatusFn != nil {
+		lines = append(lines, m.cfg.StatusFn()...)
+	}
+	return strings.Join(lines, "\n")
+}
+
+// modelName is the session's model for display; with none chosen, the
+// server picks one.
+func (m Model) modelName() string {
+	if m.cfg.Model == "" {
+		return "default"
+	}
+	return m.cfg.Model
 }

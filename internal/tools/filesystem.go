@@ -47,6 +47,15 @@ var pathArgNames = map[string]string{
 // Execute dispatches a tool call to the appropriate local implementation.
 // Arguments is the JSON string from the LLM tool call.
 func Execute(name, argumentsJSON string) (string, error) {
+	return ExecuteContext(context.Background(), name, argumentsJSON)
+}
+
+// ExecuteContext is Execute with a context. A task call reports its
+// subagent's activity to the context's ProgressFunc (see WithProgress).
+func ExecuteContext(ctx context.Context, name, argumentsJSON string) (string, error) {
+	if strings.TrimSpace(argumentsJSON) == "" {
+		argumentsJSON = "{}" // no-argument call sent as "" by some models
+	}
 	if t, ok := lookupPackTool(name); ok {
 		return t.Handler(context.Background(), argumentsJSON)
 	}
@@ -136,6 +145,12 @@ func Execute(name, argumentsJSON string) (string, error) {
 		return MemoryRead(key)
 	case "memory_list":
 		return MemoryList()
+	case "todo_write":
+		return TodoWrite(argumentsJSON)
+	case "skill":
+		name, _ := args["name"].(string)
+		file, _ := args["file"].(string)
+		return LoadSkillTool(name, file)
 	case "memory_write":
 		key, _ := args["key"].(string)
 		content, _ := args["content"].(string)
@@ -149,7 +164,12 @@ func Execute(name, argumentsJSON string) (string, error) {
 		workDir, _ := args["working_directory"].(string)
 		maxTurnsF, _ := args["max_turns"].(float64)
 		useWorktree, _ := args["use_worktree"].(bool)
-		return RunTask(context.Background(), prompt, workDir, int(maxTurnsF), useWorktree)
+		agentName, _ := args["subagent_type"].(string)
+		agent, err := lookupAgentType(agentName)
+		if err != nil {
+			return "", err
+		}
+		return RunTask(ctx, agent, prompt, workDir, int(maxTurnsF), useWorktree)
 	default:
 		return "", fmt.Errorf("unknown tool: %s", name)
 	}

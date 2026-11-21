@@ -1,0 +1,69 @@
+package tui
+
+import (
+	"strings"
+	"testing"
+
+	tea "github.com/charmbracelet/bubbletea"
+)
+
+func runSlash(t *testing.T, m Model, cmd string) Model {
+	t.Helper()
+	m.textarea.SetValue(cmd)
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	return m
+}
+
+func lastSystem(m Model) string { return m.messages[len(m.messages)-1].Content }
+
+func TestMaxTurnsSlashCommand(t *testing.T) {
+	m := newTestModel("")
+	got := 0
+	m.cfg.MaxTurns = 50
+	m.cfg.SetMaxTurnsFn = func(n int) { got = n }
+
+	m = runSlash(t, m, "/max-turns")
+	if !strings.Contains(lastSystem(m), "50") {
+		t.Errorf("bare /max-turns should show the limit, got %q", lastSystem(m))
+	}
+	m = runSlash(t, m, "/max-turns 120")
+	if got != 120 || m.cfg.MaxTurns != 120 {
+		t.Errorf("limit not applied: fn got %d, cfg %d", got, m.cfg.MaxTurns)
+	}
+	m = runSlash(t, m, "/max-turns zero")
+	if !strings.Contains(lastSystem(m), "Usage") || got != 120 {
+		t.Errorf("invalid input should show usage and keep the limit, got %q (limit %d)", lastSystem(m), got)
+	}
+}
+
+func TestMaxTurnsSlashCommand_NoLimit(t *testing.T) {
+	m := newTestModel("")
+	got := -1
+	m.cfg.SetMaxTurnsFn = func(n int) { got = n }
+	m = runSlash(t, m, "/max-turns")
+	if !strings.Contains(lastSystem(m), "no limit") {
+		t.Errorf("unlimited session should say so, got %q", lastSystem(m))
+	}
+	m.cfg.MaxTurns = 30
+	m = runSlash(t, m, "/max-turns 0")
+	if got != 0 || m.cfg.MaxTurns != 0 || !strings.Contains(lastSystem(m), "no limit") {
+		t.Errorf("/max-turns 0 should remove the limit: fn %d, cfg %d, %q", got, m.cfg.MaxTurns, lastSystem(m))
+	}
+}
+
+func TestMaxTurnsSlashCommand_UnavailableOutsideCode(t *testing.T) {
+	m := runSlash(t, newTestModel(""), "/max-turns 10")
+	if !strings.Contains(lastSystem(m), "only available") {
+		t.Errorf("got %q", lastSystem(m))
+	}
+}
+
+// The max-turns notice streams as Markdown: its suggested command must
+// survive rendering (a "<n>" placeholder was dropped as an HTML tag).
+func TestMaxTurnsNoticeSurvivesMarkdown(t *testing.T) {
+	notice := "⚠  Paused after 50 steps (max-turns limit). Type `continue` to keep going, or `/max-turns 100` to raise the limit for this session."
+	out := renderMixed(notice, 100, DefaultTheme())
+	if !strings.Contains(out, "/max-turns 100") || !strings.Contains(out, "continue") {
+		t.Errorf("suggestion lost in rendering:\n%s", out)
+	}
+}

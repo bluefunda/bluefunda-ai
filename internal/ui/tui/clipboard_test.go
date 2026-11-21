@@ -46,3 +46,16 @@ func TestEmitOSC52_OversizedInputWritesNothing(t *testing.T) {
 		t.Errorf("expected nothing written for oversized input, got %d bytes", buf.Len())
 	}
 }
+
+func TestIsSSH(t *testing.T) {
+	for _, k := range []string{"SSH_TTY", "SSH_CONNECTION", "SSH_CLIENT"} {
+		t.Setenv(k, "")
+	}
+	if isSSH() {
+		t.Error("no SSH variables set: want false")
+	}
+	t.Setenv("SSH_CONNECTION", "10.0.0.1 5000 10.0.0.2 22")
+	if !isSSH() {
+		t.Error("SSH_CONNECTION set: want true")
+	}
+}

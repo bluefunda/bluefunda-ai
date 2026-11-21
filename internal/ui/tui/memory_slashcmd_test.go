@@ -24,7 +24,7 @@ func TestMemorySlashCommand_EmptyShowsHint(t *testing.T) {
 	t.Chdir(t.TempDir())
 
 	m := newTestModel("")
-	m.vpReady = true
+	m.ready = true
 	m.textarea.SetValue("/memory")
 	nm, _ := m.submitInput()
 	m = nm.(Model)
@@ -40,7 +40,7 @@ func TestMemorySlashCommand_ListsEntry(t *testing.T) {
 	writeMemoryFixture(t, dir, "arch-notes", "Repo uses a monorepo layout.\nMore detail here.")
 
 	m := newTestModel("")
-	m.vpReady = true
+	m.ready = true
 	m.textarea.SetValue("/memory")
 	nm, _ := m.submitInput()
 	m = nm.(Model)
@@ -56,7 +56,7 @@ func TestMemorySlashCommand_ShowsEntryContent(t *testing.T) {
 	writeMemoryFixture(t, dir, "arch-notes", "Full content of the note.")
 
 	m := newTestModel("")
-	m.vpReady = true
+	m.ready = true
 	m.textarea.SetValue("/memory arch-notes")
 	nm, _ := m.submitInput()
 	m = nm.(Model)
@@ -70,7 +70,7 @@ func TestMemorySlashCommand_MissingKeyReportsError(t *testing.T) {
 	t.Chdir(t.TempDir())
 
 	m := newTestModel("")
-	m.vpReady = true
+	m.ready = true
 	m.textarea.SetValue("/memory does-not-exist")
 	nm, _ := m.submitInput()
 	m = nm.(Model)
@@ -86,7 +86,7 @@ func TestMemorySlashCommand_Delete(t *testing.T) {
 	writeMemoryFixture(t, dir, "arch-notes", "Will be deleted.")
 
 	m := newTestModel("")
-	m.vpReady = true
+	m.ready = true
 	m.textarea.SetValue("/memory delete arch-notes")
 	nm, _ := m.submitInput()
 	m = nm.(Model)

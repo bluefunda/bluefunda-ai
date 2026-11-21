@@ -933,3 +933,118 @@ func testLoadStandaloneBreqConfig(t *testing.T, withKeychain bool) {
 		t.Errorf("reload after save: %+v, %v", again.Auth, err)
 	}
 }
+
+// brokenKeychain reports itself available but can't keep secrets — like
+// secret-tool on a headless session with no unlocked keyring. setErr makes
+// Set fail outright; otherwise Set "succeeds" but nothing can be read back.
+type brokenKeychain struct{ setErr bool }
+
+func (b brokenKeychain) Available() bool { return true }
+func (b brokenKeychain) Set(k, v string) error {
+	if b.setErr {
+		return errors.New("secret-tool store: no unlocked collection")
+	}
+	return nil
+}
+func (b brokenKeychain) Get(k string) (string, error) { return "", errors.New("not found") }
+func (b brokenKeychain) Delete(k string) error        { return nil }
+
+// Login must survive a keychain that exists but doesn't work: the tokens
+// fall back to the encrypted YAML file and the next Load finds them.
+func TestSaveLoad_BrokenKeychainFallsBackToFile(t *testing.T) {
+	for name, kc := range map[string]brokenKeychain{
+		"set fails":            {setErr: true},
+		"set lost on readback": {setErr: false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			home := withTempHome(t)
+			orig := keychain.Default
+			keychain.SetBackend(kc)
+			defer keychain.SetBackend(orig)
+
+			cfg := defaultConfig()
+			cfg.Auth.AccessToken = "access-abc"
+			cfg.Auth.RefreshToken = "refresh-xyz"
+			if err := Save(cfg); err != nil {
+				t.Fatalf("Save: %v", err)
+			}
+
+			raw, err := os.ReadFile(filepath.Join(home, ".bai", "config.yaml"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if strings.Contains(string(raw), "access-abc") {
+				t.Error("token must be encrypted in the file, not plaintext")
+			}
+			if !strings.Contains(string(raw), "enc:") {
+				t.Errorf("expected encrypted tokens in the file:\n%s", raw)
+			}
+
+			got, err := Load()
+			if err != nil {
+				t.Fatalf("Load: %v", err)
+			}
+			if got.Auth.AccessToken != "access-abc" || got.Auth.RefreshToken != "refresh-xyz" {
+				t.Errorf("Load lost tokens: access=%q refresh=%q", got.Auth.AccessToken, got.Auth.RefreshToken)
+			}
+		})
+	}
+}
+
+// Tokens left in the file by a failed keychain write move into the keychain
+// once it works, and both tokens (not just the access token) are recovered.
+func TestLoad_MigratesFileTokensIntoWorkingKeychain(t *testing.T) {
+	home := withTempHome(t)
+	orig := keychain.Default
+	defer keychain.SetBackend(orig)
+
+	keychain.SetBackend(brokenKeychain{setErr: true})
+	cfg := defaultConfig()
+	cfg.Auth.AccessToken = "access-abc"
+	cfg.Auth.RefreshToken = "refresh-xyz"
+	if err := Save(cfg); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+
+	mock := newMockKeychain(true)
+	keychain.SetBackend(mock)
+	got, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if got.Auth.AccessToken != "access-abc" || got.Auth.RefreshToken != "refresh-xyz" {
+		t.Errorf("tokens = %q / %q", got.Auth.AccessToken, got.Auth.RefreshToken)
+	}
+	if mock.store["access_token"] != "access-abc" || mock.store["refresh_token"] != "refresh-xyz" {
+		t.Errorf("tokens not migrated into the keychain: %v", mock.store)
+	}
+	raw, _ := os.ReadFile(filepath.Join(home, ".bai", "config.yaml"))
+	if strings.Contains(string(raw), "enc:") {
+		t.Errorf("file should no longer hold tokens after migration:\n%s", raw)
+	}
+}
+
+func TestLoadUserSettings(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	s, path, err := LoadUserSettings()
+	if err != nil || len(s.Permissions.Allow) != 0 {
+		t.Fatalf("missing file should give empty settings: %v %+v", err, s)
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("permissions:\n  allow:\n    - \"bash:git fetch *\"\n  deny:\n    - \"bash:rm -rf *\"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	s, _, err = LoadUserSettings()
+	if err != nil || len(s.Permissions.Allow) != 1 || s.Permissions.Deny[0] != "bash:rm -rf *" {
+		t.Fatalf("got %+v, %v", s, err)
+	}
+	if err := os.WriteFile(path, []byte("permissions: [oops"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := LoadUserSettings(); err == nil {
+		t.Error("a broken settings file must be an error, not silently ignored")
+	}
+}

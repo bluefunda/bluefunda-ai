@@ -44,6 +44,9 @@ var (
 	rootPlan             bool
 	rootAllowedTools     []string
 	rootDisallowedTools  []string
+	rootTools            []string
+	rootInputFormat      string
+	rootJSONSchema       string
 
 	// Captured by PersistentPostRunE for Execute's post-run signal
 	// recording — PersistentPostRunE sees the actually-invoked (leaf)
@@ -86,6 +89,7 @@ func runDefault(cmd *cobra.Command, args []string) error {
 	if rootMaxTurns > 0 {
 		codeMaxTurns = rootMaxTurns
 	}
+	codeMaxTurnsSet = cmd.Flags().Changed("max-turns")
 	if rootMaxContextTokens > 0 {
 		codeMaxContextTokens = rootMaxContextTokens
 	}
@@ -112,6 +116,9 @@ func runDefault(cmd *cobra.Command, args []string) error {
 	codePlanMode = rootPlan
 	codeAllowedTools = rootAllowedTools
 	codeDisallowedTools = rootDisallowedTools
+	codeTools = rootTools
+	codeInputFormat = rootInputFormat
+	codeJSONSchema = rootJSONSchema
 	return runAgenticSession(args)
 }
 
@@ -147,6 +154,8 @@ func init() {
 	rootCmd.Flags().BoolVarP(&rootWorktree, "worktree", "w", false, "Run agent in an isolated git worktree; prompt to apply/discard on exit")
 	rootCmd.Flags().BoolVar(&rootPlan, "plan", false, "Start in plan mode: restrict to read-only tools until /plan allows changes")
 	registerPermissionFlags(rootCmd.Flags(), &rootAllowedTools, &rootDisallowedTools)
+	registerToolsFlag(rootCmd.Flags(), &rootTools)
+	registerHeadlessFlags(rootCmd.Flags(), &rootInputFormat, &rootJSONSchema)
 	rootCmd.PersistentFlags().BoolVar(&rootNoColor, "no-color", false, "Disable colored output")
 	_ = rootCmd.PersistentFlags().MarkHidden("no-color")
 	rootCmd.PersistentPreRunE = func(cmd *cobra.Command, args []string) error {

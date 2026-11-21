@@ -207,6 +207,7 @@ func runChatSession(chatID, initialPrompt, model, mcpServer string) error {
 
 	p := printer(cfg)
 	var titleWg sync.WaitGroup
+	agents := loadIncludedAgents(conn)
 
 	submitFn := func(cid, mdl, input string, isNew bool) <-chan tui.StreamEvent {
 		if conn.TS.NearExpiry(2 * time.Minute) {
@@ -226,6 +227,7 @@ func runChatSession(chatID, initialPrompt, model, mcpServer string) error {
 			Model:         mdl,
 			IsNewChat:     isNew,
 			McpServerName: mcpServer,
+			McpServers:    mcpServerRefs(mcpServer, agents.active()),
 		}
 
 		ctx, cancel := context.WithCancel(context.Background())
@@ -345,10 +347,13 @@ func runChatSession(chatID, initialPrompt, model, mcpServer string) error {
 					Type:        s.GetType(),
 					Available:   s.GetIsAvailable(),
 					Description: s.GetShortDescription(),
+					Included:    agents.isIncluded(s.GetName()),
+					Off:         agents.isOff(s.GetName()),
 				})
 			}
 			return items, nil
 		},
+		MCPIncludeFn: agents.setOn,
 		ListModelsFn: func() ([]tui.ModelInfo, error) {
 			ctx, cancel := caigrpc.ContextWithTimeout()
 			defer cancel()

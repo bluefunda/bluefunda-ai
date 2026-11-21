@@ -409,6 +409,10 @@ func runAgenticSession(args []string) error {
 		}
 	}
 
+	// Agents included for this user (on in chat mode), as in the web app.
+	sessionAgents = loadIncludedAgents(conn)
+	defer func() { sessionAgents = nil }()
+
 	// --- Local MCP servers (#85) ---
 	// Start servers defined in .bai/settings.yaml mcp_servers and merge their
 	// tools into the schema sent to the LLM on every agentic turn.
@@ -743,7 +747,25 @@ func runAgenticSession(args []string) error {
 			[]tui.SlashCommand{permissionsCommand(permSources, sessionAllow), agentsCommand(), todosCommand(), skillsCommand(), compactCmd},
 			skillCommands(tools.Skills())),
 		RetryFn: retryFn,
-		FilesFn: mentionCandidates,
+		MCPListFn: func() ([]tui.MCPInfo, error) {
+			ctx, cancel := caigrpc.ContextWithTimeout()
+			defer cancel()
+			resp, err := conn.Client.GetMcpInfo(ctx, &pb.GetMcpInfoRequest{})
+			if err != nil {
+				return nil, err
+			}
+			var items []tui.MCPInfo
+			for _, s := range resp.GetMcpServers() {
+				items = append(items, tui.MCPInfo{
+					Name: s.GetName(), Type: s.GetType(), Available: s.GetIsAvailable(),
+					Description: s.GetShortDescription(),
+					Included:    sessionAgents.isIncluded(s.GetName()), Off: sessionAgents.isOff(s.GetName()),
+				})
+			}
+			return items, nil
+		},
+		MCPIncludeFn: sessionAgents.setOn,
+		FilesFn:      mentionCandidates,
 		RewindPointsFn: func() []tui.RewindPoint {
 			locked := turnMu.TryLock()
 			if locked {
@@ -783,7 +805,11 @@ func runAgenticSession(args []string) error {
 					humanTokens(estimateTokens(history)), humanTokens(maxContextTokens))
 				turnMu.Unlock()
 			}
-			return statusLines(ctxLine, permAllow, permDeny, mcpMgr.Status())
+			lines := statusLines(ctxLine, permAllow, permDeny, mcpMgr.Status())
+			if on := sessionAgents.active(); len(on) > 0 {
+				lines = append(lines, "Included:   "+strings.Join(on, ", ")+" (in chat mode: /chat or --no-tools)")
+			}
+			return lines
 		},
 		DisableUpdateCheck: !cfg.UpdateCheckEnabled(),
 		AccountFn: func() (*tui.AccountInfo, error) {
@@ -1294,6 +1320,12 @@ func agenticLoopTUI(
 		}
 
 		req := buildCodeRequest(chatID, model, toolSchemas, history, isFirstTurn && iteration == 0)
+		if toolSchemas == "" {
+			// Chat mode (/chat, --no-tools): the backend runs the user's
+			// server-side agents, so the included ones go with every turn.
+			// With local tools it uses those alone.
+			req.McpServers = mcpServerRefs("", sessionAgents.active())
+		}
 
 		ctx, cancel := context.WithCancel(context.Background())
 		stream, err := conn.Client.Chat(ctx, req)

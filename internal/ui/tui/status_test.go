@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
@@ -108,5 +109,31 @@ func TestWelcomeShowsDefaultModel(t *testing.T) {
 	m := New(SessionConfig{ChatID: "test-0000-0000-0000-000000000000"}, nil)
 	if !strings.Contains(m.messages[0].Content, "model: default") {
 		t.Errorf("welcome = %q", m.messages[0].Content)
+	}
+}
+
+// /mcp off|on switches an included agent; the list marks included ones.
+func TestMCPIncludeToggle(t *testing.T) {
+	m := newTestModel("")
+	m.ready = true
+	var calls []string
+	m.cfg.MCPIncludeFn = func(name string, on bool) bool {
+		calls = append(calls, fmt.Sprint(name, on))
+		return name == "inc-mcp"
+	}
+	for _, in := range []string{"/mcp off inc-mcp", "/mcp on inc-mcp", "/mcp off other"} {
+		m.textarea.SetValue(in)
+		nm, _ := m.submitInput()
+		m = nm.(Model)
+	}
+	if strings.Join(calls, ",") != "inc-mcpfalse,inc-mcptrue,otherfalse" {
+		t.Errorf("calls = %q", calls)
+	}
+	if last := m.messages[len(m.messages)-1].Content; !strings.Contains(last, "isn't an included agent") {
+		t.Errorf("last = %q", last)
+	}
+	list := formatMCPList([]MCPInfo{{Name: "inc-mcp", Available: true, Included: true}, {Name: "off-mcp", Included: true, Off: true}})
+	if !strings.Contains(list, "inc-mcp") || !strings.Contains(list, "(included)") || !strings.Contains(list, "off this session") {
+		t.Errorf("list:\n%s", list)
 	}
 }

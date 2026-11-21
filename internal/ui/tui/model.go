@@ -135,11 +135,14 @@ type SessionConfig struct {
 	UsageFn        func() (*UsageInfo, error)    // nil = usage not available
 	MCPListFn      func() ([]MCPInfo, error)     // nil = MCP listing not available
 	MCPActivateFn  func(name string) error       // nil = MCP activation not available
-	ListModelsFn   func() ([]ModelInfo, error)   // nil = model listing not available
-	SetAutoApplyFn func(enabled bool)            // nil = auto-apply not available (non-code sessions)
-	MaxTurns       int                           // current agentic step limit per request (shown by /max-turns)
-	SetMaxTurnsFn  func(n int)                   // nil = /max-turns not available
-	SetPlanModeFn  func(enabled bool)            // nil = plan mode not available (non-code sessions)
+	// MCPIncludeFn switches an included agent on or off for the session
+	// (/mcp on|off <name>); it reports false if name isn't included.
+	MCPIncludeFn   func(name string, on bool) bool
+	ListModelsFn   func() ([]ModelInfo, error) // nil = model listing not available
+	SetAutoApplyFn func(enabled bool)          // nil = auto-apply not available (non-code sessions)
+	MaxTurns       int                         // current agentic step limit per request (shown by /max-turns)
+	SetMaxTurnsFn  func(n int)                 // nil = /max-turns not available
+	SetPlanModeFn  func(enabled bool)          // nil = plan mode not available (non-code sessions)
 	// AcceptEdits auto-approves file edits (Claude Code's accept-edits
 	// mode); SetAcceptEditsFn applies a change. nil = not available.
 	AcceptEdits      bool
@@ -205,6 +208,10 @@ type MCPInfo struct {
 	Type        string
 	Available   bool
 	Description string
+	// Included marks an agent with nothing to connect that is on in every
+	// chat; Off means the user switched it off for this session.
+	Included bool
+	Off      bool
 }
 
 // UsageInfo holds the data shown by /usage.
@@ -1025,6 +1032,13 @@ func (m Model) handleSlashCommand(input string) (tea.Model, tea.Cmd) {
 				}
 			}
 			m.messages = append(m.messages, newSystemMessage("MCP listing not available"))
+		} else if verb, name, ok := strings.Cut(arg, " "); ok && (verb == "on" || verb == "off") && m.cfg.MCPIncludeFn != nil {
+			name = strings.TrimSpace(name)
+			if m.cfg.MCPIncludeFn(name, verb == "on") {
+				m.messages = append(m.messages, newSystemMessage(name+" is "+verb+" for this session."))
+			} else {
+				m.messages = append(m.messages, newSystemMessage(name+" isn't an included agent; /mcp lists them."))
+			}
 		} else {
 			if m.cfg.MCPActivateFn != nil {
 				name := strings.TrimSpace(arg)
@@ -1375,7 +1389,7 @@ func helpText() string {
 		"  /chat            Switch to chat mode (no tools)",
 		"  /auto            Toggle auto-apply for code tools",
 		"  /plan            Toggle plan mode (read-only tools until exited)",
-		"  /mcp [name]      List or activate MCP servers",
+		"  /mcp [name]      List or activate MCP servers; /mcp on|off <name> for included ones",
 		"  /memory [key]    List, show, or `delete <key>` a memory entry",
 		"  /account         Show account info",
 		"  /usage           Show token usage",
@@ -1583,9 +1597,15 @@ func formatMCPList(items []MCPInfo) string {
 			desc = desc[:42] + "..."
 		}
 		line := fmt.Sprintf("  %s  %-20s  %s", status, s.Name, desc)
+		switch {
+		case s.Included && s.Off:
+			line += "  (included, off this session: /mcp on " + s.Name + ")"
+		case s.Included:
+			line += "  (included)"
+		}
 		sb.WriteString(line + "\n")
 	}
-	sb.WriteString("\n  /mcp <name> to activate  ·  ● = available")
+	sb.WriteString("\n  /mcp <name> to activate  ·  /mcp off <name> to leave an included one out  ·  ● = available")
 	return sb.String()
 }
 

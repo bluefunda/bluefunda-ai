@@ -33,14 +33,14 @@ func ShellSegments(command string) (segments []string, ok bool) {
 		if i+1 < len(command) {
 			next = command[i+1]
 		}
-		switch {
-		case quote == '\'':
+		switch quote {
+		case '\'':
 			if c == '\'' {
 				quote = 0
 			}
 			cur.WriteByte(c)
 			continue
-		case quote == '"':
+		case '"':
 			// Substitution still happens inside double quotes.
 			if c == '`' || (c == '$' && next == '(') {
 				return nil, false

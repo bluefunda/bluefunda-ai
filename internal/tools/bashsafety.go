@@ -425,6 +425,37 @@ func BashReadOnly(command string) bool {
 	return true
 }
 
+// BashCreatesOnly reports whether every part of command is mkdir or touch
+// on paths inside the workspace, which accept-edits mode also approves, as
+// Claude Code's does. Substitutions, redirects and other flags are refused.
+func BashCreatesOnly(command string) bool {
+	if strings.ContainsAny(command, "`$") {
+		return false
+	}
+	segs, ok := ShellSegments(command)
+	if !ok {
+		return false
+	}
+	for _, seg := range segs {
+		words, writes := stripRedirects(shellWords(seg))
+		if writes || len(words) < 2 || (words[0] != "mkdir" && words[0] != "touch") {
+			return false
+		}
+		for _, w := range words[1:] {
+			if strings.HasPrefix(w, "-") {
+				if words[0] == "mkdir" && (w == "-p" || w == "--parents" || w == "-v") {
+					continue
+				}
+				return false
+			}
+			if _, err := ConfineToWorkspace(w); err != nil {
+				return false
+			}
+		}
+	}
+	return true
+}
+
 // multiCommandPrograms take a subcommand as their second word, which a
 // "don't ask again" prefix should include (gh api, not just gh).
 var multiCommandPrograms = []string{

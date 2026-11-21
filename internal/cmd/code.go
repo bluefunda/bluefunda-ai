@@ -1916,7 +1916,8 @@ func (s *sessionAllowSet) contains(toolName, argsJSON string) bool {
 	if s.exact[toolName+"\x00"+argsJSON] || s.tools[toolName] {
 		return true
 	}
-	if s.acceptEdits && slices.Contains(editTools, toolName) {
+	if s.acceptEdits && (slices.Contains(editTools, toolName) ||
+		toolName == "bash" && tools.BashCreatesOnly(tools.ExtractPrimaryArg("bash", argsJSON))) {
 		return true
 	}
 	return toolName == "bash" && len(s.bashPrefixes) > 0 &&

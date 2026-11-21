@@ -164,10 +164,14 @@ func TestAcceptEditsMode(t *testing.T) {
 		}
 	}
 	if sa.contains("bash", `{"command":"rm -rf x"}`) {
-		t.Error("accept-edits must not approve bash")
+		t.Error("accept-edits must not approve other bash commands")
+	}
+	t.Chdir(t.TempDir())
+	if !sa.contains("bash", `{"command":"mkdir -p notes"}`) {
+		t.Error("accept-edits should approve mkdir inside the workspace")
 	}
 	sa.setAcceptEdits(false)
-	if sa.contains("edit_file", `{"path":"a"}`) {
+	if sa.contains("edit_file", `{"path":"a"}`) || sa.contains("bash", `{"command":"mkdir -p notes"}`) {
 		t.Error("still approving after the mode is off")
 	}
 }

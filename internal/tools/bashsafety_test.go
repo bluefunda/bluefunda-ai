@@ -146,3 +146,23 @@ func TestCheckPermissions_BashRulesArePerSegment(t *testing.T) {
 		t.Errorf("bare bash rule allows everything: got %v", got)
 	}
 }
+
+func TestBashCreatesOnly(t *testing.T) {
+	t.Chdir(t.TempDir())
+	yes := []string{"mkdir notes", "mkdir -p notes/a/b", "touch notes/a.md", "mkdir -p x && touch x/y", `touch "a b.md"`}
+	no := []string{
+		"mkdir", "rm -r notes", "mkdir x; rm y", "mkdir x | tee y", "touch x > y",
+		"mkdir $(whoami)", "touch `id`", "mkdir -m 777 x", "touch -d yesterday x",
+		"mkdir /tmp/outside", "touch ../escape", "mv a b",
+	}
+	for _, c := range yes {
+		if !BashCreatesOnly(c) {
+			t.Errorf("%q should be allowed", c)
+		}
+	}
+	for _, c := range no {
+		if BashCreatesOnly(c) {
+			t.Errorf("%q should not be allowed", c)
+		}
+	}
+}

@@ -84,9 +84,13 @@ func (m Model) statusText() string {
 	if m.cfg.MaxTurns > 0 {
 		turns = fmt.Sprintf("%d steps", m.cfg.MaxTurns)
 	}
+	model := m.modelName()
+	if m.cfg.Model == "" {
+		model += " (chosen by the server)"
+	}
 	lines := []string{
 		"Version:    " + m.cfg.Version,
-		"Model:      " + m.cfg.Model,
+		"Model:      " + model,
 		"Session:    " + m.cfg.ChatID,
 		"Directory:  " + m.cfg.WorkDir,
 	}
@@ -97,4 +101,13 @@ func (m Model) statusText() string {
 		lines = append(lines, m.cfg.StatusFn()...)
 	}
 	return strings.Join(lines, "\n")
+}
+
+// modelName is the session's model for display; with none chosen, the
+// server picks one.
+func (m Model) modelName() string {
+	if m.cfg.Model == "" {
+		return "default"
+	}
+	return m.cfg.Model
 }

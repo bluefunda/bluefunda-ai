@@ -590,6 +590,7 @@ func TestFormatVersion(t *testing.T) {
 		{"dev", "dev"},
 		{"1.2.3", "v1.2.3"},
 		{"1.35.1", "v1.35.1"},
+		{"v1.68.0-28-g7d8a2c6", "v1.68.0-28-g7d8a2c6"}, // git describe builds
 	}
 	for _, tc := range cases {
 		got := formatVersion(tc.ver)

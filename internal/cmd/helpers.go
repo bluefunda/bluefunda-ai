@@ -156,8 +156,8 @@ func bffConnTo(target func(*config.Config) string) (*caigrpc.Conn, *config.Confi
 
 // formatVersion returns "v<ver>" for release builds, or the raw string (e.g. "dev") otherwise.
 func formatVersion(ver string) string {
-	if ver == "" || ver == "dev" {
-		return ver
+	if ver == "" || ver == "dev" || strings.HasPrefix(ver, "v") {
+		return ver // git describe builds already start with "v"
 	}
 	return "v" + ver
 }

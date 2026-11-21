@@ -87,7 +87,7 @@ func (m Model) renderHeader() string {
 	if m.cfg.Version != "" {
 		left += th.ToolDim.Render("  " + m.cfg.Version)
 	}
-	left += th.ToolDim.Render("  ·  ") + th.ToolDim.Render(m.cfg.Model)
+	left += th.ToolDim.Render("  ·  ") + th.ToolDim.Render(m.modelName())
 
 	// Show working folder: prefer WorkDir (shortened), fall back to RepoName.
 	folder := ""
@@ -150,7 +150,9 @@ func (m *Model) renderMessageAt(idx, width int) string {
 
 	switch msg.Role {
 	case RoleSystem:
-		return "  " + th.SystemMsg.Render(msg.Content)
+		// Every line indented, so multi-line notices (/status, /permissions)
+		// line up.
+		return indentLines(th.SystemMsg.Render(msg.Content), "  ")
 
 	case RoleUser:
 		label := th.UserLabel.Render("You")

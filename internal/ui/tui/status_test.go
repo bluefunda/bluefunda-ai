@@ -3,6 +3,8 @@ package tui
 import (
 	"strings"
 	"testing"
+
+	"github.com/charmbracelet/x/ansi"
 )
 
 func TestStatusCommand(t *testing.T) {
@@ -36,5 +38,23 @@ func TestInstantCommand(t *testing.T) {
 	}
 	if strings.Contains(msgs[len(msgs)-2].Content, "…") {
 		t.Error("no progress line for an instant command")
+	}
+}
+
+// Every line of a multi-line notice is indented, and an unset model reads
+// as the server's default rather than blank.
+func TestStatusLayout(t *testing.T) {
+	m := newTestModel("")
+	m.ready = true
+	m.cfg.Model = ""
+	m.messages = append(m.messages, newSystemMessage(m.statusText()))
+	out := m.renderMessageAt(len(m.messages)-1, 80)
+	for _, line := range strings.Split(out, "\n") {
+		if plain := ansi.Strip(line); plain != "" && !strings.HasPrefix(plain, "  ") {
+			t.Errorf("line not indented: %q", plain)
+		}
+	}
+	if !strings.Contains(out, "default (chosen by the server)") {
+		t.Errorf("model line:\n%s", out)
 	}
 }

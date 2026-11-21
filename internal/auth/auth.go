@@ -38,6 +38,57 @@ type deviceAuthResponse struct {
 	Interval                int    `json:"interval"`
 }
 
+// loginScope is what the web app asks for, minus offline_access: profile and
+// email put the user's name and email in the token, and organization the
+// organizations they belong to, which the backend uses to decide which
+// agents a user may reach. minimalScope is the fallback for a client that
+// isn't allowed the others.
+const (
+	loginScope   = "openid profile email organization"
+	minimalScope = "openid"
+)
+
+// requestDeviceCode starts the device flow. If Keycloak rejects the full
+// scope list (invalid_scope: a scope not assigned to this client), it
+// retries with openid alone, so login never fails over an optional claim.
+func requestDeviceCode(deviceURL string) (*deviceAuthResponse, error) {
+	dev, status, body, err := postDeviceCode(deviceURL, loginScope)
+	if err == nil && status == http.StatusBadRequest && strings.Contains(string(body), "invalid_scope") {
+		dev, status, body, err = postDeviceCode(deviceURL, minimalScope)
+	}
+	if err != nil {
+		return nil, err
+	}
+	if status != http.StatusOK {
+		return nil, fmt.Errorf("device auth failed (HTTP %d): %s", status, string(body))
+	}
+	return dev, nil
+}
+
+func postDeviceCode(deviceURL, scope string) (*deviceAuthResponse, int, []byte, error) {
+	data := url.Values{
+		"client_id": {app.Current().ClientID},
+		"scope":     {scope},
+	}
+	resp, err := http.Post(deviceURL, "application/x-www-form-urlencoded", strings.NewReader(data.Encode()))
+	if err != nil {
+		return nil, 0, nil, fmt.Errorf("device auth request: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, 0, nil, fmt.Errorf("read response: %w", err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		return nil, resp.StatusCode, body, nil
+	}
+	var dev deviceAuthResponse
+	if err := json.Unmarshal(body, &dev); err != nil {
+		return nil, 0, nil, fmt.Errorf("parse device response: %w", err)
+	}
+	return &dev, resp.StatusCode, body, nil
+}
+
 // LoginWithDevice performs an OAuth2 Device Authorization Grant (RFC 8628).
 // It shows a user code, opens the browser for verification, and polls
 // until the user completes login.
@@ -45,29 +96,9 @@ func LoginWithDevice(domain, realm string) (*TokenResponse, error) {
 	baseURL := config.AuthURL(domain, realm)
 
 	// Step 1: Request device code
-	deviceURL := baseURL + "/auth/device"
-	data := url.Values{
-		"client_id": {app.Current().ClientID},
-		"scope":     {"openid"},
-	}
-
-	resp, err := http.Post(deviceURL, "application/x-www-form-urlencoded", strings.NewReader(data.Encode()))
+	dev, err := requestDeviceCode(baseURL + "/auth/device")
 	if err != nil {
-		return nil, fmt.Errorf("device auth request: %w", err)
-	}
-	defer func() { _ = resp.Body.Close() }()
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("read response: %w", err)
-	}
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("device auth failed (HTTP %d): %s", resp.StatusCode, string(body))
-	}
-
-	var dev deviceAuthResponse
-	if err := json.Unmarshal(body, &dev); err != nil {
-		return nil, fmt.Errorf("parse device response: %w", err)
+		return nil, err
 	}
 
 	// Step 2: Show user code and open browser

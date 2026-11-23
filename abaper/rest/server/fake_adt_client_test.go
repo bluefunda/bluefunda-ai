@@ -31,6 +31,7 @@ type fakeADTClient struct {
 	updateInterfaceFn       func(ctx context.Context, name, source string) error
 	updateFunctionGroupFn   func(ctx context.Context, name, source string) error
 	getSRVDSourceFn         func(ctx context.Context, name string) (*types.ADTSourceCode, error)
+	getTransportRequestFn   func(ctx context.Context, trkey string) (*types.ADTTransportRequest, error)
 	getPackageContentsFn    func(ctx context.Context, name string) (*types.ADTPackage, error)
 	getNodeContentsFn       func(ctx context.Context, name string) (*types.PackageContentsResult, error)
 	listPackagesFn          func(ctx context.Context, pattern string) ([]types.ADTPackage, error)
@@ -388,6 +389,12 @@ func (f *fakeADTClient) GetTableContents(ctx context.Context, tableName string, 
 }
 func (f *fakeADTClient) GetTransports(ctx context.Context) ([]types.ADTTransport, error) {
 	return nil, nil
+}
+func (f *fakeADTClient) GetTransportRequest(ctx context.Context, trkey string) (*types.ADTTransportRequest, error) {
+	if f.getTransportRequestFn != nil {
+		return f.getTransportRequestFn(ctx, trkey)
+	}
+	return &types.ADTTransportRequest{Number: trkey, Tasks: []types.ADTTransportTask{}}, nil
 }
 func (f *fakeADTClient) GetTransportInfo(ctx context.Context, objectType, objectName string) (*types.ADTTransportInfo, error) {
 	if f.transportInfoFn != nil {

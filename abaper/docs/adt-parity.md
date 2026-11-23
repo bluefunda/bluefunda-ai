@@ -108,6 +108,7 @@
 |---|---|---|---|---|
 | Get transport info for an object | `POST /transports/info` | `GetTransports()` stub — returns empty | ❌ Missing | TS calls `client.transportInfo(url, pkg)` → `GET /transportinfo`; Go has stub only |
 | Create transport request | `POST /transports/create` | ❌ Not present | ❌ Missing | |
+| Read a transport request (tasks, objects) | — | `GetTransportRequest(ctx, trkey)`; REST `GET /api/v1/transports/{trkey}` | ✅ Present (Go only) | ADT `GET /cts/transportrequests/{trkey}`, Accept `application/vnd.sap.adt.transportorganizer.v1+xml`; read-only |
 | List packages by pattern | `POST /objects/list` (type=packages) | `ListPackages(ctx, pattern)` | ✅ Present | |
 | Get package contents / tree | `POST /packages/contents` | `GetPackageContents(ctx, name)` | ✅ Present | |
 | Search objects | `POST /objects/search` | `SearchObjects(ctx, pattern, types)` | ✅ Present | |

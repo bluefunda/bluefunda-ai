@@ -73,6 +73,39 @@ type ADTTransportInfo struct {
 	Transports []ADTTransportEntry `json:"transports"`
 }
 
+// ADTTransportRequest is one transport request read from the ADT transport
+// organizer (GET /sap/bc/adt/cts/transportrequests/{trkey}): header, tasks
+// and the objects recorded in each task.
+type ADTTransportRequest struct {
+	Number      string             `json:"number"`
+	Description string             `json:"description"`
+	Owner       string             `json:"owner"`
+	Status      string             `json:"status"` // "D"=modifiable, "R"=released, "L"=locked, "O"=release started
+	Type        string             `json:"type"`   // "K"=workbench, "W"=customizing, "T"=transport of copies
+	Target      string             `json:"target"`
+	Tasks       []ADTTransportTask `json:"tasks"`
+	// Objects recorded on the request itself rather than in a task. SAP moves
+	// a task's objects to its request when the task is released.
+	Objects []ADTTransportObject `json:"objects,omitempty"`
+}
+
+// ADTTransportTask is a task of a transport request.
+type ADTTransportTask struct {
+	Number      string               `json:"number"`
+	Owner       string               `json:"owner"`
+	Description string               `json:"description"`
+	Status      string               `json:"status"`
+	Objects     []ADTTransportObject `json:"objects"`
+}
+
+// ADTTransportObject is one object entry (E071) of a request or task.
+type ADTTransportObject struct {
+	PgmID       string `json:"pgmid"` // "R3TR", "LIMU", "CORR", ...
+	Type        string `json:"type"`  // "CLAS", "PROG", "TABL", "METH", ...
+	Name        string `json:"name"`
+	Description string `json:"description,omitempty"`
+}
+
 // ADT Configuration
 type ADTConfig struct {
 	Host            string        `json:"host"`
@@ -354,4 +387,6 @@ type ADTClient interface {
 	GetTransports(ctx context.Context) ([]ADTTransport, error)
 	GetTransportInfo(ctx context.Context, objectType, objectName string) (*ADTTransportInfo, error)
 	CreateTransport(ctx context.Context, objectType, objectName, description, packageName string) (string, error)
+	// GetTransportRequest reads a transport request with its tasks and objects (read-only).
+	GetTransportRequest(ctx context.Context, trkey string) (*ADTTransportRequest, error)
 }

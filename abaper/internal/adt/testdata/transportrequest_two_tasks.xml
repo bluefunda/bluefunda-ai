@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Handwritten fixture for GET /sap/bc/adt/cts/transportrequests/DEVK900123
+  (Accept: application/vnd.sap.adt.transportorganizer.v1+xml).
+  Element and attribute names follow abap-adt-api (src/api/transports.ts,
+  transportDetails/parseRequest/parseTask) and sapcli (sap/adt/cts.py and
+  test/unit/test_sap_adt_cts.py TRANSPORT_ATTRIBUTES / TASK_ATTRIBUTES).
+  Not recorded from a live system.
+-->
+<tm:root xmlns:tm="http://www.sap.com/cts/adt/tm" xmlns:atom="http://www.w3.org/2005/Atom" tm:object_type="K">
+  <tm:request tm:number="DEVK900123" tm:parent="" tm:owner="JDOE" tm:desc="Sales order pricing fix" tm:type="K" tm:status="D" tm:status_text="Modifiable" tm:target="QAS" tm:target_desc="Quality" tm:cts_project="" tm:cts_project_desc="" tm:lastchanged_timestamp="20261120101500" tm:uri="/sap/bc/adt/vit/wb/object_type/%20%20%20%20rq/object_name/DEVK900123">
+    <atom:link href="/sap/bc/adt/cts/transportrequests/DEVK900123" rel="http://www.sap.com/cts/relations/adturi" type="application/vnd.sap.adt.transportorganizer.v1+xml"/>
+    <tm:abap_object tm:pgmid="R3TR" tm:type="TABU" tm:name="ZPRICE_CFG" tm:wbtype="TABU" tm:obj_info="Table Contents" tm:position="000001" tm:lock_status=""/>
+    <tm:task tm:number="DEVK900124" tm:parent="DEVK900123" tm:owner="JDOE" tm:desc="Pricing class changes" tm:type="Development/Correction" tm:status="D" tm:target="" tm:target_desc="" tm:cts_project="" tm:cts_project_desc="" tm:lastchanged_timestamp="20261120101500" tm:uri="/sap/bc/adt/vit/wb/object_type/%20%20%20%20rq/object_name/DEVK900124">
+      <atom:link href="/sap/bc/adt/cts/transportrequests/DEVK900124" rel="http://www.sap.com/cts/relations/adturi" type="application/vnd.sap.adt.transportorganizer.v1+xml"/>
+      <tm:abap_object tm:pgmid="R3TR" tm:type="CLAS" tm:name="ZCL_SD_PRICING" tm:wbtype="CLAS/OC" tm:dummy_uri="/sap/bc/adt/cts/transportrequests/reference?obj_name=ZCL_SD_PRICING&amp;obj_wbtype=CLAS&amp;pgmid=R3TR" tm:obj_info="Class" tm:obj_desc="SD pricing helper" tm:position="000001" tm:lock_status="X"/>
+      <tm:abap_object tm:pgmid="LIMU" tm:type="METH" tm:name="ZCL_SD_PRICING                CALCULATE" tm:obj_info="Method" tm:position="000002" tm:lock_status="X"/>
+      <tm:abap_object tm:pgmid="R3TR" tm:type="PROG" tm:name="ZSD_PRICING_REPORT" tm:wbtype="PROG/P" tm:obj_info="Program" tm:obj_desc="Pricing report" tm:position="000003" tm:lock_status="X"/>
+    </tm:task>
+    <tm:task tm:number="DEVK900125" tm:parent="DEVK900123" tm:owner="ASMITH" tm:desc="DDIC changes &amp; config" tm:type="Development/Correction" tm:status="R" tm:target="" tm:target_desc="" tm:cts_project="" tm:cts_project_desc="" tm:lastchanged_timestamp="20261119160000" tm:uri="/sap/bc/adt/vit/wb/object_type/%20%20%20%20rq/object_name/DEVK900125">
+      <tm:abap_object tm:pgmid="R3TR" tm:type="TABL" tm:name="ZSD_PRICE_LOG" tm:wbtype="TABL/DT" tm:obj_info="Table" tm:obj_desc="Price change log" tm:position="000001" tm:lock_status=""/>
+      <tm:abap_object tm:pgmid="LIMU" tm:type="TABD" tm:name="ZSD_PRICE_LOG" tm:wbtype="TABL/DS" tm:obj_info="Table Definition" tm:position="000002" tm:lock_status=""/>
+      <tm:abap_object tm:pgmid="R3TR" tm:type="DDLS" tm:name="ZI_SD_PRICE" tm:wbtype="DDLS/DF" tm:obj_info="Data Definition" tm:obj_desc="Price interface view" tm:position="000003" tm:lock_status=""/>
+      <tm:abap_object tm:pgmid="R3TR" tm:type="SUSH" tm:name="81680085" tm:position="000004" tm:lock_status=""/>
+    </tm:task>
+  </tm:request>
+</tm:root>

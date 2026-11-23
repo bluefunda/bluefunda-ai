@@ -71,11 +71,13 @@ func NewRestServerWithPool(config *Config, logger *zap.Logger, pool *Pool, fallb
 
 // errNoSAPCredentials is returned when a request carries no SAP credentials
 // and the server has no static client.
-var errNoSAPCredentials = errors.New("no ADT client configured and no X-SAP-* headers provided")
+var errNoSAPCredentials = errors.New("no SAP credentials on this request: send X-SAP-Host, X-SAP-User and X-SAP-Password (and X-SAP-Client) headers")
 
 // clientForRequest returns the ADT client to use for this request.
 // If X-SAP-* headers are present and a pool is configured, a pooled client is
-// returned. Otherwise falls back to the static client.
+// returned. Otherwise it falls back to the static client, which `abaper serve`
+// only configures with --allow-static-sap (local single-user use); without
+// one, a request without X-SAP-* headers is rejected.
 func (rs *RestServer) clientForRequest(r *http.Request) (types.ADTClient, error) {
 	host := r.Header.Get("X-SAP-Host")
 	sapClient := r.Header.Get("X-SAP-Client")
@@ -153,10 +155,15 @@ func (rs *RestServer) Handler() http.Handler {
 	return mux
 }
 
-// Start starts the REST server on the given port.
+// Start starts the REST server on the given port, on all interfaces.
 func (rs *RestServer) Start(port string) {
-	rs.logger.Info("Starting REST server with CLI feature parity", zap.String("port", port))
-	if err := http.ListenAndServe(":"+port, rs.Handler()); err != nil {
+	rs.StartAddr(":" + port)
+}
+
+// StartAddr starts the REST server on addr (host:port).
+func (rs *RestServer) StartAddr(addr string) {
+	rs.logger.Info("Starting REST server with CLI feature parity", zap.String("addr", addr))
+	if err := http.ListenAndServe(addr, rs.Handler()); err != nil {
 		rs.logger.Fatal("Failed to start server", zap.Error(err))
 	}
 }

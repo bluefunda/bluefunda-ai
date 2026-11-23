@@ -9,7 +9,9 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/bluefunda/bluefunda-ai/abaper/internal/adt"
 	"github.com/bluefunda/bluefunda-ai/abaper/rest/models"
@@ -1610,5 +1612,21 @@ func TestRemovedAIHandlersReturn410(t *testing.T) {
 		if rec.Code != http.StatusGone {
 			t.Errorf("%s: expected 410 Gone, got %d", path, rec.Code)
 		}
+	}
+}
+
+// TestHeaderlessRequestRejectedWithoutStaticClient guards `abaper serve`'s
+// default: no static SAP identity, so a request without X-SAP-* headers must be
+// refused instead of reaching SAP under someone else's login.
+func TestHeaderlessRequestRejectedWithoutStaticClient(t *testing.T) {
+	rs := NewRestServerWithPool(&Config{}, zap.NewNop(), NewPool(time.Minute, zap.NewNop()), nil)
+	rec := doJSON(t, rs, http.MethodPost, "/api/v1/objects/get", map[string]string{
+		"object_type": "CLAS", "object_name": "ZCL_X",
+	})
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusUnauthorized)
+	}
+	if msg := decodeError(t, rec); !strings.Contains(msg, "X-SAP-") {
+		t.Errorf("error = %q, want it to name the X-SAP-* headers", msg)
 	}
 }

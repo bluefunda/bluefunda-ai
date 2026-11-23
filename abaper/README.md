@@ -115,6 +115,17 @@ srv := lsp.NewServer(adtClient, "/path/to/workspace")
 srv.RunStdio()       // stdio transport (most editors); or srv.RunTCP(":2087")
 ```
 
+### REST server (`abaper serve`)
+
+`abaper serve` exposes ADT over REST (`/api/v1/...`); it is the backend the `ghcr.io/bluefunda/abaper` image
+runs. SAP credentials are per request: every request must carry the caller's own `X-SAP-Host`, `X-SAP-Client`,
+`X-SAP-User` and `X-SAP-Password` headers, and a request without them gets `401`. `SAP_*` environment variables
+and stored systems are ignored, so the server never answers one user with another's (or a shared) SAP login.
+
+For local, single-user development, `abaper serve --allow-static-sap` serves header-less requests with your own
+active system from `~/.abaper/systems.json` (or `--system <name>`, or `SAP_HOST`/`SAP_USERNAME`/`SAP_PASSWORD`/
+`SAP_CLIENT`). It logs a warning and listens on `127.0.0.1` only. Never use it for a server other people can reach.
+
 ---
 
 ## Install

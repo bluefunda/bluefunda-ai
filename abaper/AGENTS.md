@@ -15,3 +15,8 @@ This directory holds the SAP code that is specific to the abaper binary:
 The CLI commands, the gateway client, the SAP system registry, the ABAP tool
 pack and the verify gate are shared with `bai abap` and live in
 `../internal/abap` and `../internal/cmd/abap.go`.
+
+`abaper serve` (REST backend): SAP credentials are per request. Every request must carry `X-SAP-Host`,
+`X-SAP-Client`, `X-SAP-User` and `X-SAP-Password`; header-less requests get 401. `serve` ignores `SAP_*`
+and stored systems unless started with `--allow-static-sap` (local single-user use only: logs a warning,
+binds `127.0.0.1`). Do not reintroduce a shared/default SAP identity for `serve`.

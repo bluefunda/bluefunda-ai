@@ -20,38 +20,54 @@ import (
 func NewCommand() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "serve",
-		Short: "Start the local ABAPer REST server (abaper-ts replacement)",
-		Long: `Starts a local HTTP server that exposes the ADT SDK over REST,
-mirroring the abaper-ts API surface. Useful for local development and
-integration testing with abaper-editor.
+		Short: "Start the ABAPer REST server (abaper-ts replacement)",
+		Long: `Starts an HTTP server that exposes the ADT SDK over REST, mirroring the
+abaper-ts API surface.
 
-The active SAP system from ~/.abaper/systems.json is used as the default
-connection. Pass --system to select a different one. The server also accepts
-per-request X-SAP-* headers for multi-system operation.`,
+SAP credentials are per request: every request must carry the caller's own
+X-SAP-Host, X-SAP-Client, X-SAP-User and X-SAP-Password headers. Requests
+without them are rejected with 401. SAP_* environment variables and stored
+systems are ignored.
+
+For local, single-user development you can pass --allow-static-sap to serve
+requests without X-SAP-* headers using your own active SAP system from
+~/.abaper/systems.json (or --system, or SAP_HOST/SAP_USERNAME/SAP_PASSWORD/
+SAP_CLIENT). The server then listens on 127.0.0.1 only. Never use it for a
+server other people can reach.`,
 		RunE: runServe,
 	}
 	cmd.Flags().String("port", "8080", "Port to listen on")
-	cmd.Flags().String("system", "", "SAP system name or ID to use (default: active system)")
+	cmd.Flags().String("system", "", "SAP system name or ID for the static identity (requires --allow-static-sap; default: active system)")
 	cmd.Flags().Bool("allow-self-signed", false, "Allow self-signed TLS certificates")
+	cmd.Flags().Bool("allow-static-sap", false, "Local single-user use only: serve requests without X-SAP-* headers with your own stored/env SAP system, listening on 127.0.0.1")
 	return cmd
 }
 
-func runServe(cmd *cobra.Command, _ []string) error {
-	port, _ := cmd.Flags().GetString("port")
-	systemName, _ := cmd.Flags().GetString("system")
-	allowSelfSigned, _ := cmd.Flags().GetBool("allow-self-signed")
+// staticSAPEnv lists the environment variables the static identity may come
+// from. They are only read with --allow-static-sap.
+var staticSAPEnv = []string{"SAP_HOST", "SAP_USERNAME", "SAP_PASSWORD", "SAP_CLIENT"}
 
-	// Resolve SAP system from stored config.
-	sysCfg, err := abap.LoadSystems()
+// resolveStaticSystem decides the SAP identity used for requests without
+// X-SAP-* headers. Without allowStatic there is none: no stored system and no
+// SAP_* environment, so every request must carry its own credentials.
+func resolveStaticSystem(allowStatic bool, systemName string, loadSystems func() (*abap.Systems, error), getenv func(string) string) (*abap.SAPSystem, error) {
+	if !allowStatic {
+		if systemName != "" {
+			return nil, fmt.Errorf("--system needs --allow-static-sap (local single-user use only); without it every request must carry X-SAP-* headers")
+		}
+		return nil, nil
+	}
+
+	sysCfg, err := loadSystems()
 	if err != nil {
-		return fmt.Errorf("load systems: %w", err)
+		return nil, fmt.Errorf("load systems: %w", err)
 	}
 
 	var sys *abap.SAPSystem
 	if systemName != "" {
 		sys = sysCfg.Find(systemName)
 		if sys == nil {
-			return fmt.Errorf("system %q not found — run: abaper system list", systemName)
+			return nil, fmt.Errorf("system %q not found — run: abaper system list", systemName)
 		}
 	} else {
 		sys = sysCfg.ActiveSystem()
@@ -59,10 +75,10 @@ func runServe(cmd *cobra.Command, _ []string) error {
 
 	// Fall back to environment variables when no stored system is available.
 	if sys == nil {
-		host := os.Getenv("SAP_HOST")
-		user := os.Getenv("SAP_USERNAME")
-		pass := os.Getenv("SAP_PASSWORD")
-		client := os.Getenv("SAP_CLIENT")
+		host := getenv("SAP_HOST")
+		user := getenv("SAP_USERNAME")
+		pass := getenv("SAP_PASSWORD")
+		client := getenv("SAP_CLIENT")
 		if client == "" {
 			client = "001"
 		}
@@ -76,16 +92,42 @@ func runServe(cmd *cobra.Command, _ []string) error {
 			}
 		}
 	}
+	if sys == nil {
+		return nil, fmt.Errorf("--allow-static-sap: no SAP system found — run: abaper system add, or set SAP_HOST, SAP_USERNAME and SAP_PASSWORD")
+	}
+	return sys, nil
+}
+
+func runServe(cmd *cobra.Command, _ []string) error {
+	port, _ := cmd.Flags().GetString("port")
+	systemName, _ := cmd.Flags().GetString("system")
+	allowSelfSigned, _ := cmd.Flags().GetBool("allow-self-signed")
+	allowStatic, _ := cmd.Flags().GetBool("allow-static-sap")
 
 	logger, _ := zap.NewProduction()
 	defer logger.Sync() //nolint:errcheck
 
-	// Build connection pool (for multi-system requests via X-SAP-* headers).
+	sys, err := resolveStaticSystem(allowStatic, systemName, abap.LoadSystems, os.Getenv)
+	if err != nil {
+		return err
+	}
+	if !allowStatic {
+		for _, name := range staticSAPEnv {
+			if os.Getenv(name) != "" {
+				logger.Warn("SAP_* environment is ignored by serve; every request must carry X-SAP-* headers (pass --allow-static-sap for local single-user use)",
+					zap.String("variable", name))
+				break
+			}
+		}
+	}
+
+	// Build connection pool (for per-request credentials via X-SAP-* headers).
 	pool := server.NewPool(30*time.Minute, logger)
 	pool.StartEviction(cmd.Context(), 5*time.Minute)
 
 	cfg := &server.Config{AllowSelfSigned: allowSelfSigned}
 	var staticClient types.ADTClient
+	addr := ":" + port
 
 	if sys != nil {
 		adtCfg := types.ADTConfig{
@@ -104,25 +146,28 @@ func runServe(cmd *cobra.Command, _ []string) error {
 		cfg.ADTClient = sys.Client
 		cfg.ADTUsername = sys.Username
 		cfg.ADTPassword = sys.Password
-		logger.Info("Starting ABAPer REST server",
+		// A static identity serves anyone who can reach the port, so keep it
+		// on loopback: local single-user use only.
+		addr = "127.0.0.1:" + port
+		logger.Warn("--allow-static-sap: requests without X-SAP-* headers use this static SAP identity; local single-user use only, listening on 127.0.0.1",
 			zap.String("port", port),
 			zap.String("sap_host", sys.Host),
 			zap.String("sap_client", sys.Client),
 			zap.String("sap_user", sys.Username))
 	} else {
-		logger.Info("Starting ABAPer REST server in multi-system mode", zap.String("port", port))
+		logger.Info("Starting ABAPer REST server; every request must carry X-SAP-* headers", zap.String("port", port))
 	}
 
 	srv := server.NewRestServerWithPool(cfg, logger, pool, staticClient)
 
 	fmt.Printf("ABAPer REST server listening on http://localhost:%s\n", port)
 	if sys != nil {
-		fmt.Printf("SAP system: %s (%s, client %s)\n", sys.Name, sys.Host, sys.Client)
+		fmt.Printf("SAP system: %s (%s, client %s), static identity for local use only (--allow-static-sap)\n", sys.Name, sys.Host, sys.Client)
 	} else {
-		fmt.Println("SAP system: none — multi-system mode (credentials via X-SAP-* headers)")
+		fmt.Println("SAP system: none, per-request credentials via X-SAP-* headers")
 	}
 	fmt.Println("Press Ctrl+C to stop.")
 
-	srv.Start(port)
+	srv.StartAddr(addr)
 	return nil
 }

@@ -126,6 +126,7 @@ func (rs *RestServer) Handler() http.Handler {
 	mux.HandleFunc("/api/v1/unit-tests", rs.corsHandler(rs.unitTestsHandler))
 	mux.HandleFunc("/api/v1/transports/info", rs.corsHandler(rs.transportInfoHandler))
 	mux.HandleFunc("/api/v1/transports/create", rs.corsHandler(rs.createTransportHandler))
+	mux.HandleFunc("/api/v1/transports/{trkey}", rs.corsHandler(rs.transportRequestHandler)) // GET, read-only
 	mux.HandleFunc("/api/v1/system/connect", rs.corsHandler(rs.connectHandler))
 
 	// GitHub proxy endpoints

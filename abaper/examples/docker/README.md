@@ -4,46 +4,42 @@ This directory contains example files for deploying `abaper` using Docker.
 
 ## Quick Start
 
-1. **Copy the example environment file:**
-   ```bash
-   cp .env.example .env
-   ```
-
-2. **Edit `.env` with your SAP connection details:**
-   ```bash
-   SAP_HOST=your-sap-system.company.com:8000
-   SAP_USERNAME=your-username
-   SAP_PASSWORD=your-password
-   ```
-
-3. **Start the service:**
+1. **Start the service:**
    ```bash
    docker-compose up -d
    ```
 
-4. **Test the service:**
+2. **Test the service:**
    ```bash
    curl http://localhost:8013/health
    ```
+
+## SAP credentials
+
+`abaper serve` has no SAP login of its own. Every request carries the caller's own SAP credentials as
+headers, and a request without them is rejected with `401`:
+
+```bash
+curl -X POST http://localhost:8013/api/v1/objects/get \
+  -H "Content-Type: application/json" \
+  -H "X-SAP-Host: https://your-sap-system.company.com:8000" \
+  -H "X-SAP-Client: 100" \
+  -H "X-SAP-User: $SAP_USER" \
+  -H "X-SAP-Password: $SAP_PASSWORD" \
+  -d '{"object_type":"CLAS","object_name":"ZCL_EXAMPLE"}'
+```
+
+Do not configure `SAP_HOST`/`SAP_USERNAME`/`SAP_PASSWORD` for a shared server: they are ignored. A static
+SAP identity (`abaper serve --allow-static-sap`) is for local, single-user use on your own machine only and
+listens on `127.0.0.1`.
 
 ## Configuration
 
 The example uses the published Docker image `ghcr.io/bluefunda/abaper:latest`.
 
-### Environment Variables
-
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `SAP_HOST` | SAP system hostname and port | Required |
-| `SAP_CLIENT` | SAP client number | `100` |
-| `SAP_USERNAME` | SAP username | Required |
-| `SAP_PASSWORD` | SAP password | Required |
 | `LOG_LEVEL` | Logging level | `info` |
-
-### Volumes
-
-- `./config:/app/config:ro` - Configuration files (optional)
-- `./logs:/app/logs` - Log files
 
 ## Production Considerations
 

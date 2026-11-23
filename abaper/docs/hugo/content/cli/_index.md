@@ -35,7 +35,7 @@ abaper get program ZTEST
 abaper search objects "Z*"
 
 # Run as REST server
-abaper server --port 8080
+abaper serve --port 8080   # per-request SAP credentials: every request carries X-SAP-* headers
 ```
 
 ## Configuration

@@ -56,6 +56,17 @@ message ChatRequest {
   string local_tools = 8;                        // JSON-encoded tool schemas
   string raw_tool_result_tool_call_id = 9;       // tool_call_id answered by raw_tool_result
   repeated CodeMessage code_messages = 10;        // full conversation history managed by CLI
+  // mcp_servers lists every MCP server enabled for this chat turn; cai-bff
+  // folds mcp_server_name into it and checks each against the caller's
+  // entitlements. Same field number and type as cai-bff's bff.proto.
+  repeated MCPServerRef mcp_servers = 12;
+}
+
+// MCPServerRef names one MCP server enabled for a chat turn. url is resolved
+// by cai-bff; clients leave it empty.
+message MCPServerRef {
+  string name = 1;
+  string url = 2;
 }
 
 // CodeMessage represents a single message in a CLI-managed conversation.

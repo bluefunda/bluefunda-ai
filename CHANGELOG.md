@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.70.0](https://github.com/bluefunda/bluefunda-ai/compare/v1.69.0...v1.70.0) (2026-11-23)
+
+
+### Features
+
+* **abaper:** read transport request contents ([#419](https://github.com/bluefunda/bluefunda-ai/issues/419)) ([3d4dba6](https://github.com/bluefunda/bluefunda-ai/commit/3d4dba60f3c3199adc62a070dd3267db5129497d))
+
 ## [1.69.0](https://github.com/bluefunda/bluefunda-ai/compare/v1.68.0...v1.69.0) (2026-11-21)
 
 

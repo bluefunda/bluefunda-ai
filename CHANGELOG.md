@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.70.1](https://github.com/bluefunda/bluefunda-ai/compare/v1.70.0...v1.70.1) (2026-11-23)
+
+
+### Bug Fixes
+
+* **abaper:** serve requires per-request SAP credentials ([#418](https://github.com/bluefunda/bluefunda-ai/issues/418)) ([121a4c3](https://github.com/bluefunda/bluefunda-ai/commit/121a4c31f0c13a71befc78e83f69dc6071feeac3))
+
 ## [1.70.0](https://github.com/bluefunda/bluefunda-ai/compare/v1.69.0...v1.70.0) (2026-11-23)
 
 

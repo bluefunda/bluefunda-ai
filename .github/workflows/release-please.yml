@@ -70,8 +70,9 @@ jobs:
       GH_PAT: ${{ secrets.GH_PAT }}
 
   # ghcr.io/bluefunda/abaper: the `abaper serve` REST backend that abaper-bff
-  # and abaper-mcp call. Production pulls :latest (bluefunda/gitops,
-  # stacks/apps/abaper); Komodo redeploys it.
+  # and abaper-mcp call. Each release publishes ghcr.io/bluefunda/abaper:<tag>
+  # (and :latest). Production pins a tag in bluefunda/gitops
+  # (stacks/apps/abaper/compose.yaml): bump it there to deploy a release.
   docker-abaper:
     needs: [release, go-version]
     if: ${{ needs.release.outputs.release_created }}

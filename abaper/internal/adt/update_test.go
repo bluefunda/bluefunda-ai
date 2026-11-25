@@ -3,6 +3,7 @@ package adt
 import (
 	"net/http"
 	"strings"
+	"sync"
 	"testing"
 )
 
@@ -134,5 +135,91 @@ func TestUpdateFunction_ValidatesInputs(t *testing.T) {
 	}
 	if err := c.UpdateFunction(t.Context(), "ZFM_FOO", "ZFG", "   "); err == nil {
 		t.Fatal("expected an error when source is blank")
+	}
+}
+
+func TestDeleteObject_LocksDeletesWithHandle(t *testing.T) {
+	log := &requestLog{t: t}
+	c, _ := newTestADTClient(t, func(w http.ResponseWriter, r *http.Request) {
+		log.record(r)
+		switch {
+		case r.Method == http.MethodPost && r.URL.Query().Get("_action") == "LOCK":
+			_, _ = w.Write([]byte(lockResponseXML("lock-handle-1", "DEVK900001")))
+		case r.Method == http.MethodDelete && r.URL.Path == "/sap/bc/adt/oo/interfaces/zi_foo":
+			if r.URL.Query().Get("lockHandle") != "lock-handle-1" || r.URL.Query().Get("corrNr") != "DEVK900001" {
+				t.Errorf("delete query = %v", r.URL.Query())
+			}
+			w.WriteHeader(http.StatusNoContent)
+		default:
+			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
+		}
+	})
+	if err := c.DeleteObject(t.Context(), "intf", "zi_foo"); err != nil {
+		t.Fatalf("DeleteObject: %v", err)
+	}
+	if len(log.calls) != 2 {
+		t.Errorf("want lock+delete, got %v", log.methods())
+	}
+	if err := c.DeleteObject(t.Context(), "bogus", "zi_foo"); err == nil {
+		t.Error("unsupported type should fail")
+	}
+}
+
+func TestDeleteObject_UnlocksOnFailure(t *testing.T) {
+	log := &requestLog{t: t}
+	c, _ := newTestADTClient(t, func(w http.ResponseWriter, r *http.Request) {
+		log.record(r)
+		switch {
+		case r.Method == http.MethodPost && r.URL.Query().Get("_action") == "LOCK":
+			_, _ = w.Write([]byte(lockResponseXML("h", "")))
+		case r.Method == http.MethodDelete:
+			w.WriteHeader(http.StatusBadRequest)
+		default:
+			w.WriteHeader(http.StatusOK)
+		}
+	})
+	if err := c.DeleteObject(t.Context(), "program", "zfoo"); err == nil {
+		t.Fatal("expected error")
+	}
+	if last := log.calls[len(log.calls)-1]; last.Query.Get("_action") != "UNLOCK" {
+		t.Errorf("expected unlock after failed delete, got %v", log.methods())
+	}
+}
+
+// Concurrent deletes on one (pooled, shared) client must never overlap their
+// lock/DELETE sequences on the ADT session.
+func TestDeleteObject_SerializedPerClient(t *testing.T) {
+	var mu sync.Mutex
+	locked, overlap := 0, false
+	c, _ := newTestADTClient(t, func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		defer mu.Unlock()
+		switch {
+		case r.Method == http.MethodPost && r.URL.Query().Get("_action") == "LOCK":
+			if locked > 0 {
+				overlap = true
+			}
+			locked++
+			_, _ = w.Write([]byte(lockResponseXML("h", "")))
+		case r.Method == http.MethodDelete:
+			locked--
+			w.WriteHeader(http.StatusNoContent)
+		default:
+			w.WriteHeader(http.StatusOK)
+		}
+	})
+	var wg sync.WaitGroup
+	for _, n := range []string{"za", "zb", "zc", "zd"} {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if err := c.DeleteObject(t.Context(), "program", n); err != nil {
+				t.Errorf("DeleteObject(%s): %v", n, err)
+			}
+		}()
+	}
+	wg.Wait()
+	if overlap {
+		t.Error("lock/delete sequences overlapped on one client")
 	}
 }

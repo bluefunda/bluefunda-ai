@@ -117,6 +117,7 @@ func (rs *RestServer) Handler() http.Handler {
 	mux.HandleFunc("/api/v1/objects/save", rs.corsHandler(rs.saveObjectHandler))
 	mux.HandleFunc("/api/v1/objects/search", rs.corsHandler(rs.searchObjectsHandler))
 	mux.HandleFunc("/api/v1/objects/list", rs.corsHandler(rs.listObjectsHandler))
+	mux.HandleFunc("/api/v1/objects/delete", rs.corsHandler(rs.deleteObjectHandler))
 	mux.HandleFunc("/api/v1/objects/activate", rs.corsHandler(rs.activateObjectHandler))
 	mux.HandleFunc("/api/v1/activate", rs.corsHandler(rs.activateObjectHandler)) // alias used by all external clients
 	mux.HandleFunc("/api/v1/service-bindings/publish", rs.corsHandler(rs.publishServiceBindingHandler))
@@ -463,9 +464,18 @@ func (rs *RestServer) createObjectHandler(w http.ResponseWriter, r *http.Request
 		}
 		err = c.CreateFunction(ctx, objectName, strings.ToUpper(req.Args[0]), description, sourceCode)
 	case "DDLS", "DATA_DEFINITION":
-		err = c.CreateDDLS(ctx, objectName, description, sourceCode)
+		// A redeploy targets an existing object: update it instead of failing "already exists".
+		if _, getErr := c.GetDDLSource(ctx, objectName); getErr == nil && sourceCode != "" {
+			err = c.UpdateDDLS(ctx, objectName, sourceCode)
+		} else {
+			err = c.CreateDDLS(ctx, objectName, description, sourceCode)
+		}
 	case "SRVD", "SERVICE_DEFINITION":
-		err = c.CreateSRVD(ctx, objectName, description, sourceCode)
+		if _, getErr := c.GetSRVDSource(ctx, objectName); getErr == nil && sourceCode != "" {
+			err = c.UpdateSRVD(ctx, objectName, sourceCode)
+		} else {
+			err = c.CreateSRVD(ctx, objectName, description, sourceCode)
+		}
 	case "DOMAIN", "DOMA":
 		if req.DomainProperties == nil {
 			rs.sendError(w, "domain_properties is required to create a domain", http.StatusBadRequest)
@@ -770,6 +780,39 @@ func (rs *RestServer) saveObjectHandler(w http.ResponseWriter, r *http.Request) 
 		"source_inserted": true,
 		"source_length":   len(req.Source),
 		"message":         fmt.Sprintf("%s %s saved successfully", objectType, objectName),
+	})
+}
+
+// deleteObjectHandler permanently deletes one repository object.
+func (rs *RestServer) deleteObjectHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "POST" {
+		rs.sendError(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	var req models.APIRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		rs.sendError(w, "Invalid request body", http.StatusBadRequest)
+		return
+	}
+	if req.ObjectType == "" || req.ObjectName == "" {
+		rs.sendError(w, "object_type and object_name are required", http.StatusBadRequest)
+		return
+	}
+	c, err := rs.clientForRequest(r)
+	if err != nil {
+		rs.sendClientError(w, err)
+		return
+	}
+	objectType := strings.ToUpper(req.ObjectType)
+	objectName := strings.ToUpper(req.ObjectName)
+	if err := c.DeleteObject(r.Context(), objectType, objectName); err != nil {
+		rs.sendError(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	rs.sendSuccess(w, map[string]any{
+		"object_name": objectName,
+		"object_type": objectType,
+		"message":     fmt.Sprintf("%s %s deleted", objectType, objectName),
 	})
 }
 

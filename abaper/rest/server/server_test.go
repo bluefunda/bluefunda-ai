@@ -680,6 +680,7 @@ func TestCreateObjectHandler(t *testing.T) {
 	t.Run("ddls create", func(t *testing.T) {
 		var gotName, gotSource string
 		fake := &fakeADTClient{
+			getDDLSourceFn: func(context.Context, string) (*types.ADTSourceCode, error) { return nil, adt.ErrNotFound },
 			createDDLSFn: func(ctx context.Context, name, description, source string) error {
 				gotName, gotSource = name, source
 				return nil
@@ -703,6 +704,7 @@ func TestCreateObjectHandler(t *testing.T) {
 	t.Run("srvd create", func(t *testing.T) {
 		var gotName, gotSource string
 		fake := &fakeADTClient{
+			getSRVDSourceFn: func(context.Context, string) (*types.ADTSourceCode, error) { return nil, adt.ErrNotFound },
 			createSRVDFn: func(ctx context.Context, name, description, source string) error {
 				gotName, gotSource = name, source
 				return nil
@@ -1628,5 +1630,45 @@ func TestHeaderlessRequestRejectedWithoutStaticClient(t *testing.T) {
 	}
 	if msg := decodeError(t, rec); !strings.Contains(msg, "X-SAP-") {
 		t.Errorf("error = %q, want it to name the X-SAP-* headers", msg)
+	}
+}
+
+func TestDeleteObjectHandler(t *testing.T) {
+	var gotType, gotName string
+	fake := &fakeADTClient{deleteObjectFn: func(_ context.Context, objectType, name string) error {
+		gotType, gotName = objectType, name
+		return nil
+	}}
+	rs := newTestServer(t, fake)
+	rec := doJSON(t, rs, http.MethodPost, "/api/v1/objects/delete", map[string]string{"object_type": "intf", "object_name": "zi_foo"})
+	if rec.Code != http.StatusOK || gotType != "INTF" || gotName != "ZI_FOO" {
+		t.Fatalf("code=%d type=%q name=%q body=%s", rec.Code, gotType, gotName, rec.Body.String())
+	}
+	rec = doJSON(t, rs, http.MethodPost, "/api/v1/objects/delete", map[string]string{"object_name": "zi_foo"})
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("missing type: code=%d", rec.Code)
+	}
+}
+
+// A redeploy (create with description) of an existing CDS view / service
+// definition must update it, not fail with "already exists".
+func TestCreateObjectHandler_ExistingDDLSAndSRVDUpdate(t *testing.T) {
+	for _, tc := range []struct{ typ string }{{"ddls"}, {"srvd"}} {
+		t.Run(tc.typ, func(t *testing.T) {
+			var updated, created bool
+			fake := &fakeADTClient{ // default Get* fakes report the object as existing
+				updateDDLSFn: func(context.Context, string, string) error { updated = true; return nil },
+				updateSRVDFn: func(context.Context, string, string) error { updated = true; return nil },
+				createDDLSFn: func(context.Context, string, string, string) error { created = true; return nil },
+				createSRVDFn: func(context.Context, string, string, string) error { created = true; return nil },
+			}
+			rs := newTestServer(t, fake)
+			rec := doJSON(t, rs, http.MethodPost, "/api/v1/objects/create", map[string]string{
+				"object_type": tc.typ, "object_name": "zx", "description": "d", "source": "define x",
+			})
+			if rec.Code != http.StatusOK || !updated || created {
+				t.Errorf("code=%d updated=%v created=%v body=%s", rec.Code, updated, created, rec.Body.String())
+			}
+		})
 	}
 }

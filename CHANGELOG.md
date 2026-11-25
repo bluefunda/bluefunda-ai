@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.71.0](https://github.com/bluefunda/bluefunda-ai/compare/v1.70.1...v1.71.0) (2026-11-25)
+
+
+### Features
+
+* **abap:** add RAP object types (ddls, srvd, srvb) and abap_delete tool ([#423](https://github.com/bluefunda/bluefunda-ai/issues/423)) ([7308460](https://github.com/bluefunda/bluefunda-ai/commit/73084608fb0883a15b02811c032d4ea8277b9e90))
+
 ## [1.70.1](https://github.com/bluefunda/bluefunda-ai/compare/v1.70.0...v1.70.1) (2026-11-23)
 
 

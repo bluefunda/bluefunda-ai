@@ -3,6 +3,7 @@ package adt
 import (
 	"net/http"
 	"strings"
+	"sync"
 	"testing"
 )
 
@@ -182,5 +183,43 @@ func TestDeleteObject_UnlocksOnFailure(t *testing.T) {
 	}
 	if last := log.calls[len(log.calls)-1]; last.Query.Get("_action") != "UNLOCK" {
 		t.Errorf("expected unlock after failed delete, got %v", log.methods())
+	}
+}
+
+// Concurrent deletes on one (pooled, shared) client must never overlap their
+// lock/DELETE sequences on the ADT session.
+func TestDeleteObject_SerializedPerClient(t *testing.T) {
+	var mu sync.Mutex
+	locked, overlap := 0, false
+	c, _ := newTestADTClient(t, func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		defer mu.Unlock()
+		switch {
+		case r.Method == http.MethodPost && r.URL.Query().Get("_action") == "LOCK":
+			if locked > 0 {
+				overlap = true
+			}
+			locked++
+			_, _ = w.Write([]byte(lockResponseXML("h", "")))
+		case r.Method == http.MethodDelete:
+			locked--
+			w.WriteHeader(http.StatusNoContent)
+		default:
+			w.WriteHeader(http.StatusOK)
+		}
+	})
+	var wg sync.WaitGroup
+	for _, n := range []string{"za", "zb", "zc", "zd"} {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if err := c.DeleteObject(t.Context(), "program", n); err != nil {
+				t.Errorf("DeleteObject(%s): %v", n, err)
+			}
+		}()
+	}
+	wg.Wait()
+	if overlap {
+		t.Error("lock/delete sequences overlapped on one client")
 	}
 }

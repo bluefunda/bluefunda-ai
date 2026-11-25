@@ -464,9 +464,18 @@ func (rs *RestServer) createObjectHandler(w http.ResponseWriter, r *http.Request
 		}
 		err = c.CreateFunction(ctx, objectName, strings.ToUpper(req.Args[0]), description, sourceCode)
 	case "DDLS", "DATA_DEFINITION":
-		err = c.CreateDDLS(ctx, objectName, description, sourceCode)
+		// A redeploy targets an existing object: update it instead of failing "already exists".
+		if _, getErr := c.GetDDLSource(ctx, objectName); getErr == nil && sourceCode != "" {
+			err = c.UpdateDDLS(ctx, objectName, sourceCode)
+		} else {
+			err = c.CreateDDLS(ctx, objectName, description, sourceCode)
+		}
 	case "SRVD", "SERVICE_DEFINITION":
-		err = c.CreateSRVD(ctx, objectName, description, sourceCode)
+		if _, getErr := c.GetSRVDSource(ctx, objectName); getErr == nil && sourceCode != "" {
+			err = c.UpdateSRVD(ctx, objectName, sourceCode)
+		} else {
+			err = c.CreateSRVD(ctx, objectName, description, sourceCode)
+		}
 	case "DOMAIN", "DOMA":
 		if req.DomainProperties == nil {
 			rs.sendError(w, "domain_properties is required to create a domain", http.StatusBadRequest)

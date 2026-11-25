@@ -13,6 +13,7 @@ import (
 	"net/http/cookiejar"
 	"net/url"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/bluefunda/bluefunda-ai/abaper/types"
@@ -67,6 +68,11 @@ type ADTClientImpl struct {
 	baseURL       string
 	authenticated bool
 	sessionType   string // "stateful" or "stateless"
+
+	// deleteMu serializes DeleteObject: pooled clients are shared by concurrent
+	// requests, and overlapping lock/DELETE calls on one stateful ADT session
+	// make SAP answer "400 Session Timed Out".
+	deleteMu sync.Mutex
 }
 
 // NewADTClient creates a new ADT client with improved configuration
@@ -2667,6 +2673,8 @@ func (c *ADTClientImpl) DeleteObject(ctx context.Context, objectType, name strin
 	if name == "" {
 		return fmt.Errorf("object name is required")
 	}
+	c.deleteMu.Lock()
+	defer c.deleteMu.Unlock()
 	objectPath := base + "/" + url.PathEscape(strings.ToLower(name))
 	lockHandle, corrNr, err := c.lockObject(ctx, objectPath)
 	if err != nil {

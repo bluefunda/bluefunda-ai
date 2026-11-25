@@ -235,6 +235,8 @@ type SourceWriter interface {
 	UpdateStructure(ctx context.Context, name, source string) error
 	UpdateDDLS(ctx context.Context, name, source string) error
 	UpdateSRVD(ctx context.Context, name, source string) error
+	// DeleteObject permanently deletes a repository object (lock, DELETE).
+	DeleteObject(ctx context.Context, objectType, name string) error
 }
 
 // PackageNode is a single entry returned by the nodestructure endpoint.

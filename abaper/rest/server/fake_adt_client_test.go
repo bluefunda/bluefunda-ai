@@ -48,6 +48,7 @@ type fakeADTClient struct {
 	createDDLSFn            func(ctx context.Context, name, description, source string) error
 	createSRVDFn            func(ctx context.Context, name, description, source string) error
 	updateSRVDFn            func(ctx context.Context, name, source string) error
+	deleteObjectFn          func(ctx context.Context, objectType, name string) error
 	createDomainFn          func(ctx context.Context, name string, props types.DomainProperties) error
 	updateDomainFn          func(ctx context.Context, name string, props types.DomainProperties) error
 	createDataElementFn     func(ctx context.Context, name string, props types.DataElementProperties) error
@@ -250,6 +251,12 @@ func (f *fakeADTClient) UpdateStructure(ctx context.Context, name, source string
 func (f *fakeADTClient) UpdateDDLS(ctx context.Context, name, source string) error {
 	if f.updateDDLSFn != nil {
 		return f.updateDDLSFn(ctx, name, source)
+	}
+	return nil
+}
+func (f *fakeADTClient) DeleteObject(ctx context.Context, objectType, name string) error {
+	if f.deleteObjectFn != nil {
+		return f.deleteObjectFn(ctx, objectType, name)
 	}
 	return nil
 }

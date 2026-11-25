@@ -315,6 +315,39 @@ func (c *Client) Save(name, objectType, source string) error {
 	return err
 }
 
+// Delete permanently deletes an object from SAP.
+func (c *Client) Delete(name, objectType string) error {
+	_, err := post[map[string]any](c, "/api/v1/objects/delete", map[string]string{
+		"object_name": name,
+		"object_type": objectType,
+	})
+	return err
+}
+
+// SaveBinding creates a service binding (OData V4, UI category) exposing the
+// named service definition.
+func (c *Client) SaveBinding(name, serviceDefinition string) error {
+	_, err := post[map[string]any](c, "/api/v1/objects/create", map[string]any{
+		"object_name": name,
+		"object_type": "srvb",
+		"description": "Service binding " + name,
+		"service_binding_properties": map[string]string{
+			"service_definition_name": serviceDefinition,
+			"binding_version":         "V4",
+			"binding_category":        "0",
+		},
+	})
+	return err
+}
+
+// PublishBinding registers an active service binding's OData service.
+func (c *Client) PublishBinding(name string) error {
+	_, err := post[map[string]any](c, "/api/v1/service-bindings/publish", map[string]string{
+		"object_name": name,
+	})
+	return err
+}
+
 // Activate activates an object. /api/v1/objects/activate 404s through the
 // gateway; /api/v1/activate is the working route.
 func (c *Client) Activate(name, objectType string) (*ActivateResult, error) {

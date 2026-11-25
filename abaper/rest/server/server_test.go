@@ -1630,3 +1630,20 @@ func TestHeaderlessRequestRejectedWithoutStaticClient(t *testing.T) {
 		t.Errorf("error = %q, want it to name the X-SAP-* headers", msg)
 	}
 }
+
+func TestDeleteObjectHandler(t *testing.T) {
+	var gotType, gotName string
+	fake := &fakeADTClient{deleteObjectFn: func(_ context.Context, objectType, name string) error {
+		gotType, gotName = objectType, name
+		return nil
+	}}
+	rs := newTestServer(t, fake)
+	rec := doJSON(t, rs, http.MethodPost, "/api/v1/objects/delete", map[string]string{"object_type": "intf", "object_name": "zi_foo"})
+	if rec.Code != http.StatusOK || gotType != "INTF" || gotName != "ZI_FOO" {
+		t.Fatalf("code=%d type=%q name=%q body=%s", rec.Code, gotType, gotName, rec.Body.String())
+	}
+	rec = doJSON(t, rs, http.MethodPost, "/api/v1/objects/delete", map[string]string{"object_name": "zi_foo"})
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("missing type: code=%d", rec.Code)
+	}
+}

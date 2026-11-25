@@ -12,7 +12,7 @@ import (
 )
 
 // ObjectTypes are the object types the gateway accepts.
-var ObjectTypes = []string{"program", "class", "interface", "function", "include", "structure", "table"}
+var ObjectTypes = []string{"program", "class", "interface", "function", "include", "structure", "table", "ddls", "srvd", "srvb"}
 
 // Instructions are the ABAP rules given to the agent alongside the tools.
 const Instructions = `You are an ABAP expert developer. You write, review, and deploy SAP ABAP code.
@@ -25,10 +25,11 @@ You can read and edit local ABAP source files, and you work with the connected S
   abap_deploy          save + activate an object (from a local file or inline source)
   abap_activate        activate an already-saved object
   abap_run_unit_tests  run an object's ABAP Unit tests
+  abap_delete          permanently delete an object you created (e.g. a stray duplicate)
 
 Rules:
 - Always uppercase ABAP object names (ZCL_MY_CLASS, ZFM_VALIDATE, etc.)
-- Valid types: program, class, interface, function, include, structure, table
+- Valid types: program, class, interface, function, include, structure, table, ddls (CDS view entity), srvd (service definition), srvb (service binding)
 - Prefer reading existing source before writing new code
 - Keep source in local files and deploy with source_file, so the user can review it
 - Run abap_syntax_check before abap_deploy, then abap_run_unit_tests for objects with unit tests
@@ -47,7 +48,13 @@ Rules:
 - DDIC structures need BOTH "@EndUserText.label : '...'" AND "@AbapCatalog.enhancement.category"
   or save fails with a generic "errors in source" the syntax check does NOT catch.
 - DDIC tables need "@AbapCatalog.tableCategory", "@AbapCatalog.deliveryClass",
-  "@AbapCatalog.dataMaintenance", and a "key client : abap.clnt not null;" first field.`
+  "@AbapCatalog.dataMaintenance", and a "key client : abap.clnt not null;" first field.
+- RAP / CDS: use type ddls for CDS view entities and projection views ("define view entity ..." /
+  "define root view entity ... as projection on ..."), srvd for service definitions
+  ("@EndUserText.label: '...' define service NAME { expose VIEW as Alias; }"). NEVER deploy CDS or
+  service source as type program. Deploy a view before anything that references it.
+- Service binding (srvb): pass the service definition NAME as the source (e.g. source "ZSD_MY_SERVICE").
+  The binding is created as OData V4 UI, activated and published automatically. Deploy the srvd first.`
 
 // Env is what the pack's tools need at call time. NewClient is called per
 // tool call so login refreshes and `system use` take effect immediately.
@@ -115,7 +122,7 @@ const (
 		"type": "object",
 		"properties": {
 			"name": {"type": "string", "description": "Object name, uppercase (e.g. ZCL_ORDER_API)"},
-			"type": {"type": "string", "enum": ["program","class","interface","function","include","structure","table"]}
+			"type": {"type": "string", "enum": ["program","class","interface","function","include","structure","table","ddls","srvd","srvb"]}
 		},
 		"required": ["name", "type"]
 	}`
@@ -123,7 +130,7 @@ const (
 		"type": "object",
 		"properties": {
 			"name":        {"type": "string", "description": "Object name, uppercase"},
-			"type":        {"type": "string", "enum": ["program","class","interface","function","include","structure","table"]},
+			"type":        {"type": "string", "enum": ["program","class","interface","function","include","structure","table","ddls","srvd","srvb"]},
 			"source_file": {"type": "string", "description": "Local file holding the full source (preferred)"},
 			"source":      {"type": "string", "description": "Full source inline, when there is no local file"}
 		},
@@ -283,6 +290,24 @@ func Pack(env Env) tools.Pack {
 				}),
 			},
 			{
+				Name:        "abap_delete",
+				Description: "PERMANENTLY delete an object from SAP. Only use it to remove an object you created yourself (e.g. a stray duplicate blocking activation). Asks the user for approval.",
+				Parameters:  json.RawMessage(objectSchema),
+				PrimaryArg:  "name",
+				Handler: withClient(func(c *Client, a objectArgs) (string, error) {
+					if err := a.requireObject(); err != nil {
+						return "", err
+					}
+					if a.Type == "function" {
+						return "", fmt.Errorf("deleting function modules is not supported")
+					}
+					if err := c.Delete(a.Name, a.Type); err != nil {
+						return "", err
+					}
+					return fmt.Sprintf("Deleted %s %s.", a.Type, a.Name), nil
+				}),
+			},
+			{
 				Name:        "abap_run_unit_tests",
 				Description: "Run the ABAP Unit tests of a class or program and report each failing method.",
 				Parameters:  json.RawMessage(objectSchema),
@@ -305,6 +330,9 @@ func Pack(env Env) tools.Pack {
 
 // deploy saves and activates one object; an inactive result is an error.
 func deploy(c *Client, name, objectType, source string) error {
+	if objectType == "srvb" {
+		return deployBinding(c, name, source)
+	}
 	if err := c.Save(name, objectType, source); err != nil {
 		return fmt.Errorf("save failed: %w", err)
 	}
@@ -314,6 +342,29 @@ func deploy(c *Client, name, objectType, source string) error {
 	}
 	if !res.Activated {
 		return fmt.Errorf("activation failed: %s", ActivationSummary(res.Messages))
+	}
+	return nil
+}
+
+// deployBinding creates a service binding exposing the service definition
+// named by source (OData V4 UI), activates it and publishes the service.
+func deployBinding(c *Client, name, source string) error {
+	srvd := strings.ToUpper(strings.TrimSpace(source))
+	if srvd == "" {
+		return fmt.Errorf("srvb needs the service definition name as source")
+	}
+	if err := c.SaveBinding(name, srvd); err != nil {
+		return fmt.Errorf("save failed: %w", err)
+	}
+	res, err := c.Activate(name, "srvb")
+	if err != nil {
+		return fmt.Errorf("activation failed: %w", err)
+	}
+	if !res.Activated {
+		return fmt.Errorf("activation failed: %s", ActivationSummary(res.Messages))
+	}
+	if err := c.PublishBinding(name); err != nil {
+		return fmt.Errorf("publish failed: %w", err)
 	}
 	return nil
 }

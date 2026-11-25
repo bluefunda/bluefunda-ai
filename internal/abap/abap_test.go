@@ -335,3 +335,69 @@ func TestSystems_RoundTripAndSlashSwitch(t *testing.T) {
 		t.Error("unknown system should error")
 	}
 }
+
+// ── RAP types ─────────────────────────────────────────────────────────────────
+
+func TestDeploy_ServiceBindingCreatesActivatesPublishes(t *testing.T) {
+	var calls []string
+	var create map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls = append(calls, strings.TrimPrefix(r.URL.Path, "/abaper/api/v1/"))
+		var body map[string]any
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		if strings.HasSuffix(r.URL.Path, "/objects/create") {
+			create = body
+		}
+		data := map[string]any{}
+		if strings.HasSuffix(r.URL.Path, "/activate") {
+			data = map[string]any{"activated": true}
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"success": true, "data": data})
+	}))
+	t.Cleanup(srv.Close)
+	c := NewClient(srv.URL, "individual", func() (string, error) { return "tok", nil }, testSystem)
+	c.retryDelay = 0
+
+	if err := Deploy(c, "zui_x_o4", "srvb", " zsd_x "); err != nil {
+		t.Fatalf("Deploy: %v", err)
+	}
+	if got := strings.Join(calls, ","); got != "objects/create,activate,service-bindings/publish" {
+		t.Errorf("calls = %s", got)
+	}
+	props, _ := create["service_binding_properties"].(map[string]any)
+	if create["object_type"] != "srvb" || props["service_definition_name"] != "ZSD_X" || props["binding_version"] != "V4" {
+		t.Errorf("create body = %v", create)
+	}
+	if err := Deploy(c, "zui_x_o4", "srvb", ""); err == nil {
+		t.Error("empty service definition should fail")
+	}
+}
+
+func TestObjectTypes_IncludeRAP(t *testing.T) {
+	for _, want := range []string{"ddls", "srvd", "srvb"} {
+		a := objectArgs{Name: "ZX", Type: want}
+		if err := a.requireObject(); err != nil {
+			t.Errorf("%s: %v", want, err)
+		}
+	}
+}
+
+func TestPack_DeleteTool(t *testing.T) {
+	var body map[string]string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/abaper/api/v1/objects/delete" {
+			http.NotFound(w, r)
+			return
+		}
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		_ = json.NewEncoder(w).Encode(map[string]any{"success": true, "data": map[string]any{}})
+	}))
+	t.Cleanup(srv.Close)
+	c := NewClient(srv.URL, "individual", func() (string, error) { return "tok", nil }, testSystem)
+	c.retryDelay = 0
+	registerTestPack(t, c, nil)
+	out, err := tools.Execute("abap_delete", `{"name":"zi_x","type":"interface"}`)
+	if err != nil || !strings.Contains(out, "Deleted interface ZI_X") || body["object_name"] != "ZI_X" || body["object_type"] != "interface" {
+		t.Errorf("out=%q err=%v body=%v", out, err, body)
+	}
+}

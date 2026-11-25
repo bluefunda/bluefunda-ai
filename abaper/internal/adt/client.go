@@ -2639,6 +2639,64 @@ func (c *ADTClientImpl) UpdateSRVD(ctx context.Context, name, source string) err
 	return c.updateSourceObject(ctx, "service definition", objectPath, objectPath+"/source/main", name, source)
 }
 
+// deletePaths maps an object type to its ADT collection path. Function
+// modules are not listed: they live under a function group.
+var deletePaths = map[string]string{
+	"PROGRAM": "/programs/programs", "PROG": "/programs/programs",
+	"CLASS": "/oo/classes", "CLAS": "/oo/classes",
+	"INTERFACE": "/oo/interfaces", "INTF": "/oo/interfaces",
+	"INCLUDE": "/programs/includes", "INCL": "/programs/includes",
+	"FUNCTIONGROUP": "/functions/groups", "FUGR": "/functions/groups",
+	"TABLE": "/ddic/tables", "TABL": "/ddic/tables",
+	"STRUCTURE": "/ddic/structures", "STRU": "/ddic/structures",
+	"DDLS": "/ddic/ddl/sources", "DATA_DEFINITION": "/ddic/ddl/sources",
+	"SRVD": "/ddic/srvd/sources", "SERVICE_DEFINITION": "/ddic/srvd/sources",
+	"SRVB": "/businessservices/bindings", "SERVICE_BINDING": "/businessservices/bindings",
+	"DOMAIN": "/ddic/domains", "DOMA": "/ddic/domains",
+	"DATA_ELEMENT": "/ddic/dataelements", "DTEL": "/ddic/dataelements",
+}
+
+// DeleteObject permanently deletes an object: lock it, DELETE with the lock
+// handle (and transport, if SAP assigned one), and unlock again on failure.
+func (c *ADTClientImpl) DeleteObject(ctx context.Context, objectType, name string) error {
+	base, ok := deletePaths[strings.ToUpper(strings.TrimSpace(objectType))]
+	if !ok {
+		return fmt.Errorf("unsupported object type for delete: %s", objectType)
+	}
+	name = strings.ToUpper(strings.TrimSpace(name))
+	if name == "" {
+		return fmt.Errorf("object name is required")
+	}
+	objectPath := base + "/" + url.PathEscape(strings.ToLower(name))
+	lockHandle, corrNr, err := c.lockObject(ctx, objectPath)
+	if err != nil {
+		return fmt.Errorf("lock %s: %w", name, err)
+	}
+	q := url.Values{"lockHandle": {lockHandle}}
+	if corrNr != "" {
+		q.Set("corrNr", corrNr)
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodDelete, c.baseURL+objectPath+"?"+q.Encode(), nil)
+	if err != nil {
+		_ = c.unlockObject(ctx, objectPath, lockHandle)
+		return fmt.Errorf("create delete request: %w", err)
+	}
+	c.addAuthHeaders(req)
+	req.Header.Set("Accept", "application/*")
+	resp, err := c.doRequest(req)
+	if err != nil {
+		_ = c.unlockObject(ctx, objectPath, lockHandle)
+		return fmt.Errorf("delete request failed: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusNoContent {
+		body, _ := io.ReadAll(resp.Body)
+		_ = c.unlockObject(ctx, objectPath, lockHandle)
+		return fmt.Errorf("delete failed: HTTP %d - %s", resp.StatusCode, string(body))
+	}
+	return nil
+}
+
 // --- DDIC property objects (domains, data elements) ---
 //
 // Domains and data elements are not source-text objects: they are defined by

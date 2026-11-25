@@ -2,6 +2,7 @@ package abap
 
 import (
 	"fmt"
+	"os"
 	"strings"
 	"sync"
 )
@@ -12,6 +13,7 @@ type Object struct {
 	Name     string
 	Type     string
 	Source   string // source sent on the last attempt; re-checked by Verify
+	Path     string // workspace file the source came from (then Source is empty)
 	Attempts int
 	OK       bool
 	Detail   string // failure reason when !OK
@@ -49,6 +51,19 @@ func (t *Tracker) Record(name, objectType, source string, err error) {
 		o.Detail = err.Error()
 	}
 	t.objects[o.key()] = o
+}
+
+// RecordFile stores the outcome of a deploy from a workspace file. Only the
+// path is kept, so large sources are not held in memory; Verify reads the
+// file again.
+func (t *Tracker) RecordFile(name, objectType, path string, err error) {
+	t.Record(name, objectType, "", err)
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	k := Object{Name: name, Type: objectType}.key()
+	o := t.objects[k]
+	o.Path = path
+	t.objects[k] = o
 }
 
 // Objects returns the touched objects in first-touched order.
@@ -129,8 +144,17 @@ func verifyOne(c Checker, o Object) Verification {
 		return v
 	}
 
-	if o.Source != "" {
-		res, err := c.SyntaxCheck(o.Name, o.Type, o.Source)
+	src := o.Source
+	if src == "" && o.Path != "" {
+		b, err := os.ReadFile(o.Path)
+		if err != nil {
+			v.Syntax = "failed"
+			v.Problems = append(v.Problems, "read workspace file: "+err.Error())
+		}
+		src = string(b)
+	}
+	if src != "" {
+		res, err := c.SyntaxCheck(o.Name, o.Type, src)
 		if err != nil {
 			v.Syntax = "failed"
 			v.Problems = append(v.Problems, "syntax check: "+err.Error())

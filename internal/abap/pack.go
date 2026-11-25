@@ -60,7 +60,8 @@ Rules:
 // tool call so login refreshes and `system use` take effect immediately.
 type Env struct {
 	NewClient func() (*Client, error)
-	Tracker   *Tracker // may be nil
+	Tracker   *Tracker   // may be nil
+	Workspace *Workspace // nil = workspace off (the default)
 }
 
 type objectArgs struct {
@@ -70,6 +71,7 @@ type objectArgs struct {
 	SourceFile string `json:"source_file"`
 	Pattern    string `json:"pattern"`
 	Package    string `json:"package"`
+	Force      bool   `json:"force"`
 }
 
 func parseArgs(raw string) (objectArgs, error) {
@@ -154,7 +156,7 @@ func Pack(env Env) tools.Pack {
 		}
 	}
 
-	return tools.Pack{
+	pack := tools.Pack{
 		Name:         "abap",
 		Instructions: Instructions,
 		Tools: []tools.PackTool{
@@ -198,6 +200,9 @@ func Pack(env Env) tools.Pack {
 					}
 					if src == "" {
 						return fmt.Sprintf("%s %s has no source (or does not exist).", a.Type, a.Name), nil
+					}
+					if ws := env.Workspace; ws != nil && ws.Supports(a.Type) && CountLines(src) > ws.InlineMaxLines {
+						return previewSource(src, ws.InlineMaxLines, a), nil
 					}
 					return src, nil
 				}),
@@ -326,6 +331,11 @@ func Pack(env Env) tools.Pack {
 			},
 		},
 	}
+	if env.Workspace != nil {
+		pack.Instructions += WorkspaceInstructions
+		pack.Tools = append(pack.Tools, workspaceTools(env, withClient)...)
+	}
+	return pack
 }
 
 // deploy saves and activates one object; an inactive result is an error.

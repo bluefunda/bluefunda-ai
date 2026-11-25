@@ -1048,3 +1048,38 @@ func TestLoadUserSettings(t *testing.T) {
 		t.Error("a broken settings file must be an error, not silently ignored")
 	}
 }
+
+func TestLoadABAPSettings_OffByDefaultAndProjectWins(t *testing.T) {
+	home := withTempHome(t)
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	s, err := LoadABAPSettings(root)
+	if err != nil || s.WorkspaceEnabled() {
+		t.Fatalf("default must be off: %+v %v", s, err)
+	}
+
+	userDir := filepath.Join(home, ".bai")
+	if err := os.MkdirAll(userDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	user := "abap:\n  workspace:\n    enabled: true\n    dir: user-src\n    inline_max_lines: 50\n"
+	if err := os.WriteFile(filepath.Join(userDir, "settings.yaml"), []byte(user), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	proj := filepath.Join(root, ".bai")
+	if err := os.MkdirAll(proj, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(proj, "settings.yaml"), []byte("abap:\n  workspace:\n    enabled: false\n    dir: proj-src\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	s, err = LoadABAPSettings(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s.WorkspaceEnabled() || s.Workspace.Dir != "proj-src" || s.Workspace.InlineMaxLines != 50 {
+		t.Errorf("merged = %+v (enabled=%v)", s.Workspace, s.WorkspaceEnabled())
+	}
+}

@@ -178,6 +178,10 @@ func ExecuteContext(ctx context.Context, name, argumentsJSON string) (string, er
 // workspaceRoot returns the confinement boundary for path-taking tools: the
 // nearest ancestor directory (from cwd) containing a .git entry, or cwd
 // itself if none is found (e.g. a scratch directory with no repo).
+// WorkspaceRoot is the directory file tools are confined to: the git root
+// above the working directory, or the working directory itself.
+func WorkspaceRoot() string { return workspaceRoot() }
+
 func workspaceRoot() string {
 	cwd, err := os.Getwd()
 	if err != nil {

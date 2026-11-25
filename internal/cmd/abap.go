@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"sort"
 	"strings"
 	"sync"
@@ -16,6 +17,7 @@ import (
 	"github.com/bluefunda/bluefunda-ai/internal/abap"
 	"github.com/bluefunda/bluefunda-ai/internal/app"
 	"github.com/bluefunda/bluefunda-ai/internal/auth"
+	"github.com/bluefunda/bluefunda-ai/internal/config"
 	caigrpc "github.com/bluefunda/bluefunda-ai/internal/grpc"
 	"github.com/bluefunda/bluefunda-ai/internal/tools"
 	"github.com/bluefunda/bluefunda-ai/internal/ui"
@@ -52,9 +54,47 @@ func newABAPClient() (*abap.Client, error) {
 	return abap.NewClient(abap.GatewayURL(), cfg.Realm, ts.Token, reg.ActiveSystem()), nil
 }
 
+// abapWorkspaceDir, when set (bai abap code --workspace), switches the
+// workspace on for this run regardless of settings.
+var abapWorkspaceDir string
+
+// abapPackEnv returns abapEnv with the workspace from settings (or
+// --workspace) attached. With the workspace off it is abapEnv unchanged.
+func abapPackEnv() (abap.Env, error) {
+	env := abapEnv
+	cwd, _ := os.Getwd()
+	s, err := config.LoadABAPSettings(cwd)
+	if err != nil {
+		return env, fmt.Errorf("abap settings: %w", err)
+	}
+	dir := abapWorkspaceDir
+	if dir == "" {
+		if !s.WorkspaceEnabled() {
+			return env, nil
+		}
+		dir = s.Workspace.Dir
+		if dir == "" {
+			dir = config.DefaultABAPWorkspaceDir
+		}
+	}
+	if !filepath.IsAbs(dir) {
+		dir = filepath.Join(tools.WorkspaceRoot(), dir)
+	}
+	ws, err := abap.NewWorkspace(dir, s.Workspace.InlineMaxLines)
+	if err != nil {
+		return env, err
+	}
+	env.Workspace = ws
+	return env, nil
+}
+
 // registerABAPPack adds the ABAP tools and instructions to this process.
 func registerABAPPack() error {
-	_, err := tools.RegisterPack(abap.Pack(abapEnv))
+	env, err := abapPackEnv()
+	if err != nil {
+		return err
+	}
+	_, err = tools.RegisterPack(abap.Pack(env))
 	return err
 }
 
@@ -732,12 +772,17 @@ done, and its exit field matches the exit code.`,
 	cmd.Flags().BoolVar(&noVerify, "no-verify", false, "Skip the post-run syntax check / activation / unit test gate")
 	cmd.Flags().IntVar(&repairTurns, "repair-turns", 2, "Rounds the agent gets to fix objects that fail verification")
 	cmd.Flags().BoolVar(&verbose, "verbose", false, "Show every tool result")
+	cmd.Flags().StringVar(&abapWorkspaceDir, "workspace", "", "Work on objects as files in this directory (overrides the abap.workspace settings)")
 	return cmd
 }
 
 // runABAPCode runs the headless ABAP agent on prompt, then the verify gate.
 func runABAPCode(prompt, model string, maxTurns int, noVerify bool, repairTurns int, rep codeReporter) error {
-	unregister, err := tools.RegisterPack(abap.Pack(abapEnv))
+	env, err := abapPackEnv()
+	if err != nil {
+		return err
+	}
+	unregister, err := tools.RegisterPack(abap.Pack(env))
 	if err != nil {
 		return err
 	}

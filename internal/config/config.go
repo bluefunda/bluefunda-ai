@@ -279,6 +279,7 @@ type ProjectConfig struct {
 	MaxTurns    int                        `yaml:"max_turns"`
 	Endpoint    string                     `yaml:"endpoint"`
 	MCPServers  map[string]MCPServerConfig `yaml:"mcp_servers"`
+	ABAP        *ABAPSettings              `yaml:"abap,omitempty"`
 	Permissions struct {
 		Allow []string `yaml:"allow"`
 		Deny  []string `yaml:"deny"`
@@ -432,10 +433,62 @@ func FindProjectConfig(cwd string) *ProjectConfig {
 // Code's ~/.claude/settings.json. It is the user's own file, so unlike
 // .bai/settings.local.yaml it needs no workspace trust prompt.
 type UserSettings struct {
+	ABAP        *ABAPSettings `yaml:"abap,omitempty"`
 	Permissions struct {
 		Allow []string `yaml:"allow"`
 		Deny  []string `yaml:"deny"`
 	} `yaml:"permissions"`
+}
+
+// ABAPSettings configures the optional ABAP workspace (docs/abap-pipeline-design.md).
+// Absent or disabled means bai abap behaves as it always has.
+type ABAPSettings struct {
+	Workspace ABAPWorkspaceSettings `yaml:"workspace"`
+}
+
+// ABAPWorkspaceSettings: ABAP objects as local files.
+type ABAPWorkspaceSettings struct {
+	Enabled        *bool  `yaml:"enabled,omitempty"`
+	Dir            string `yaml:"dir,omitempty"`              // relative to the project root; default abap-src
+	InlineMaxLines int    `yaml:"inline_max_lines,omitempty"` // default 200
+}
+
+// DefaultABAPWorkspaceDir is the workspace directory when none is set.
+const DefaultABAPWorkspaceDir = "abap-src"
+
+// LoadABAPSettings merges the abap section of ~/.bai/settings.yaml with the
+// project's .bai/settings.yaml (project fields win). The result is never nil.
+func LoadABAPSettings(cwd string) (ABAPSettings, error) {
+	var out ABAPSettings
+	user, _, err := LoadUserSettings()
+	if err != nil {
+		return out, err
+	}
+	merge := func(s *ABAPSettings) {
+		if s == nil {
+			return
+		}
+		w := s.Workspace
+		if w.Enabled != nil {
+			out.Workspace.Enabled = w.Enabled
+		}
+		if w.Dir != "" {
+			out.Workspace.Dir = w.Dir
+		}
+		if w.InlineMaxLines > 0 {
+			out.Workspace.InlineMaxLines = w.InlineMaxLines
+		}
+	}
+	merge(user.ABAP)
+	if p := FindProjectConfig(cwd); p != nil {
+		merge(p.ABAP)
+	}
+	return out, nil
+}
+
+// WorkspaceEnabled reports whether the ABAP workspace is switched on.
+func (s ABAPSettings) WorkspaceEnabled() bool {
+	return s.Workspace.Enabled != nil && *s.Workspace.Enabled
 }
 
 // LoadUserSettings reads ~/.bai/settings.yaml. A missing file yields empty
